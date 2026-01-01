@@ -9,6 +9,10 @@ struct AudioApp: Identifiable, Hashable {
     let icon: NSImage
     let bundleID: String?
 
+    var persistenceIdentifier: String {
+        bundleID ?? "name:\(name)"
+    }
+
     func hash(into hasher: inout Hasher) {
         hasher.combine(id)
     }
