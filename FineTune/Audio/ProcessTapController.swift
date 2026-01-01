@@ -39,10 +39,11 @@ final class ProcessTapController {
 
     func activate() throws {
         guard !activated else { return }
-        activated = true
 
         logger.debug("Activating tap for \(self.app.name)")
 
+        // NOTE: CATapDescription stereoMixdownOfProcesses produces stereo Float32 interleaved.
+        // The processAudio callback assumes this format.
         // Create process tap
         let tapDescription = CATapDescription(stereoMixdownOfProcesses: [app.objectID])
         tapDescription.uuid = UUID()
@@ -58,8 +59,15 @@ final class ProcessTapController {
         logger.debug("Created process tap #\(tapID)")
 
         // Get system output device
-        let systemOutputID = try AudioDeviceID.readDefaultSystemOutputDevice()
-        let outputUID = try systemOutputID.readDeviceUID()
+        let systemOutputID: AudioDeviceID
+        let outputUID: String
+        do {
+            systemOutputID = try AudioDeviceID.readDefaultSystemOutputDevice()
+            outputUID = try systemOutputID.readDeviceUID()
+        } catch {
+            cleanupPartialActivation()
+            throw error
+        }
 
         // Create aggregate device
         let aggregateUID = UUID().uuidString
@@ -84,6 +92,7 @@ final class ProcessTapController {
         aggregateDeviceID = .unknown
         err = AudioHardwareCreateAggregateDevice(description as CFDictionary, &aggregateDeviceID)
         guard err == noErr else {
+            cleanupPartialActivation()
             throw NSError(domain: NSOSStatusErrorDomain, code: Int(err), userInfo: [NSLocalizedDescriptionKey: "Failed to create aggregate device: \(err)"])
         }
 
@@ -95,18 +104,22 @@ final class ProcessTapController {
             self.processAudio(inInputData, to: outOutputData)
         }
         guard err == noErr else {
+            cleanupPartialActivation()
             throw NSError(domain: NSOSStatusErrorDomain, code: Int(err), userInfo: [NSLocalizedDescriptionKey: "Failed to create IO proc: \(err)"])
         }
 
         // Start the device
         err = AudioDeviceStart(aggregateDeviceID, deviceProcID)
         guard err == noErr else {
+            cleanupPartialActivation()
             throw NSError(domain: NSOSStatusErrorDomain, code: Int(err), userInfo: [NSLocalizedDescriptionKey: "Failed to start device: \(err)"])
         }
 
         // Initialize current to target to skip initial fade-in
         _currentVolume = _volume
 
+        // Only set activated after complete success
+        activated = true
         logger.info("Tap activated for \(self.app.name)")
     }
 
