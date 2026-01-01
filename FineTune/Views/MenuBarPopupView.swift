@@ -43,8 +43,5 @@ struct MenuBarPopupView: View {
         }
         .padding()
         .frame(width: 320)
-        .onDisappear {
-            audioEngine.cleanupStaleTaps()
-        }
     }
 }
