@@ -6,3 +6,6 @@ docs/
 CLAUDE.md
 
 .claude/
+
+# Git worktrees
+.worktrees/
