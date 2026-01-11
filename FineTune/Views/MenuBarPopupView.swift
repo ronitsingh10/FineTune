@@ -8,6 +8,9 @@ struct MenuBarPopupView: View {
     /// Memoized sorted devices - only recomputed when device list or default changes
     @State private var sortedDevices: [AudioDevice] = []
 
+    /// Track which app has its EQ panel expanded (only one at a time)
+    @State private var expandedEQAppID: pid_t?
+
     var body: some View {
         VStack(alignment: .leading, spacing: DesignTokens.Spacing.sm) {
             // Output Devices section
@@ -113,6 +116,20 @@ struct MenuBarPopupView: View {
                             },
                             onDeviceSelected: { newDeviceUID in
                                 audioEngine.setDevice(for: app, deviceUID: newDeviceUID)
+                            },
+                            eqSettings: audioEngine.getEQSettings(for: app),
+                            onEQChange: { settings in
+                                audioEngine.setEQSettings(settings, for: app)
+                            },
+                            isEQExpanded: expandedEQAppID == app.id,
+                            onEQToggle: {
+                                withAnimation(.easeInOut(duration: 0.2)) {
+                                    if expandedEQAppID == app.id {
+                                        expandedEQAppID = nil
+                                    } else {
+                                        expandedEQAppID = app.id
+                                    }
+                                }
                             }
                         )
                     }
