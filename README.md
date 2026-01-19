@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/icon.png" width="128" height="128" alt="FineTune Icon">
+</p>
+
 # FineTune
 
 Per-application audio control for macOS. Set individual volume levels, route apps to different output devices, and apply EQ from your menu bar.
