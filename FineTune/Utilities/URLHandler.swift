@@ -50,28 +50,32 @@ final class URLHandler {
             
             if let stepDirection = queryItems.first(where: { $0.name == "step" })?.value {
                 let currentVolume = audioEngine.getVolume(for: app)
-                let stepAmount: Float = 0.1 // 10% adjustment per step
+                let stepAmount: Double = 0.05 // 10% slider adjustment per step
+                var currentSliderPosition = VolumeMapping.gainToSlider(currentVolume)
                 
-                let newVolume: Float
                 switch stepDirection.lowercased() {
                 case "up", "+":
-                    newVolume = currentVolume + stepAmount
+                    currentSliderPosition = min(1.0, currentSliderPosition + stepAmount)
                 case "down", "-":
-                    newVolume = currentVolume - stepAmount
+                    currentSliderPosition = max(0.0, currentSliderPosition - stepAmount)
                 default:
                     logger.error("Invalid step direction: \(stepDirection). Use 'up' or 'down'")
                     return
                 }
                 
-                let clampedLevel = max(0.0, min(2.0, newVolume))
-                audioEngine.setVolume(for: app, to: clampedLevel)
-                logger.info("Adjusted volume for \(app.name) (\(appIdentifier)) \(stepDirection) from \(currentVolume) to \(clampedLevel)")
+                let newVolume = VolumeMapping.sliderToGain(currentSliderPosition)
+                
+                audioEngine.setVolume(for: app, to: newVolume)
+                logger.info("Adjusted volume for \(app.name) (\(appIdentifier)) \(stepDirection) from \(currentVolume) to \(newVolume)")
             }
             else if let levelString = queryItems.first(where: { $0.name == "level" })?.value,
-                    let level = Float(levelString) {
-                let clampedLevel = max(0.0, min(2.0, level))
-                audioEngine.setVolume(for: app, to: clampedLevel)
-                logger.info("Set volume for \(app.name) (\(appIdentifier)) to \(clampedLevel)")
+                    let sliderLevel = Double(levelString) {
+                // accept 0 - 2 for 0% to 200%
+                let clampedSliderLevel = max(0.0, min(1.0, sliderLevel / 2))
+                let linearGain = VolumeMapping.sliderToGain(clampedSliderLevel)
+                
+                audioEngine.setVolume(for: app, to: linearGain)
+                logger.info("Set volume for \(app.name) (\(appIdentifier)) to \(linearGain) (slider: \(clampedSliderLevel))")
             } else {
                 logger.error("Invalid volume URL parameters: missing 'level' or 'step' parameter")
             }
