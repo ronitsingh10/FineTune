@@ -12,5 +12,16 @@
 	<string>xExSoQmCLDCez0KyhZ9EM9PdOZFZgyX/+VF+OVrpIlo=</string>
 	<key>SUEnableInstallerLauncherService</key>
 	<true/>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>finetune</string>
+			</array>
+			<key>CFBundleURLName</key>
+			<string>com.finetuneapp.FineTune</string>
+		</dict>
+	</array>
 </dict>
 </plist>

@@ -36,6 +36,7 @@
 - **Audio routing** — Send apps to different outputs or follow system default
 - **Volume boost** — Amplify up to 400%
 - **Menu bar app** — Lightweight, always accessible
+- **URL schemes** - Cross app scripting for device switching and per app volume
 
 <p align="center">
   <img src="assets/screenshot-input.png" alt="FineTune input device control" width="400">
@@ -45,6 +46,7 @@
 ## Install
 
 **Homebrew** (recommended)
+
 ```bash
 brew install --cask finetune
 ```
