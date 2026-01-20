@@ -10,5 +10,16 @@
 	<string>https://raw.githubusercontent.com/ronitsingh10/FineTune/main/appcast.xml</string>
 	<key>SUPublicEDKey</key>
 	<string>xExSoQmCLDCez0KyhZ9EM9PdOZFZgyX/+VF+OVrpIlo=</string>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>finetune</string>
+			</array>
+			<key>CFBundleURLName</key>
+			<string>com.finetuneapp.FineTune</string>
+		</dict>
+	</array>
 </dict>
 </plist>

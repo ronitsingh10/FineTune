@@ -36,6 +36,7 @@
 - **Settings panel** — Launch at login, 4 menu bar icon styles, configurable default volume and max boost
 - **App launcher** — Click any app icon to bring it to front
 - **Persistent settings** — Your preferences survive app restarts
+- **URL schemes** - Cross app scripting for device switching and per app volume
 
 ## Installation
 
