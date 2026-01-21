@@ -4,6 +4,9 @@ import SwiftUI
 struct MenuBarPopupView: View {
     @Bindable var audioEngine: AudioEngine
     @Bindable var deviceVolumeMonitor: DeviceVolumeMonitor
+    var settingsManager: SettingsManager
+    var updateChecker: UpdateChecker
+    var currentMenuBarIcon: MenuBarIconOption
 
     /// Memoized sorted devices - only recomputed when device list or default changes
     @State private var sortedDevices: [AudioDevice] = []
@@ -17,6 +20,9 @@ struct MenuBarPopupView: View {
     /// Track popup visibility to pause VU meter polling when hidden
     @State private var isPopupVisible = true
 
+    /// Track whether settings view is shown
+    @State private var showSettings = false
+
     // MARK: - Scroll Thresholds
 
     /// Number of devices before scroll kicks in
@@ -29,6 +35,35 @@ struct MenuBarPopupView: View {
     private let appScrollHeight: CGFloat = 220
 
     var body: some View {
+        Group {
+            if showSettings {
+                SettingsView(isPresented: $showSettings, settingsManager: settingsManager, updateChecker: updateChecker, currentMenuBarIcon: currentMenuBarIcon)
+            } else {
+                mainContent
+            }
+        }
+        .animation(.easeInOut(duration: 0.15), value: showSettings)
+        .onAppear {
+            updateSortedDevices()
+        }
+        .onChange(of: audioEngine.outputDevices) { _, _ in
+            updateSortedDevices()
+        }
+        .onChange(of: deviceVolumeMonitor.defaultDeviceID) { _, _ in
+            updateSortedDevices()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { _ in
+            isPopupVisible = true
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didResignKeyNotification)) { _ in
+            isPopupVisible = false
+        }
+    }
+
+    // MARK: - Main Content
+
+    @ViewBuilder
+    private var mainContent: some View {
         VStack(alignment: .leading, spacing: DesignTokens.Spacing.sm) {
             // Output Devices section
             devicesSection
@@ -62,29 +97,25 @@ struct MenuBarPopupView: View {
         .frame(width: DesignTokens.Dimensions.popupWidth)
         .darkGlassBackground()
         .environment(\.colorScheme, .dark)
-        .onAppear {
-            updateSortedDevices()
-        }
-        .onChange(of: audioEngine.outputDevices) { _, _ in
-            updateSortedDevices()
-        }
-        .onChange(of: deviceVolumeMonitor.defaultDeviceID) { _, _ in
-            updateSortedDevices()
-        }
-        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { _ in
-            isPopupVisible = true
-        }
-        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didResignKeyNotification)) { _ in
-            isPopupVisible = false
-        }
     }
 
     // MARK: - Subviews
 
     @ViewBuilder
     private var devicesSection: some View {
-        SectionHeader(title: "Output Devices")
-            .padding(.bottom, DesignTokens.Spacing.xs)
+        HStack {
+            SectionHeader(title: "Output Devices")
+            Spacer()
+            Button {
+                showSettings = true
+            } label: {
+                Image(systemName: "gearshape")
+                    .font(.system(size: 12))
+            }
+            .buttonStyle(.plain)
+            .iconButtonStyle()
+        }
+        .padding(.bottom, DesignTokens.Spacing.xs)
 
         if sortedDevices.count > deviceScrollThreshold {
             ScrollView {
