@@ -60,8 +60,8 @@ struct PopoverHost<Content: View>: NSViewRepresentable {
 
             panel.becomesKeyOnlyIfNeeded = true
 
-            // Create hosting view with content
-            let hostingView = NSHostingView(rootView: content())
+            // Create hosting view with content, forcing dark color scheme
+            let hostingView = NSHostingView(rootView: content().preferredColorScheme(.dark))
             hostingView.frame.size = hostingView.fittingSize
             panel.contentView = hostingView
             panel.setContentSize(hostingView.fittingSize)
