@@ -23,6 +23,9 @@ final class DeviceVolumeMonitor {
 
     /// Called when any device's mute state changes (deviceID, isMuted)
     var onMuteChanged: ((AudioDeviceID, Bool) -> Void)?
+    
+    /// Called when default device changed (String)
+    var onDefaultDeviceChanged: ((String) -> Void)?
 
     private let deviceMonitor: AudioDeviceMonitor
     private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "FineTune", category: "DeviceVolumeMonitor")
@@ -174,6 +177,11 @@ final class DeviceVolumeMonitor {
             if newDeviceID.isValid {
                 defaultDeviceID = newDeviceID
                 defaultDeviceUID = try? newDeviceID.readDeviceUID()
+                
+                if let newDefaultDeviceUid = defaultDeviceUID {
+                    onDefaultDeviceChanged?(newDefaultDeviceUid)
+                }
+                
                 logger.debug("Default device ID: \(self.defaultDeviceID), UID: \(self.defaultDeviceUID ?? "nil")")
             } else {
                 logger.warning("Default output device is invalid")

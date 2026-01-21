@@ -58,6 +58,10 @@ final class AudioEngine {
                     }
                 }
             }
+            
+            deviceVolumeMonitor.onDefaultDeviceChanged = { [weak self] deviceUID in
+                self?.setDeviceForAllApps(deviceUID)
+            }
 
             processMonitor.onAppsChanged = { [weak self] _ in
                 self?.cleanupStaleTaps()
@@ -67,7 +71,7 @@ final class AudioEngine {
             deviceMonitor.onDeviceDisconnected = { [weak self] deviceUID, deviceName in
                 self?.handleDeviceDisconnected(deviceUID, name: deviceName)
             }
-
+            
             applyPersistedSettings()
         }
     }
@@ -166,6 +170,12 @@ final class AudioEngine {
             }
         } else {
             ensureTapExists(for: app, deviceUID: deviceUID)
+        }
+    }
+    
+    func setDeviceForAllApps(_ deviceUID: String) {
+        apps.forEach { app in
+            setDevice(for: app, deviceUID: deviceUID)
         }
     }
 
