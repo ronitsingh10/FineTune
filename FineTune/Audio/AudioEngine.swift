@@ -168,6 +168,12 @@ final class AudioEngine {
             ensureTapExists(for: app, deviceUID: deviceUID)
         }
     }
+    
+    func setDeviceForAllApps(_ deviceUID: String) {
+        apps.forEach { app in
+            setDevice(for: app, deviceUID: deviceUID)
+        }
+    }
 
     func getDeviceUID(for app: AudioApp) -> String? {
         appDeviceRouting[app.id]
