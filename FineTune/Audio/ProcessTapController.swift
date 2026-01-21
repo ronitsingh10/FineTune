@@ -718,6 +718,7 @@ final class ProcessTapController {
     /// See: https://developer.apple.com/library/archive/qa/qa1467/_index.html
     private func processAudio(_ inputBufferList: UnsafePointer<AudioBufferList>, to outputBufferList: UnsafeMutablePointer<AudioBufferList>) {
         let outputBuffers = UnsafeMutableAudioBufferListPointer(outputBufferList)
+        let inputBuffers = UnsafeMutableAudioBufferListPointer(UnsafeMutablePointer(mutating: inputBufferList))
 
         // Check silence flag first (atomic Bool read)
         // When silencing for device switch, output zeros to prevent clicks
@@ -729,8 +730,6 @@ final class ProcessTapController {
             }
             return
         }
-
-        let inputBuffers = UnsafeMutableAudioBufferListPointer(UnsafeMutablePointer(mutating: inputBufferList))
 
         // Track peak level for VU meter (RT-safe: simple max tracking + smoothing)
         // Always measure INPUT signal so VU shows source activity even when muted
@@ -782,7 +781,21 @@ final class ProcessTapController {
         }
 
         // Copy input to output with ramped gain and soft limiting
-        for (inputBuffer, outputBuffer) in zip(inputBuffers, outputBuffers) {
+        // IMPORTANT: When aggregate device has more input buffers than output buffers
+        // (e.g., USB device with mic input + process tap), the tap audio is in the LAST input buffer.
+        // We need to use the last input buffer, not the first, to get the tap audio.
+        let inputBufferCount = inputBuffers.count
+        let outputBufferCount = outputBuffers.count
+
+        for outputIndex in 0..<outputBufferCount {
+            // Use corresponding input buffer, but if there are more inputs than outputs,
+            // use the LAST input buffer (which contains the tap audio)
+            let inputIndex = inputBufferCount > outputBufferCount ? (inputBufferCount - outputBufferCount + outputIndex) : outputIndex
+            guard inputIndex < inputBufferCount else { continue }
+
+            let inputBuffer = inputBuffers[inputIndex]
+            let outputBuffer = outputBuffers[outputIndex]
+
             guard let inputData = inputBuffer.mData,
                   let outputData = outputBuffer.mData else { continue }
 
@@ -887,7 +900,20 @@ final class ProcessTapController {
         }
 
         // Copy input to output with ramped gain and crossfade
-        for (inputBuffer, outputBuffer) in zip(inputBuffers, outputBuffers) {
+        // IMPORTANT: When aggregate device has more input buffers than output buffers
+        // (e.g., USB device with mic input + process tap), the tap audio is in the LAST input buffer.
+        let inputBufferCount = inputBuffers.count
+        let outputBufferCount = outputBuffers.count
+
+        for outputIndex in 0..<outputBufferCount {
+            // Use corresponding input buffer, but if there are more inputs than outputs,
+            // use the LAST input buffer (which contains the tap audio)
+            let inputIndex = inputBufferCount > outputBufferCount ? (inputBufferCount - outputBufferCount + outputIndex) : outputIndex
+            guard inputIndex < inputBufferCount else { continue }
+
+            let inputBuffer = inputBuffers[inputIndex]
+            let outputBuffer = outputBuffers[outputIndex]
+
             guard let inputData = inputBuffer.mData,
                   let outputData = outputBuffer.mData else { continue }
 
