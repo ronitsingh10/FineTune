@@ -107,6 +107,7 @@ struct MenuBarPopupView: View {
                     isMuted: deviceVolumeMonitor.muteStates[device.id] ?? false,
                     onSetDefault: {
                         deviceVolumeMonitor.setDefaultDevice(device.id)
+                        audioEngine.setDeviceForAllApps(device.uid)
                     },
                     onVolumeChange: { volume in
                         deviceVolumeMonitor.setVolume(for: device.id, to: volume)
