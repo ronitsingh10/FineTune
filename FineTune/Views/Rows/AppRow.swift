@@ -170,6 +170,12 @@ struct AppRow: View {
                                 isEditingVolumeText = false
                                 isEditingVolumeTextVisible = false
                             }
+                            .onChange(of: isEditingVolumeText) { _, newValue in
+                                if !newValue {
+                                    sliderValue = Double(Int(volumeText) ?? 0) / 200.0
+                                    isEditingVolumeTextVisible = false
+                                }
+                            }
                     } else {
                         Text("\(Int((sliderValue * 200).rounded()))%")
                             .percentageStyle()
