@@ -25,6 +25,10 @@ struct AppRow: View {
     @State private var isIconHovered = false
     @State private var isEQButtonHovered = false
     @State private var localEQSettings: EQSettings
+    @FocusState private var isEditingVolumeText: Bool
+    @State private var isEditingVolumeTextHovered = false
+    @State private var isEditingVolumeTextVisible = false
+    @State private var volumeText = ""
 
     /// Show muted icon when explicitly muted OR volume is 0
     private var showMutedIcon: Bool { isMutedExternal || sliderValue == 0 }
@@ -143,8 +147,47 @@ struct AppRow: View {
                     }
 
                     // Volume percentage (0-200% matching slider position)
-                    Text("\(Int(sliderValue * 200))%")
-                        .percentageStyle()
+                    if (isEditingVolumeTextVisible) {
+                        TextField("", text: $volumeText)
+                            .focused($isEditingVolumeText)
+                            .onAppear {
+                                DispatchQueue.main.async {
+                                    volumeText = "\(Int((sliderValue * 200).rounded()))"
+                                    isEditingVolumeText = true
+                                }
+                            }
+                            .onChange(of: volumeText) {_, newValue in
+                                let digits = newValue.filter(\.isWholeNumber)
+                                
+                                if let value = Int(digits) {
+                                    volumeText = "\(min(max(value, 0), 200))"
+                                } else {
+                                    volumeText = ""
+                                }
+                            }
+                            .onSubmit {
+                                sliderValue = Double(Int(volumeText) ?? 0) / 200.0
+                                isEditingVolumeText = false
+                                isEditingVolumeTextVisible = false
+                            }
+                    } else {
+                        Text("\(Int((sliderValue * 200).rounded()))%")
+                            .percentageStyle()
+                            .onHover { hovering in
+                                isEditingVolumeTextHovered = hovering
+                                if hovering {
+                                    NSCursor.pointingHand.push()
+                                } else {
+                                    NSCursor.pop()
+                                }
+                            }
+                            .onTapGesture {
+                                DispatchQueue.main.async {
+                                    isEditingVolumeTextVisible = true
+                                    isEditingVolumeText = true
+                                }
+                            }
+                    }
 
                     // VU Meter (shows gray bars when muted or volume is 0)
                     VUMeter(level: audioLevel, isMuted: showMutedIcon)
