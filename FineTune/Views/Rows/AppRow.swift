@@ -26,7 +26,6 @@ struct AppRow: View {
     @State private var isEQButtonHovered = false
     @State private var localEQSettings: EQSettings
     @FocusState private var isEditingVolumeText: Bool
-    @State private var isEditingVolumeTextHovered = false
     @State private var isEditingVolumeTextVisible = false
     @State private var volumeText = ""
 
@@ -181,7 +180,6 @@ struct AppRow: View {
                         Text("\(Int((sliderValue * 200).rounded()))%")
                             .percentageStyle()
                             .onHover { hovering in
-                                isEditingVolumeTextHovered = hovering
                                 if hovering {
                                     NSCursor.pointingHand.push()
                                 } else {
