@@ -147,8 +147,9 @@ struct AppRow: View {
                     }
 
                     // Volume percentage (0-200% matching slider position)
-                    if (isEditingVolumeTextVisible) {
+                    if isEditingVolumeTextVisible {
                         TextField("", text: $volumeText)
+                            .percentageStyle()
                             .focused($isEditingVolumeText)
                             .onAppear {
                                 DispatchQueue.main.async {
@@ -156,7 +157,7 @@ struct AppRow: View {
                                     isEditingVolumeText = true
                                 }
                             }
-                            .onChange(of: volumeText) {_, newValue in
+                            .onChange(of: volumeText) { _, newValue in
                                 let digits = newValue.filter(\.isWholeNumber)
                                 
                                 if let value = Int(digits) {
@@ -190,7 +191,6 @@ struct AppRow: View {
                             .onTapGesture {
                                 DispatchQueue.main.async {
                                     isEditingVolumeTextVisible = true
-                                    isEditingVolumeText = true
                                 }
                             }
                     }
