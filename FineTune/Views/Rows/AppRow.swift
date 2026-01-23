@@ -166,7 +166,9 @@ struct AppRow: View {
                                 }
                             }
                             .onSubmit {
-                                sliderValue = Double(Int(volumeText) ?? 0) / 200.0
+                                if let value = Int(volumeText) {
+                                    sliderValue = Double(value) / 200.0
+                                }
                                 isEditingVolumeText = false
                                 isEditingVolumeTextVisible = false
                             }
