@@ -286,5 +286,12 @@ final class EQProcessor: @unchecked Sendable {
                 vDSP_Length(frameCount)
             )
         }
+        
+        // 3. Safety Check: Filter Instability / NaN Detection
+        if output[0].isNaN || output[1].isNaN {
+             memset(delayBufferL, 0, Self.delayBufferSize * MemoryLayout<Float>.size)
+             memset(delayBufferR, 0, Self.delayBufferSize * MemoryLayout<Float>.size)
+             memset(output, 0, frameCount * 2 * MemoryLayout<Float>.size)
+        }
     }
 }
