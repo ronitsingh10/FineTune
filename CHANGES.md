@@ -16,9 +16,11 @@ This feature introduces a fully parametric equalizer mode alongside the existing
    - **Custom Presets**: Create, save, and manage unlimited custom parametric presets.
    - **Persistence**: Presets are saved as JSON files in `Application Support/FineTune/EQPresets`.
    - **Import Workflow**:
-     - dedicated **Standalone Import Window** (prevents app dismissal).
+     - Dedicated **Standalone Import Window** (prevents app dismissal).
      - Support for text-based import (copy-paste).
      - File import via system picker.
+   - **Edit Presets**: Pencil button to edit existing presets with pre-populated configuration.
+   - **Delete Presets**: Inline trash button in dropdown for quick preset removal.
 
 3. Hybrid UI:
    - **Graphic Mode**: Preserves the original 10-band slider interface.
@@ -49,7 +51,7 @@ This feature introduces a fully parametric equalizer mode alongside the existing
   - Added text parsing logic for parametric imports.
 
 - **New Models**:
-  - `CustomEQPreset.swift`: Codable model for user presets.
+  - `CustomEQPreset.swift`: Codable model for user presets with `configurationText` serialization.
   - `EQBand.swift`: Struct representing a generic filter band.
   - `FilterType.swift`: Enum for filter types (Peak, LowShelf, HighShelf).
 
@@ -63,6 +65,11 @@ This feature introduces a fully parametric equalizer mode alongside the existing
 ### UI Components
 
 - **ImportWindowManager.swift**:
-  - Manages a detached `NSWindow` for the import interface, ensuring the UI remains accessible when the main menu bar app loses focus.
+  - Manages a detached `NSWindow` for import/edit interfaces.
+  - Supports both "New" and "Edit" modes with preset pre-population.
 - **ParametricPresetPicker.swift**:
   - Custom dropdown matching the app's design system (`GroupedDropdownMenu`).
+  - Inline delete buttons with automatic UI refresh.
+- **EQPanelView.swift**:
+  - Edit button (pencil icon) for modifying selected presets.
+  - Fixed segmented control constraint warnings.
