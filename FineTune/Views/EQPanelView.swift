@@ -23,6 +23,7 @@ struct EQPanelView: View {
     
     // We use a State to trigger the window opening, but we don't bind it to a sheet modifier anymore.
     @State private var isImportingParametric: Bool = false
+    @State private var isEditingPreset: Bool = false
 
     var body: some View {
         // Entire EQ panel content inside recessed background
@@ -77,8 +78,24 @@ struct EQPanelView: View {
                                 settings.preampGain = preset.preampGain
                                 settings.parametricBands = preset.bands
                                 onSettingsChanged(settings)
+                            },
+                            onDeletePreset: { preset in
+                                PresetManager.shared.deletePreset(preset)
                             }
                         )
+                        
+                        // Edit button (only visible when a preset is selected)
+                        if currentParametricPreset != nil {
+                            Button(action: {
+                                isEditingPreset = true
+                            }) {
+                                Image(systemName: "pencil")
+                                    .font(.system(size: 11))
+                            }
+                            .buttonStyle(.plain)
+                            .foregroundColor(.accentColor)
+                            .help("Edit preset")
+                        }
                     }
                 }
             }
@@ -128,6 +145,17 @@ struct EQPanelView: View {
                 }
                 // Reset trigger immediately so it can be triggered again later if needed
                 isImportingParametric = false
+            }
+        }
+        .onChange(of: isEditingPreset) { _, newValue in
+            if newValue, let preset = currentParametricPreset {
+                // Open Edit Window
+                ImportWindowManager.shared.showEditWindow(preset: preset) { updatedPreset in
+                    settings.preampGain = updatedPreset.preampGain
+                    settings.parametricBands = updatedPreset.bands
+                    onSettingsChanged(settings)
+                }
+                isEditingPreset = false
             }
         }
         // No outer background - parent ExpandableGlassRow provides the glass container

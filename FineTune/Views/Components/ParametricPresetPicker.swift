@@ -5,6 +5,7 @@ struct ParametricPresetPicker: View {
     @Binding var isImportSheetPresented: Bool
     var selectedPreset: CustomEQPreset?
     let onApplyPreset: (CustomEQPreset) -> Void
+    let onDeletePreset: (CustomEQPreset) -> Void
     
     // Wrapper for menu items
     enum PickerItem: Identifiable, Hashable {
@@ -46,10 +47,10 @@ struct ParametricPresetPicker: View {
                 }
             },
             sectionTitle: { $0.rawValue },
-            selectedItem: nil, // No persistent selection state shown in header usually for this pattern, or maybe we track it?
+            selectedItem: nil,
             maxHeight: 300,
             width: 140,
-            popoverWidth: 200,
+            popoverWidth: 220,
             onSelect: { item in
                 switch item {
                 case .preset(let p):
@@ -66,7 +67,18 @@ struct ParametricPresetPicker: View {
                 switch item {
                 case .preset(let p):
                     Text(p.name)
+                        .lineLimit(1)
                     Spacer()
+                    // Delete button
+                    Button(action: {
+                        onDeletePreset(p)
+                    }) {
+                        Image(systemName: "trash")
+                            .font(.system(size: 10))
+                            .foregroundColor(.red.opacity(0.7))
+                    }
+                    .buttonStyle(.plain)
+                    .help("Delete preset")
                 case .importAction:
                     Label("Import Preset...", systemImage: "square.and.arrow.down")
                         .foregroundColor(.accentColor)

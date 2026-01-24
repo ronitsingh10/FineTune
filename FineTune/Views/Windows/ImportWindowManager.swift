@@ -6,17 +6,28 @@ class ImportWindowManager: NSObject, NSWindowDelegate {
     static let shared = ImportWindowManager()
     
     private var importWindow: NSWindow?
-    private var onDismiss: (() -> Void)?
     
     // Explicitly prevent init from outside
     private override init() {
         super.init()
     }
     
-    /// Opens the Import Preset window.
+    /// Opens the Import Preset window for creating a new preset.
     /// - Parameters:
     ///   - onImport: Callback when a preset is successfully imported.
     func showImportWindow(onImport: @escaping (CustomEQPreset) -> Void) {
+        showWindow(existingPreset: nil, onSave: onImport)
+    }
+    
+    /// Opens the Import Preset window for editing an existing preset.
+    /// - Parameters:
+    ///   - preset: The preset to edit.
+    ///   - onSave: Callback when the preset is saved.
+    func showEditWindow(preset: CustomEQPreset, onSave: @escaping (CustomEQPreset) -> Void) {
+        showWindow(existingPreset: preset, onSave: onSave)
+    }
+    
+    private func showWindow(existingPreset: CustomEQPreset?, onSave: @escaping (CustomEQPreset) -> Void) {
         // If window already exists, bring to front
         if let window = importWindow {
             window.makeKeyAndOrderFront(nil)
@@ -33,10 +44,9 @@ class ImportWindowManager: NSObject, NSWindowDelegate {
         let contentView = ImportPresetSheet(
             isPresented: isPresentedBinding,
             onPresetImported: { preset in
-                onImport(preset)
-                // Closure is handled by the sheet setting isPresented=false or we do it here?
-                // ImportPresetSheet calls saveAndDismiss -> isPresented = false -> self.closeWindow()
-            }
+                onSave(preset)
+            },
+            existingPreset: existingPreset
         )
         
         // Create Window
@@ -46,13 +56,11 @@ class ImportWindowManager: NSObject, NSWindowDelegate {
         // Configure Window Style
         window.styleMask = [.titled, .closable, .fullSizeContentView]
         window.isMovableByWindowBackground = true
-        window.title = "Import Preset"
+        window.title = existingPreset != nil ? "Edit Preset" : "Import Preset"
         window.titlebarAppearsTransparent = true
         window.titleVisibility = .hidden
         
         // Set Frame / Position
-        // Sheet specifies frame(450, 500) so hosting controller should respect that.
-        // We set contentSize to be safe.
         window.setContentSize(NSSize(width: 450, height: 500))
         window.center()
         

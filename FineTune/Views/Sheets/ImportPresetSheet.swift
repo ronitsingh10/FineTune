@@ -5,13 +5,18 @@ struct ImportPresetSheet: View {
     @Binding var isPresented: Bool
     let onPresetImported: (CustomEQPreset) -> Void
     
+    /// If provided, the sheet is in "Edit Mode" and will update the existing preset.
+    var existingPreset: CustomEQPreset?
+    
     @State private var presetName: String = ""
     @State private var text: String = ""
     @State private var isImporterPresented: Bool = false
     
+    private var isEditMode: Bool { existingPreset != nil }
+    
     var body: some View {
         VStack(spacing: 20) {
-            Text("New Parametric Preset")
+            Text(isEditMode ? "Edit Preset" : "New Parametric Preset")
                 .font(.headline)
             
             VStack(alignment: .leading, spacing: 8) {
@@ -59,7 +64,7 @@ struct ImportPresetSheet: View {
                 
                 Spacer()
                 
-                Button("Save Preset") {
+                Button(isEditMode ? "Save Changes" : "Save Preset") {
                     saveAndDismiss()
                 }
                 .buttonStyle(.borderedProminent)
@@ -69,6 +74,13 @@ struct ImportPresetSheet: View {
         }
         .padding()
         .frame(width: 450, height: 500)
+        .onAppear {
+            // Pre-populate fields if editing an existing preset
+            if let preset = existingPreset {
+                presetName = preset.name
+                text = preset.configurationText
+            }
+        }
         .fileImporter(
             isPresented: $isImporterPresented,
             allowedContentTypes: [.text, .plainText],
@@ -105,17 +117,29 @@ struct ImportPresetSheet: View {
     private func saveAndDismiss() {
         let (preamp, bands) = EQSettings.parseParametricText(text)
         
-        let newPreset = CustomEQPreset(
-            name: presetName,
-            preampGain: preamp,
-            bands: bands
-        )
+        let presetToSave: CustomEQPreset
+        if let existing = existingPreset {
+            // Update existing preset (keep same UUID)
+            presetToSave = CustomEQPreset(
+                id: existing.id,
+                name: presetName,
+                preampGain: preamp,
+                bands: bands
+            )
+        } else {
+            // Create new preset
+            presetToSave = CustomEQPreset(
+                name: presetName,
+                preampGain: preamp,
+                bands: bands
+            )
+        }
         
         // Save to storage
-        PresetManager.shared.savePreset(newPreset)
+        PresetManager.shared.savePreset(presetToSave)
         
         // Callback
-        onPresetImported(newPreset)
+        onPresetImported(presetToSave)
         isPresented = false
     }
 }
