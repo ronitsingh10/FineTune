@@ -152,10 +152,8 @@ struct AppRow: View {
                             .percentageStyle()
                             .focused($isEditingVolumeText)
                             .onAppear {
-                                DispatchQueue.main.async {
-                                    volumeText = "\(Int((sliderValue * 200).rounded()))"
-                                    isEditingVolumeText = true
-                                }
+                                volumeText = "\(Int((sliderValue * 200).rounded()))"
+                                isEditingVolumeText = true
                             }
                             .onChange(of: volumeText) { _, newValue in
                                 let digits = newValue.filter(\.isWholeNumber)
