@@ -86,5 +86,7 @@ struct ParametricPresetPicker: View {
                 }
             }
         }
+        // Force re-render when presets change (e.g., after deletion)
+        .id(presetManager.presets.map(\.id))
     }
 }
