@@ -133,7 +133,7 @@ final class EQProcessor: @unchecked Sendable {
         // This is safe to call while the filter is processing (Apple Docs)
         if let setup = _eqSetup {
             allCoeffs.withUnsafeBufferPointer { ptr in
-                vDSP_biquad_SetCoefficientsDouble(setup, ptr.baseAddress!)
+                vDSP_biquad_SetCoefficientsDouble(setup, ptr.baseAddress!, 0, vDSP_Length(Self.maxSections))
             }
         }
     }
