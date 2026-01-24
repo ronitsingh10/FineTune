@@ -1,3 +1,4 @@
+import Foundation
 import os
 
 @MainActor
@@ -11,15 +12,9 @@ class PresetManager: ObservableObject {
     private let encoder = JSONEncoder()
     private let decoder = JSONDecoder()
     
-    private var presetsDirectory: URL? {
-        fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first?.appendingPathComponent("Permissions") // Wait, "Permissions"? Copy-paste error usually. Let's use "Presets"
-    }
-
-    // Actually, let's use a specific folder 'EQPresets' inside AppSupport
     private var dataFolder: URL? {
         guard let appSupport = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else { return nil }
-        let folder = appSupport.appendingPathComponent("FineTune/EQPresets")
-        return folder
+        return appSupport.appendingPathComponent("FineTune/EQPresets")
     }
     
     private init() {
