@@ -14,6 +14,7 @@ struct EQPanelView: View {
         }
     }
     
+    // We use a State to trigger the window opening, but we don't bind it to a sheet modifier anymore.
     @State private var isImportingParametric: Bool = false
 
     var body: some View {
@@ -109,15 +110,17 @@ struct EQPanelView: View {
         }
         .padding(.horizontal, 2)
         .padding(.vertical, 4)
-        .sheet(isPresented: $isImportingParametric) {
-            ImportPresetSheet(
-                isPresented: $isImportingParametric,
-                onPresetImported: { preset in
+        .onChange(of: isImportingParametric) { _, newValue in
+            if newValue {
+                // Open Standalone Window
+                ImportWindowManager.shared.showImportWindow { preset in
                     settings.preampGain = preset.preampGain
                     settings.parametricBands = preset.bands
                     onSettingsChanged(settings)
                 }
-            )
+                // Reset trigger immediately so it can be triggered again later if needed
+                isImportingParametric = false
+            }
         }
         // No outer background - parent ExpandableGlassRow provides the glass container
     }

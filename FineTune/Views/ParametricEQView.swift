@@ -83,6 +83,6 @@ struct ParametricEQView: View {
         }
         }
     }
-}
+
 
 

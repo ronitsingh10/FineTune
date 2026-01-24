@@ -114,4 +114,3 @@ enum BiquadMath {
             return allCoeffs
         }
     }
-}
