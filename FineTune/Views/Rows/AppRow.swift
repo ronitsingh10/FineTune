@@ -173,9 +173,8 @@ struct AppRow: View {
                                 isEditingVolumeText = false
                                 isEditingVolumeTextVisible = false
                             }
-                            .onChange(of: isEditingVolumeText) { _, newValue in
-                                if !newValue {
-                                    sliderValue = Double(Int(volumeText) ?? 0) / 200.0
+                            .onChange(of: isEditingVolumeText) { _, focused in
+                                if !focused {
                                     isEditingVolumeTextVisible = false
                                 }
                             }
