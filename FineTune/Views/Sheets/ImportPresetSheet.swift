@@ -45,6 +45,9 @@ struct ImportPresetSheet: View {
                 Text("Format: 'Filter 1: ON PK Fc 100 Hz Gain -3.0 dB Q 2.0'")
                     .font(.caption2)
                     .foregroundColor(.secondary)
+                Text("If you are using AutoEQ use the SoundSource preset")
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
             }
             
             HStack {
