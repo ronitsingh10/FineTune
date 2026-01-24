@@ -35,35 +35,57 @@ struct EQPanelView: View {
 
                 Spacer()
 
-                // Preset picker on right
+                // Preset picker on right (Only visible in Graphic Mode)
                 HStack(spacing: DesignTokens.Spacing.sm) {
-                    Text("Preset")
-                        .font(DesignTokens.Typography.pickerText)
-                        .foregroundColor(DesignTokens.Colors.textSecondary)
+                    // Mode Picker (Graphic / Parametric)
+                    Picker("Mode", selection: $settings.mode) {
+                        Text("Graphic").tag(EQSettings.Mode.graphic)
+                        Text("Parametric").tag(EQSettings.Mode.parametric)
+                    }
+                    .pickerStyle(.segmented)
+                    .frame(width: 140)
+                    .onChange(of: settings.mode) { _, _ in
+                         onSettingsChanged(settings)
+                    }
 
-                    EQPresetPicker(
-                        selectedPreset: currentPreset,
-                        onPresetSelected: onPresetSelected
-                    )
+                    if settings.mode == .graphic {
+                        Text("Preset")
+                            .font(DesignTokens.Typography.pickerText)
+                            .foregroundColor(DesignTokens.Colors.textSecondary)
+
+                        EQPresetPicker(
+                            selectedPreset: currentPreset,
+                            onPresetSelected: onPresetSelected
+                        )
+                    }
                 }
             }
             .zIndex(1)  // Ensure dropdown renders above sliders
 
-            // 10-band sliders
-            HStack(spacing: 22) {
-                ForEach(0..<10, id: \.self) { index in
-                    EQSliderView(
-                        frequency: frequencyLabels[index],
-                        gain: Binding(
-                            get: { settings.bandGains[index] },
-                            set: { newValue in
-                                settings.bandGains[index] = newValue
-                                onSettingsChanged(settings)
-                            }
+
+
+            // Content Area based on Mode
+            if settings.mode == .graphic {
+                // 10-band sliders
+                HStack(spacing: 22) {
+                    ForEach(0..<10, id: \.self) { index in
+                        EQSliderView(
+                            frequency: frequencyLabels[index],
+                            gain: Binding(
+                                get: { settings.bandGains[index] },
+                                set: { newValue in
+                                    settings.bandGains[index] = newValue
+                                    onSettingsChanged(settings)
+                                }
+                            )
                         )
-                    )
-                    .frame(width: 26, height: 100)
+                        .frame(width: 26, height: 100)
+                    }
                 }
+            } else {
+                // Parametric View
+                ParametricEQView(settings: $settings, onSettingsChanged: onSettingsChanged)
+                    .frame(height: 120) // Match approximate height of slider view
             }
         }
         .padding(.horizontal, 12)

@@ -8,7 +8,9 @@ final class EQProcessor: @unchecked Sendable {
     private let logger = Logger(subsystem: "com.finetune.audio", category: "EQProcessor")
 
     /// Number of delay samples per channel: (2 * sections) + 2
-    private static let delayBufferSize = (2 * EQSettings.bandCount) + 2  // 22
+    /// Increased to accommodate up to 64 parametric bands (safe margin)
+    private static let maxSections = 64
+    private static let delayBufferSize = (2 * maxSections) + 2
 
     private var sampleRate: Double
 
@@ -58,13 +60,60 @@ final class EQProcessor: @unchecked Sendable {
         _isEnabled = settings.isEnabled
         _currentSettings = settings
 
-        let coefficients = BiquadMath.coefficientsForAllBands(
-            gains: settings.clampedGains,
-            sampleRate: sampleRate
-        )
-
-        let newSetup = coefficients.withUnsafeBufferPointer { ptr in
-            vDSP_biquad_CreateSetup(ptr.baseAddress!, vDSP_Length(EQSettings.bandCount))
+        let coefficients: [Double]
+        let bandCount: vDSP_Length
+        
+        if settings.mode == .graphic {
+            // Legacy Path: 10-band Graphic EQ
+            coefficients = BiquadMath.coefficientsForAllBands(
+                gains: settings.clampedGains,
+                sampleRate: sampleRate
+            )
+            bandCount = vDSP_Length(EQSettings.bandCount)
+        } else {
+            // Parametric Path: Variable bands
+            var coeffs: [Double] = []
+            let activeBands = settings.parametricBands.filter { $0.isEnabled }
+            bandCount = vDSP_Length(activeBands.count)
+            
+            for band in activeBands {
+                let bandCoeffs: [Double]
+                switch band.type {
+                case .peak:
+                    bandCoeffs = BiquadMath.peakingEQCoefficients(
+                        frequency: band.frequency,
+                        gainDB: band.gain,
+                        q: band.Q,
+                        sampleRate: sampleRate
+                    )
+                case .lowShelf:
+                    bandCoeffs = BiquadMath.lowShelfCoefficients(
+                        frequency: band.frequency,
+                        gainDB: band.gain,
+                        q: band.Q,
+                        sampleRate: sampleRate
+                    )
+                case .highShelf:
+                    bandCoeffs = BiquadMath.highShelfCoefficients(
+                        frequency: band.frequency,
+                        gainDB: band.gain,
+                        q: band.Q,
+                        sampleRate: sampleRate
+                    )
+                }
+                coeffs.append(contentsOf: bandCoeffs)
+            }
+            coefficients = coeffs
+        }
+        
+        // Ensure at least one band exists to create a valid setup
+        let newSetup: vDSP_biquad_Setup?
+        if bandCount > 0 {
+            newSetup = coefficients.withUnsafeBufferPointer { ptr in
+                vDSP_biquad_CreateSetup(ptr.baseAddress!, bandCount)
+            }
+        } else {
+            newSetup = nil
         }
 
         // Swap setup atomically
@@ -104,14 +153,60 @@ final class EQProcessor: @unchecked Sendable {
         logger.info("[EQ] Sample rate updated: \(oldRate, format: .fixed(precision: 0))Hz → \(newRate, format: .fixed(precision: 0))Hz")
 
         // Recalculate coefficients with new sample rate
-        let coefficients = BiquadMath.coefficientsForAllBands(
-            gains: settings.clampedGains,
-            sampleRate: newRate
-        )
+        // Check mode to decide how to generate coefficients
+        let coefficients: [Double]
+        let bandCount: vDSP_Length
+        
+        if settings.mode == .graphic {
+            coefficients = BiquadMath.coefficientsForAllBands(
+                gains: settings.clampedGains,
+                sampleRate: newRate
+            )
+            bandCount = vDSP_Length(EQSettings.bandCount)
+        } else {
+            // Parametric Path
+            var coeffs: [Double] = []
+            let activeBands = settings.parametricBands.filter { $0.isEnabled }
+            bandCount = vDSP_Length(activeBands.count)
+            
+            for band in activeBands {
+                let bandCoeffs: [Double]
+                switch band.type {
+                case .peak:
+                    bandCoeffs = BiquadMath.peakingEQCoefficients(
+                        frequency: band.frequency,
+                        gainDB: band.gain,
+                        q: band.Q,
+                        sampleRate: newRate
+                    )
+                case .lowShelf:
+                    bandCoeffs = BiquadMath.lowShelfCoefficients(
+                        frequency: band.frequency,
+                        gainDB: band.gain,
+                        q: band.Q,
+                        sampleRate: newRate
+                    )
+                case .highShelf:
+                    bandCoeffs = BiquadMath.highShelfCoefficients(
+                        frequency: band.frequency,
+                        gainDB: band.gain,
+                        q: band.Q,
+                        sampleRate: newRate
+                    )
+                }
+                coeffs.append(contentsOf: bandCoeffs)
+            }
+            coefficients = coeffs
+        }
 
         // Create new biquad setup
-        let newSetup = coefficients.withUnsafeBufferPointer { ptr in
-            vDSP_biquad_CreateSetup(ptr.baseAddress!, vDSP_Length(EQSettings.bandCount))
+        let newSetup: vDSP_biquad_Setup?
+        if bandCount > 0 {
+             newSetup = coefficients.withUnsafeBufferPointer { ptr in
+                vDSP_biquad_CreateSetup(ptr.baseAddress!, bandCount)
+            }
+        } else {
+            newSetup = nil
         }
 
         // Atomic swap (RT-safe)
@@ -139,36 +234,49 @@ final class EQProcessor: @unchecked Sendable {
         // Read atomic state
         let enabled = _isEnabled
         let setup = _eqSetup
-
-        // Bypass: copy input to output
-        guard enabled, let setup = setup else {
+        let settings = _currentSettings // Grab reference to settings for preamp
+        
+        // If EQ globally disabled, bypass
+        guard enabled else {
             memcpy(output, input, frameCount * 2 * MemoryLayout<Float>.size)
             return
         }
 
-        // Copy input to output first (in-place processing)
-        memcpy(output, input, frameCount * 2 * MemoryLayout<Float>.size)
+        // 1. Copy input to output (in-place processing)
+        // Apply Preamp Gain if non-zero
+        let preampDB = settings?.preampGain ?? 0.0
+        
+        if abs(preampDB) > 0.001 {
+            let linearGain = pow(10.0, preampDB / 20.0)
+            var gain = linearGain // vDSP needs a variable pointer
+            vDSP_vsmul(input, 1, &gain, output, 1, vDSP_Length(frameCount * 2))
+        } else {
+            memcpy(output, input, frameCount * 2 * MemoryLayout<Float>.size)
+        }
+        
+        // 2. Apply Biquads (if setup exists)
+        if let setup = setup {
+            // Process left channel (stride=2, starts at index 0)
+            vDSP_biquad(
+                setup,
+                delayBufferL,
+                output,
+                2,
+                output,
+                2,
+                vDSP_Length(frameCount)
+            )
 
-        // Process left channel (stride=2, starts at index 0)
-        vDSP_biquad(
-            setup,
-            delayBufferL,
-            output,
-            2,
-            output,
-            2,
-            vDSP_Length(frameCount)
-        )
-
-        // Process right channel (stride=2, starts at index 1)
-        vDSP_biquad(
-            setup,
-            delayBufferR,
-            output.advanced(by: 1),
-            2,
-            output.advanced(by: 1),
-            2,
-            vDSP_Length(frameCount)
-        )
+            // Process right channel (stride=2, starts at index 1)
+            vDSP_biquad(
+                setup,
+                delayBufferR,
+                output.advanced(by: 1),
+                2,
+                output.advanced(by: 1),
+                2,
+                vDSP_Length(frameCount)
+            )
+        }
     }
 }
