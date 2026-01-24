@@ -23,6 +23,7 @@ final class EQProcessor: @unchecked Sendable {
     // Lock-free state for RT-safe access
     private nonisolated(unsafe) var _eqSetup: vDSP_biquad_Setup?
     private nonisolated(unsafe) var _isEnabled: Bool = true
+    private nonisolated(unsafe) var _preampGainLinear: Float = 1.0
 
     // Pre-allocated delay buffers (raw pointers for RT-safety)
     private let delayBufferL: UnsafeMutablePointer<Float>
@@ -59,6 +60,11 @@ final class EQProcessor: @unchecked Sendable {
     func updateSettings(_ settings: EQSettings) {
         _isEnabled = settings.isEnabled
         _currentSettings = settings
+        
+        // Pre-calculate linear preamp gain for RT thread
+        // gain = 10^(dB/20)
+        let db = settings.preampGain
+        _preampGainLinear = pow(10.0, db / 20.0)
 
         let coefficients: [Double]
         let bandCount: vDSP_Length
@@ -234,7 +240,6 @@ final class EQProcessor: @unchecked Sendable {
         // Read atomic state
         let enabled = _isEnabled
         let setup = _eqSetup
-        let settings = _currentSettings // Grab reference to settings for preamp
         
         // If EQ globally disabled, bypass
         guard enabled else {
@@ -243,12 +248,15 @@ final class EQProcessor: @unchecked Sendable {
         }
 
         // 1. Copy input to output (in-place processing)
-        // Apply Preamp Gain if non-zero
-        let preampDB = settings?.preampGain ?? 0.0
+        // Apply Preamp Gain if non-unity
+        // Safe to read nonisolated(unsafe) Float (atomic-ish on modern arch for aligned Word)
+        // Note: _preampGainLinear is always updated on main thread before swap
+        // To be strictly correct conform to C++ memory model, but here consistent with _isEnabled usage.
+        var gain = _preampGainLinear
         
-        if abs(preampDB) > 0.001 {
-            let linearGain = pow(10.0, preampDB / 20.0)
-            var gain = linearGain // vDSP needs a variable pointer
+        // If gain is effectively 1.0 (0dB), just copy. 
+        // 0.001 tolerance for float precision (approx -60dB error or so? No, 1.0 is unity)
+        if abs(gain - 1.0) > 0.0001 {
             vDSP_vsmul(input, 1, &gain, output, 1, vDSP_Length(frameCount * 2))
         } else {
             memcpy(output, input, frameCount * 2 * MemoryLayout<Float>.size)
