@@ -80,9 +80,15 @@ final class EQProcessor: @unchecked Sendable {
             // Parametric Path: Variable bands
             var coeffs: [Double] = []
             let activeBands = settings.parametricBands.filter { $0.isEnabled }
-            bandCount = vDSP_Length(activeBands.count)
+            // Clamp to max supported sections to prevent delay buffer overflow
+            let safeBands = activeBands.prefix(Self.maxSections)
+            if activeBands.count > Self.maxSections {
+                logger.warning("Too many bands active (\(activeBands.count)). Clamping to \(Self.maxSections).")
+            }
             
-            for band in activeBands {
+            bandCount = vDSP_Length(safeBands.count)
+            
+            for band in safeBands {
                 let bandCoeffs: [Double]
                 switch band.type {
                 case .peak:
@@ -173,9 +179,10 @@ final class EQProcessor: @unchecked Sendable {
             // Parametric Path
             var coeffs: [Double] = []
             let activeBands = settings.parametricBands.filter { $0.isEnabled }
-            bandCount = vDSP_Length(activeBands.count)
+            let safeBands = activeBands.prefix(Self.maxSections)
+            bandCount = vDSP_Length(safeBands.count)
             
-            for band in activeBands {
+            for band in safeBands {
                 let bandCoeffs: [Double]
                 switch band.type {
                 case .peak:
