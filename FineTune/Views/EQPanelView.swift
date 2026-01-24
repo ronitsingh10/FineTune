@@ -51,7 +51,7 @@ struct EQPanelView: View {
                     Text("Parametric").tag(EQSettings.Mode.parametric)
                 }
                 .pickerStyle(.segmented)
-                .frame(width: 130)
+                .frame(width: 150)
                 .onChange(of: settings.mode) { _, _ in
                      onSettingsChanged(settings)
                 }
