@@ -12,36 +12,57 @@ This feature introduces a fully parametric equalizer mode alongside the existing
    - Adjustable Q-factor / Bandwidth for all filter types
    - Global Preamp Gain control
 
-2. Import Workflow:
-   - Text-based import for EQ settings
-   - Compatible with common formats (e.g., "Filter 1: ON PK Fc 100 Hz Gain -3.0 dB Q 2.0")
+2. Preset Management System:
+   - **Custom Presets**: Create, save, and manage unlimited custom parametric presets.
+   - **Persistence**: Presets are saved as JSON files in `Application Support/FineTune/EQPresets`.
+   - **Import Workflow**:
+     - dedicated **Standalone Import Window** (prevents app dismissal).
+     - Support for text-based import (copy-paste).
+     - File import via system picker.
 
 3. Hybrid UI:
-   - **Graphic Mode**: Preserves the original 10-band slider interface
-   - **Parametric Mode**: New read-only list view with import capabilities
+   - **Graphic Mode**: Preserves the original 10-band slider interface.
+   - **Parametric Mode**: New read-only list view with import capabilities.
+   - **Unified Header**: Seamless switching between modes and consistent preset pickers.
 
 ## Architecture Changes
 
 ### Audio Engine
 
 - **EQProcessor.swift**:
-  - Unified processing loop using `vDSP_biquad` for both graphic and parametric modes
-  - Implemented thread-safe (lock-free) Preamp gain application
-  - Dynamic coeffecient generation based on active mode
+  - Unified processing loop using `vDSP_biquad` for both graphic and parametric modes.
+  - Implemented thread-safe (lock-free) Preamp gain application.
+  - **Stability**: Added NaN (Not-a-Number) detection and automatic filter reset preventing audio dropouts during rapid parameter changes.
+  - Dynamic coefficient generation based on active mode.
 
 - **BiquadMath.swift**:
   - Added RBJ Cookbook implementations for:
     - `lowShelfCoefficients`
     - `highShelfCoefficients`
-  - Refined `peakingEQCoefficients` for consistency
+  - Refined `peakingEQCoefficients` for consistency.
 
 ### Data Models
 
 - **EQSettings.swift**:
-  - Added `Mode` enum (`.graphic`, `.parametric`)
-  - Added `parametricBands` array
-  - Added text parsing logic for parametric imports
+  - Added `Mode` enum (`.graphic`, `.parametric`).
+  - Added `parametricBands` array.
+  - Added text parsing logic for parametric imports.
 
 - **New Models**:
-  - `EQBand.swift`: Struct representing a generic filter band
-  - `FilterType.swift`: Enum for filter types (Peak, LowShelf, HighShelf)
+  - `CustomEQPreset.swift`: Codable model for user presets.
+  - `EQBand.swift`: Struct representing a generic filter band.
+  - `FilterType.swift`: Enum for filter types (Peak, LowShelf, HighShelf).
+
+### Services
+
+- **PresetManager.swift**:
+  - Singleton service managing CRUD operations for custom presets.
+  - Handles JSON encoding/decoding and file system interactions.
+  - Uses `Combine` for reactive UI updates.
+
+### UI Components
+
+- **ImportWindowManager.swift**:
+  - Manages a detached `NSWindow` for the import interface, ensuring the UI remains accessible when the main menu bar app loses focus.
+- **ParametricPresetPicker.swift**:
+  - Custom dropdown matching the app's design system (`GroupedDropdownMenu`).
