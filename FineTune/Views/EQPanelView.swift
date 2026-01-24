@@ -13,6 +13,13 @@ struct EQPanelView: View {
             preset.settings.bandGains == settings.bandGains
         }
     }
+
+    private var currentParametricPreset: CustomEQPreset? {
+        PresetManager.shared.presets.first { preset in
+            // Compare values (bands and preamp) to identify if we match a saved preset
+            preset.preampGain == settings.preampGain && preset.bands == settings.parametricBands
+        }
+    }
     
     // We use a State to trigger the window opening, but we don't bind it to a sheet modifier anymore.
     @State private var isImportingParametric: Bool = false
@@ -65,6 +72,7 @@ struct EQPanelView: View {
                     } else {
                         ParametricPresetPicker(
                             isImportSheetPresented: $isImportingParametric,
+                            selectedPreset: currentParametricPreset,
                             onApplyPreset: { preset in
                                 settings.preampGain = preset.preampGain
                                 settings.parametricBands = preset.bands

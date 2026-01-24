@@ -13,7 +13,12 @@ struct ParametricEQView: View {
                     .font(DesignTokens.Typography.pickerText)
                     .foregroundColor(DesignTokens.Colors.textSecondary)
                 
-                Spacer()
+                Text("•")
+                    .foregroundColor(DesignTokens.Colors.textTertiary)
+                
+                Text(String(format: "Preamp: %+.1f dB", settings.preampGain))
+                    .font(DesignTokens.Typography.pickerText)
+                    .foregroundColor(DesignTokens.Colors.textSecondary)
                 
                 Spacer()
             }

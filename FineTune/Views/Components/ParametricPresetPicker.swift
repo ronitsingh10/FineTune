@@ -3,6 +3,7 @@ import SwiftUI
 struct ParametricPresetPicker: View {
     @ObservedObject var presetManager = PresetManager.shared
     @Binding var isImportSheetPresented: Bool
+    var selectedPreset: CustomEQPreset?
     let onApplyPreset: (CustomEQPreset) -> Void
     
     // Wrapper for menu items
@@ -58,7 +59,8 @@ struct ParametricPresetPicker: View {
                 }
             }
         ) { _ in // Label
-            Text("Presets")
+            Text(selectedPreset?.name ?? "Custom Presets")
+                .foregroundColor(selectedPreset != nil ? .primary : DesignTokens.Colors.textSecondary)
         } itemContent: { item, isSelected in
             HStack {
                 switch item {
