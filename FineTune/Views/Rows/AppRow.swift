@@ -137,6 +137,7 @@ struct AppRow: View {
                     .frame(width: DesignTokens.Dimensions.sliderWidth)
                     .opacity(showMutedIcon ? 0.5 : 1.0)
                     .onChange(of: sliderValue) { _, newValue in
+                        isEditingVolumeText = false
                         let gain = VolumeMapping.sliderToGain(newValue)
                         onVolumeChange(gain)
                         // Auto-unmute when slider moved while muted
