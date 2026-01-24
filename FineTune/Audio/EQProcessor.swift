@@ -243,7 +243,9 @@ final class EQProcessor: @unchecked Sendable {
         
         // If EQ globally disabled, bypass
         guard enabled else {
-            memcpy(output, input, frameCount * 2 * MemoryLayout<Float>.size)
+            if input != UnsafePointer(output) {
+                memcpy(output, input, frameCount * 2 * MemoryLayout<Float>.size)
+            }
             return
         }
 
@@ -259,7 +261,9 @@ final class EQProcessor: @unchecked Sendable {
         if abs(gain - 1.0) > 0.0001 {
             vDSP_vsmul(input, 1, &gain, output, 1, vDSP_Length(frameCount * 2))
         } else {
-            memcpy(output, input, frameCount * 2 * MemoryLayout<Float>.size)
+             if input != UnsafePointer(output) {
+                memcpy(output, input, frameCount * 2 * MemoryLayout<Float>.size)
+            }
         }
         
         // 2. Apply Biquads (if setup exists)
