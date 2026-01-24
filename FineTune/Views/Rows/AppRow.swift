@@ -176,6 +176,11 @@ struct AppRow: View {
                                     isEditingVolumeTextVisible = false
                                 }
                             }
+                            .onExitCommand {
+                                volumeText = "\(Int((sliderValue * 200).rounded()))"
+                                isEditingVolumeText = false
+                                isEditingVolumeTextVisible = false
+                            }
                     } else {
                         Text("\(Int((sliderValue * 200).rounded()))%")
                             .percentageStyle()
