@@ -43,6 +43,18 @@ final class EQProcessor: @unchecked Sendable {
 
         delayBufferR = UnsafeMutablePointer<Float>.allocate(capacity: Self.delayBufferSize)
         delayBufferR.initialize(repeating: 0, count: Self.delayBufferSize)
+        
+        // Initialize persistent setup with max sections (Identity)
+        // 5 coeffs per section: b0, b1, b2, a1, a2
+        let identitySection = [1.0, 0.0, 0.0, 0.0, 0.0]
+        var initialCoeffs: [Double] = []
+        for _ in 0..<Self.maxSections {
+            initialCoeffs.append(contentsOf: identitySection)
+        }
+        
+        _eqSetup = initialCoeffs.withUnsafeBufferPointer { ptr in
+            vDSP_biquad_CreateSetup(ptr.baseAddress!, vDSP_Length(Self.maxSections))
+        }
 
         // Initialize with flat EQ
         updateSettings(EQSettings.flat)
@@ -57,91 +69,73 @@ final class EQProcessor: @unchecked Sendable {
     }
 
     /// Update EQ settings (call from main thread)
+    /// Update EQ settings (call from main thread)
+    /// Optimized to use vDSP_biquad_SetCoefficientsDouble for zero-allocation updates.
     func updateSettings(_ settings: EQSettings) {
         _isEnabled = settings.isEnabled
         _currentSettings = settings
         
-        // Pre-calculate linear preamp gain for RT thread
-        // gain = 10^(dB/20)
+        // Pre-calculate linear preamp gain
         let db = settings.preampGain
         _preampGainLinear = pow(10.0, db / 20.0)
 
-        let coefficients: [Double]
-        let bandCount: vDSP_Length
+        // Generate normalized coefficients for all sections
+        var allCoeffs: [Double] = []
+        allCoeffs.reserveCapacity(Self.maxSections * 5)
         
+        // 1. Generate coefficients for active bands
         if settings.mode == .graphic {
-            // Legacy Path: 10-band Graphic EQ
-            coefficients = BiquadMath.coefficientsForAllBands(
+            // Graphic: 10 fixed bands
+            allCoeffs = BiquadMath.coefficientsForAllBands(
                 gains: settings.clampedGains,
                 sampleRate: sampleRate
             )
-            bandCount = vDSP_Length(EQSettings.bandCount)
         } else {
-            // Parametric Path: Variable bands
-            var coeffs: [Double] = []
+            // Parametric: Variable bands
+            // Sort active bands by frequency for consistency (optional but good practice)
             let activeBands = settings.parametricBands.filter { $0.isEnabled }
-            // Clamp to max supported sections to prevent delay buffer overflow
+            // Clamp to max supported
             let safeBands = activeBands.prefix(Self.maxSections)
-            if activeBands.count > Self.maxSections {
-                logger.warning("Too many bands active (\(activeBands.count)). Clamping to \(Self.maxSections).")
-            }
             
-            bandCount = vDSP_Length(safeBands.count)
+            if activeBands.count > Self.maxSections {
+                logger.warning("Too many bands active (\(activeBands.count)). Clamping.")
+            }
             
             for band in safeBands {
-                let bandCoeffs: [Double]
                 switch band.type {
                 case .peak:
-                    bandCoeffs = BiquadMath.peakingEQCoefficients(
-                        frequency: band.frequency,
-                        gainDB: band.gain,
-                        q: band.Q,
-                        sampleRate: sampleRate
-                    )
+                    allCoeffs.append(contentsOf: BiquadMath.peakingEQCoefficients(
+                        frequency: band.frequency, gainDB: band.gain, q: band.Q, sampleRate: sampleRate
+                    ))
                 case .lowShelf:
-                    bandCoeffs = BiquadMath.lowShelfCoefficients(
-                        frequency: band.frequency,
-                        gainDB: band.gain,
-                        q: band.Q,
-                        sampleRate: sampleRate
-                    )
+                    allCoeffs.append(contentsOf: BiquadMath.lowShelfCoefficients(
+                        frequency: band.frequency, gainDB: band.gain, q: band.Q, sampleRate: sampleRate
+                    ))
                 case .highShelf:
-                    bandCoeffs = BiquadMath.highShelfCoefficients(
-                        frequency: band.frequency,
-                        gainDB: band.gain,
-                        q: band.Q,
-                        sampleRate: sampleRate
-                    )
+                    allCoeffs.append(contentsOf: BiquadMath.highShelfCoefficients(
+                        frequency: band.frequency, gainDB: band.gain, q: band.Q, sampleRate: sampleRate
+                    ))
                 }
-                coeffs.append(contentsOf: bandCoeffs)
             }
-            coefficients = coeffs
         }
         
-        // Ensure at least one band exists to create a valid setup
-        let newSetup: vDSP_biquad_Setup?
-        if bandCount > 0 {
-            newSetup = coefficients.withUnsafeBufferPointer { ptr in
-                vDSP_biquad_CreateSetup(ptr.baseAddress!, bandCount)
-            }
-        } else {
-            newSetup = nil
+        // 2. Fill remaining sections with Identity (Pass-through)
+        // b0=1, b1=0, b2=0, a1=0, a2=0
+        let sectionsUsed = allCoeffs.count / 5
+        let sectionsNeeded = Self.maxSections - sectionsUsed
+        let identity = [1.0, 0.0, 0.0, 0.0, 0.0]
+        
+        for _ in 0..<sectionsNeeded {
+            allCoeffs.append(contentsOf: identity)
         }
-
-        // Swap setup atomically
-        let oldSetup = _eqSetup
-        _eqSetup = newSetup
-
-        // Destroy old setup on background queue (after audio thread has moved on)
-        if let old = oldSetup {
-            DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 0.2) {
-                vDSP_biquad_DestroySetup(old)
+        
+        // 3. Update coefficients in-place
+        // This is safe to call while the filter is processing (Apple Docs)
+        if let setup = _eqSetup {
+            allCoeffs.withUnsafeBufferPointer { ptr in
+                vDSP_biquad_SetCoefficientsDouble(setup, ptr.baseAddress!)
             }
         }
-
-        // Note: Do NOT reset delay buffers here - the filter naturally adapts to new
-        // coefficients using existing state, producing smooth transitions without clicks.
-        // Delay buffers are only reset on init and sample rate changes.
     }
 
     /// Updates the sample rate and recalculates all biquad coefficients.
@@ -164,76 +158,18 @@ final class EQProcessor: @unchecked Sendable {
         sampleRate = newRate
         logger.info("[EQ] Sample rate updated: \(oldRate, format: .fixed(precision: 0))Hz → \(newRate, format: .fixed(precision: 0))Hz")
 
-        // Recalculate coefficients with new sample rate
-        // Check mode to decide how to generate coefficients
-        let coefficients: [Double]
-        let bandCount: vDSP_Length
+        // Create new biquad setup? No, update existing if possible, but rate change resets everything usually.
+        // Actually, vDSP_biquad_DestroySetup required if we want to change rate cleanly?
+        // Wait, biquad setup doesn't depend on sample rate, only coeffs do.
+        // So we can REUSE the setup, just update coefficients!
         
-        if settings.mode == .graphic {
-            coefficients = BiquadMath.coefficientsForAllBands(
-                gains: settings.clampedGains,
-                sampleRate: newRate
-            )
-            bandCount = vDSP_Length(EQSettings.bandCount)
-        } else {
-            // Parametric Path
-            var coeffs: [Double] = []
-            let activeBands = settings.parametricBands.filter { $0.isEnabled }
-            let safeBands = activeBands.prefix(Self.maxSections)
-            bandCount = vDSP_Length(safeBands.count)
-            
-            for band in safeBands {
-                let bandCoeffs: [Double]
-                switch band.type {
-                case .peak:
-                    bandCoeffs = BiquadMath.peakingEQCoefficients(
-                        frequency: band.frequency,
-                        gainDB: band.gain,
-                        q: band.Q,
-                        sampleRate: newRate
-                    )
-                case .lowShelf:
-                    bandCoeffs = BiquadMath.lowShelfCoefficients(
-                        frequency: band.frequency,
-                        gainDB: band.gain,
-                        q: band.Q,
-                        sampleRate: newRate
-                    )
-                case .highShelf:
-                    bandCoeffs = BiquadMath.highShelfCoefficients(
-                        frequency: band.frequency,
-                        gainDB: band.gain,
-                        q: band.Q,
-                        sampleRate: newRate
-                    )
-                }
-                coeffs.append(contentsOf: bandCoeffs)
-            }
-            coefficients = coeffs
+        // 1. Recalculate coefficients
+        // Reuse logic from updateSettings
+        if let settings = _currentSettings {
+            updateSettings(settings)
         }
 
-        // Create new biquad setup
-        let newSetup: vDSP_biquad_Setup?
-        if bandCount > 0 {
-             newSetup = coefficients.withUnsafeBufferPointer { ptr in
-                vDSP_biquad_CreateSetup(ptr.baseAddress!, bandCount)
-            }
-        } else {
-            newSetup = nil
-        }
-
-        // Atomic swap (RT-safe)
-        let oldSetup = _eqSetup
-        _eqSetup = newSetup
-
-        // Destroy old setup asynchronously (avoid blocking)
-        if let old = oldSetup {
-            DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 0.2) {
-                vDSP_biquad_DestroySetup(old)
-            }
-        }
-
-        // Reset delay buffers to avoid filter artifacts from old state
+        // 2. Reset delay buffers
         memset(delayBufferL, 0, Self.delayBufferSize * MemoryLayout<Float>.size)
         memset(delayBufferR, 0, Self.delayBufferSize * MemoryLayout<Float>.size)
     }
