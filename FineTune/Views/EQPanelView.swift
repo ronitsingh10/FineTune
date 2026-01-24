@@ -13,6 +13,8 @@ struct EQPanelView: View {
             preset.settings.bandGains == settings.bandGains
         }
     }
+    
+    @State private var isImportingParametric: Bool = false
 
     var body: some View {
         // Entire EQ panel content inside recessed background
@@ -35,19 +37,21 @@ struct EQPanelView: View {
 
                 Spacer()
 
-                // Preset picker on right (Only visible in Graphic Mode)
-                HStack(spacing: DesignTokens.Spacing.sm) {
-                    // Mode Picker (Graphic / Parametric)
-                    Picker("Mode", selection: $settings.mode) {
-                        Text("Graphic").tag(EQSettings.Mode.graphic)
-                        Text("Parametric").tag(EQSettings.Mode.parametric)
-                    }
-                    .pickerStyle(.segmented)
-                    .frame(width: 140)
-                    .onChange(of: settings.mode) { _, _ in
-                         onSettingsChanged(settings)
-                    }
+                // Mode Picker (Graphic / Parametric)
+                Picker("Mode", selection: $settings.mode) {
+                    Text("Graphic").tag(EQSettings.Mode.graphic)
+                    Text("Parametric").tag(EQSettings.Mode.parametric)
+                }
+                .pickerStyle(.segmented)
+                .frame(width: 130)
+                .onChange(of: settings.mode) { _, _ in
+                     onSettingsChanged(settings)
+                }
 
+                Spacer()
+
+                // Preset picker on right
+                HStack(spacing: DesignTokens.Spacing.sm) {
                     if settings.mode == .graphic {
                         Text("Preset")
                             .font(DesignTokens.Typography.pickerText)
@@ -56,6 +60,15 @@ struct EQPanelView: View {
                         EQPresetPicker(
                             selectedPreset: currentPreset,
                             onPresetSelected: onPresetSelected
+                        )
+                    } else {
+                        ParametricPresetPicker(
+                            isImportSheetPresented: $isImportingParametric,
+                            onApplyPreset: { preset in
+                                settings.preampGain = preset.preampGain
+                                settings.parametricBands = preset.bands
+                                onSettingsChanged(settings)
+                            }
                         )
                     }
                 }
@@ -96,6 +109,16 @@ struct EQPanelView: View {
         }
         .padding(.horizontal, 2)
         .padding(.vertical, 4)
+        .sheet(isPresented: $isImportingParametric) {
+            ImportPresetSheet(
+                isPresented: $isImportingParametric,
+                onPresetImported: { preset in
+                    settings.preampGain = preset.preampGain
+                    settings.parametricBands = preset.bands
+                    onSettingsChanged(settings)
+                }
+            )
+        }
         // No outer background - parent ExpandableGlassRow provides the glass container
     }
 }

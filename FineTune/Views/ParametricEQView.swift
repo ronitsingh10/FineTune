@@ -4,8 +4,6 @@ struct ParametricEQView: View {
     @Binding var settings: EQSettings
     let onSettingsChanged: (EQSettings) -> Void
     
-    @State private var importText: String = ""
-    @State private var isImporting: Bool = false
     
     var body: some View {
         VStack(spacing: 12) {
@@ -17,15 +15,7 @@ struct ParametricEQView: View {
                 
                 Spacer()
                 
-                Button(action: { isImporting = true }) {
-                    HStack(spacing: 4) {
-                        Image(systemName: "square.and.arrow.down")
-                        Text("Import")
-                    }
-                    .font(DesignTokens.Typography.pickerText)
-                }
-                .buttonStyle(.plain)
-                .foregroundColor(.accentColor)
+                Spacer()
             }
             .padding(.horizontal, 4)
             
@@ -91,55 +81,8 @@ struct ParametricEQView: View {
                 .frame(height: 120) // Fixed height to match somewhat with the sliders area
             }
         }
-        .sheet(isPresented: $isImporting) {
-            ImportSheet(settings: $settings, onSettingsChanged: onSettingsChanged, isPresented: $isImporting)
         }
     }
 }
 
-struct ImportSheet: View {
-    @Binding var settings: EQSettings
-    let onSettingsChanged: (EQSettings) -> Void
-    @Binding var isPresented: Bool
-    @State private var text: String = ""
-    
-    var body: some View {
-        VStack(spacing: 16) {
-            Text("Import Parametric EQ")
-                .font(.headline)
-            
-            Text("Paste settings in format:\n'Filter 1: ON LS Fc 105.0 Hz Gain 11.2 dB Q 0.70'")
-                .font(.caption)
-                .multilineTextAlignment(.center)
-                .foregroundColor(.secondary)
-            
-            TextEditor(text: $text)
-                .font(.system(.body, design: .monospaced))
-                .scrollContentBackground(.hidden)
-                .background(Color.white.opacity(0.1))
-                .cornerRadius(8)
-                .frame(minHeight: 200)
-            
-            HStack {
-                Button("Cancel") {
-                    isPresented = false
-                }
-                .buttonStyle(.plain)
-                .foregroundColor(.red)
-                
-                Spacer()
-                
-                Button("Apply") {
-                    let (preamp, bands) = EQSettings.parseParametricText(text)
-                    settings.preampGain = preamp
-                    settings.parametricBands = bands
-                    onSettingsChanged(settings)
-                    isPresented = false
-                }
-                .buttonStyle(.borderedProminent)
-            }
-        }
-        .padding()
-        .frame(width: 400, height: 400)
-    }
-}
+
