@@ -3,6 +3,7 @@ import os
 
 @MainActor
 class PresetManager: ObservableObject {
+    
     static let shared = PresetManager()
     private let logger = Logger(subsystem: "com.finetune", category: "PresetManager")
     
