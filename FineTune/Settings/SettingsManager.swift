@@ -43,6 +43,17 @@ final class SettingsManager {
         scheduleSave()
     }
 
+    /// Returns true if the app follows system default (no explicit device routing saved)
+    func isFollowingDefault(for identifier: String) -> Bool {
+        settings.appDeviceRouting[identifier] == nil
+    }
+
+    /// Clears device routing for an app, making it follow system default
+    func setFollowDefault(for identifier: String) {
+        settings.appDeviceRouting.removeValue(forKey: identifier)
+        scheduleSave()
+    }
+
     func getMute(for identifier: String) -> Bool? {
         settings.appMutes[identifier]
     }
