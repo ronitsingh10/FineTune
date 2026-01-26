@@ -88,9 +88,6 @@ struct MenuBarPopupView: View {
         .onChange(of: audioEngine.outputDevices) { _, _ in
             updateSortedDevices()
         }
-        .onChange(of: deviceVolumeMonitor.defaultDeviceID) { _, _ in
-            updateSortedDevices()
-        }
         .onChange(of: localAppSettings) { _, newValue in
             audioEngine.settingsManager.updateAppSettings(newValue)
         }
@@ -324,14 +321,11 @@ struct MenuBarPopupView: View {
 
     // MARK: - Helpers
 
-    /// Recomputes sorted devices - called only when dependencies change
+    /// Recomputes sorted devices - alphabetical order only (no "default first" reordering)
     private func updateSortedDevices() {
         let devices = audioEngine.outputDevices
-        let defaultID = deviceVolumeMonitor.defaultDeviceID
         sortedDevices = devices.sorted { lhs, rhs in
-            if lhs.id == defaultID { return true }
-            if rhs.id == defaultID { return false }
-            return lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
+            lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
         }
     }
 

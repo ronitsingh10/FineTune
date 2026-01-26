@@ -27,11 +27,13 @@
 
 - **Per-app volume control** — Individual volume sliders with mute for each application
 - **Per-device volume control** — Adjust volume levels for each output device
-- **Audio routing** — Route apps to different output devices (headphones, speakers, etc.)
+- **Audio routing** — Route apps to different output devices, or follow "System Audio" to track macOS default
+- **Sound effects routing** — Route system alerts, notifications, and Siri to a specific device
 - **10-band equalizer** — Fine-tune your sound with 20 presets across 5 categories
 - **Real-time VU meters** — Visual feedback for audio levels
-- **Volume boost** — Amplify quiet apps up to 200%
-- **Quick device switching** — Change output devices instantly
+- **Volume boost** — Amplify quiet apps up to 400%, click percentage to type exact value
+- **Quick device switching** — Change output devices instantly with smart reconnection handling
+- **Settings panel** — Launch at login, 4 menu bar icon styles, configurable default volume and max boost
 - **App launcher** — Click any app icon to bring it to front
 - **Persistent settings** — Your preferences survive app restarts
 
