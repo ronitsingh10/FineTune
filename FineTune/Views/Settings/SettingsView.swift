@@ -8,6 +8,10 @@ struct SettingsView: View {
     let launchIconStyle: MenuBarIconStyle
     let onResetAll: () -> Void
 
+    // System sounds control
+    @Bindable var deviceVolumeMonitor: DeviceVolumeMonitor
+    let outputDevices: [AudioDevice]
+
     @State private var showResetConfirmation = false
 
     var body: some View {
@@ -76,6 +80,22 @@ struct SettingsView: View {
                 description: "Safety limit for volume slider",
                 value: $settings.maxVolumeBoost,
                 range: 1.0...4.0
+            )
+
+            // Sound Effects device selection
+            SoundEffectsDeviceRow(
+                devices: outputDevices,
+                selectedDeviceUID: deviceVolumeMonitor.systemDeviceUID,
+                defaultDeviceUID: deviceVolumeMonitor.defaultDeviceUID,
+                isFollowingDefault: deviceVolumeMonitor.isSystemFollowingDefault,
+                onDeviceSelected: { deviceUID in
+                    if let device = outputDevices.first(where: { $0.uid == deviceUID }) {
+                        deviceVolumeMonitor.setSystemDeviceExplicit(device.id)
+                    }
+                },
+                onSelectFollowDefault: {
+                    deviceVolumeMonitor.setSystemFollowDefault()
+                }
             )
         }
     }
@@ -160,15 +180,5 @@ struct SettingsView: View {
 
 // MARK: - Previews
 
-#Preview("Settings View") {
-    SettingsView(
-        settings: .constant(AppSettings()),
-        updateManager: UpdateManager(),
-        launchIconStyle: .default,
-        onResetAll: { print("Reset all") }
-    )
-    .padding(DesignTokens.Spacing.lg)
-    .frame(width: DesignTokens.Dimensions.popupWidth)
-    .darkGlassBackground()
-    .environment(\.colorScheme, .dark)
-}
+// Note: Preview requires mock DeviceVolumeMonitor which isn't available
+// Use live testing instead

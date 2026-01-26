@@ -92,3 +92,34 @@ extension AudioDeviceID {
         }
     }
 }
+
+// MARK: - System Output Device (for alerts and system sounds)
+
+extension AudioDeviceID {
+    /// Reads the system output device (for alerts, notifications, and system sounds)
+    /// This is separate from the default output device used by apps
+    static func readSystemOutputDevice() throws -> AudioDeviceID {
+        try AudioObjectID.system.read(
+            kAudioHardwarePropertyDefaultSystemOutputDevice,
+            defaultValue: AudioDeviceID.unknown
+        )
+    }
+
+    /// Sets the system output device (for alerts, notifications, and system sounds)
+    static func setSystemOutputDevice(_ deviceID: AudioDeviceID) throws {
+        var address = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDefaultSystemOutputDevice,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var deviceIDValue = deviceID
+        let size = UInt32(MemoryLayout<AudioDeviceID>.size)
+        let err = AudioObjectSetPropertyData(
+            AudioObjectID(kAudioObjectSystemObject),
+            &address, 0, nil, size, &deviceIDValue
+        )
+        guard err == noErr else {
+            throw NSError(domain: NSOSStatusErrorDomain, code: Int(err))
+        }
+    }
+}

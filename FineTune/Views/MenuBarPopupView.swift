@@ -61,7 +61,9 @@ struct MenuBarPopupView: View {
                     onResetAll: {
                         audioEngine.settingsManager.resetAllSettings()
                         localAppSettings = audioEngine.settingsManager.appSettings
-                    }
+                    },
+                    deviceVolumeMonitor: deviceVolumeMonitor,
+                    outputDevices: audioEngine.outputDevices
                 )
                 .transition(.asymmetric(
                     insertion: .move(edge: .trailing).combined(with: .opacity),

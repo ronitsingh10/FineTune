@@ -28,7 +28,7 @@ final class AudioEngine {
         let manager = settingsManager ?? SettingsManager()
         self.settingsManager = manager
         self.volumeState = VolumeState(settingsManager: manager)
-        self.deviceVolumeMonitor = DeviceVolumeMonitor(deviceMonitor: deviceMonitor)
+        self.deviceVolumeMonitor = DeviceVolumeMonitor(deviceMonitor: deviceMonitor, settingsManager: manager)
 
         Task { @MainActor in
             processMonitor.start()

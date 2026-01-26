@@ -61,6 +61,7 @@ final class SettingsManager {
         var appMutes: [String: Bool] = [:]  // bundleID → isMuted
         var appEQSettings: [String: EQSettings] = [:]  // bundleID → EQ settings
         var appSettings: AppSettings = AppSettings()  // App-wide settings
+        var systemSoundsFollowsDefault: Bool = true  // Whether system sounds follows macOS default
     }
 
     init(directory: URL? = nil) {
@@ -96,6 +97,19 @@ final class SettingsManager {
     /// Clears device routing for an app, making it follow system default
     func setFollowDefault(for identifier: String) {
         settings.appDeviceRouting.removeValue(forKey: identifier)
+        scheduleSave()
+    }
+
+    // MARK: - System Sounds Settings
+
+    /// Returns whether system sounds should follow the macOS default output device
+    var isSystemSoundsFollowingDefault: Bool {
+        settings.systemSoundsFollowsDefault
+    }
+
+    /// Sets whether system sounds should follow the macOS default output device
+    func setSystemSoundsFollowDefault(_ follows: Bool) {
+        settings.systemSoundsFollowsDefault = follows
         scheduleSave()
     }
 
@@ -160,6 +174,7 @@ final class SettingsManager {
         settings.appMutes.removeAll()
         settings.appEQSettings.removeAll()
         settings.appSettings = AppSettings()
+        settings.systemSoundsFollowsDefault = true
 
         // Also unregister from launch at login
         try? SMAppService.mainApp.unregister()
