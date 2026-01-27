@@ -9,24 +9,15 @@ private let logger = Logger(subsystem: "com.finetuneapp.FineTune", category: "Ap
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    var audioEngine: AudioEngine?
-
-    func applicationDidFinishLaunching(_ notification: Notification) {
-        NSAppleEventManager.shared().setEventHandler(
-            self,
-            andSelector: #selector(handleAppleEvent(_:replyEvent:)),
-            forEventClass: AEEventClass(kInternetEventClass),
-            andEventID: AEEventID(kAEGetURL)
-        )
-    }
-    @objc func handleAppleEvent(_ event: NSAppleEventDescriptor, replyEvent: NSAppleEventDescriptor) {
-        guard let urlString = event.paramDescriptor(forKeyword: AEKeyword(keyDirectObject))?.stringValue,
-              let url = URL(string: urlString),
-              let audioEngine = audioEngine else {
+    func application(_ application: NSApplication, open urls: [URL]) {
+        guard let audioEngine = FineTuneApp.sharedEngine else {
             return
         }
         let urlHandler = URLHandler(audioEngine: audioEngine)
-        urlHandler.handleURL(url)
+
+        for url in urls {
+            urlHandler.handleURL(url)
+        }
     }
 }
 
@@ -45,6 +36,9 @@ struct FineTuneApp: App {
 
     /// Icon name captured at launch for asset catalog
     private let launchAssetImageName: String?
+    
+    /// Shared reference for AppDelegate access
+    static var sharedEngine: AudioEngine?
 
     var body: some Scene {
         // Use dual scenes with captured icon names - only one is visible based on icon type
@@ -90,9 +84,10 @@ struct FineTuneApp: App {
         let settings = SettingsManager()
         let engine = AudioEngine(settingsManager: settings)
         _audioEngine = State(initialValue: engine)
-
-        appDelegate.audioEngine = engine
         
+        // Store for AppDelegate access
+        FineTuneApp.sharedEngine = engine
+
         // Capture icon style at launch - requires restart to change
         let iconStyle = settings.appSettings.menuBarIconStyle
         launchIconStyle = iconStyle
