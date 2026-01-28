@@ -9,8 +9,10 @@ private let logger = Logger(subsystem: "com.finetuneapp.FineTune", category: "Ap
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
+    var audioEngine: AudioEngine?
+    
     func application(_ application: NSApplication, open urls: [URL]) {
-        guard let audioEngine = FineTuneApp.sharedEngine else {
+        guard let audioEngine = audioEngine else {
             return
         }
         let urlHandler = URLHandler(audioEngine: audioEngine)
@@ -36,9 +38,6 @@ struct FineTuneApp: App {
 
     /// Icon name captured at launch for asset catalog
     private let launchAssetImageName: String?
-    
-    /// Shared reference for AppDelegate access
-    static var sharedEngine: AudioEngine?
 
     var body: some Scene {
         // Use dual scenes with captured icon names - only one is visible based on icon type
@@ -84,9 +83,9 @@ struct FineTuneApp: App {
         let settings = SettingsManager()
         let engine = AudioEngine(settingsManager: settings)
         _audioEngine = State(initialValue: engine)
-        
-        // Store for AppDelegate access
-        FineTuneApp.sharedEngine = engine
+
+        // Pass engine to AppDelegate
+        _appDelegate.wrappedValue.audioEngine = engine
 
         // Capture icon style at launch - requires restart to change
         let iconStyle = settings.appSettings.menuBarIconStyle
