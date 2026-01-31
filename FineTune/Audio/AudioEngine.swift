@@ -124,6 +124,60 @@ final class AudioEngine {
         processMonitor.activeApps
     }
 
+    // MARK: - Displayable Apps (Active + Pinned Inactive)
+
+    /// Combined list of active apps and pinned inactive apps for UI display.
+    /// Pinned apps appear first (sorted alphabetically), then unpinned active apps (sorted alphabetically).
+    var displayableApps: [DisplayableApp] {
+        let activeApps = apps
+        let activeIdentifiers = Set(activeApps.map { $0.persistenceIdentifier })
+
+        // Get pinned apps that are not currently active
+        let pinnedInactiveInfos = settingsManager.getPinnedAppInfo()
+            .filter { !activeIdentifiers.contains($0.persistenceIdentifier) }
+
+        // Pinned active apps (sorted alphabetically)
+        let pinnedActive = activeApps
+            .filter { settingsManager.isPinned($0.persistenceIdentifier) }
+            .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+            .map { DisplayableApp.active($0) }
+
+        // Pinned inactive apps (sorted alphabetically)
+        let pinnedInactive = pinnedInactiveInfos
+            .sorted { $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending }
+            .map { DisplayableApp.pinnedInactive($0) }
+
+        // Unpinned active apps (sorted alphabetically)
+        let unpinnedActive = activeApps
+            .filter { !settingsManager.isPinned($0.persistenceIdentifier) }
+            .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+            .map { DisplayableApp.active($0) }
+
+        return pinnedActive + pinnedInactive + unpinnedActive
+    }
+
+    // MARK: - Pinning
+
+    /// Pin an active app so it remains visible when inactive.
+    func pinApp(_ app: AudioApp) {
+        let info = PinnedAppInfo(
+            persistenceIdentifier: app.persistenceIdentifier,
+            displayName: app.name,
+            bundleID: app.bundleID
+        )
+        settingsManager.pinApp(app.persistenceIdentifier, info: info)
+    }
+
+    /// Unpin an app by its persistence identifier.
+    func unpinApp(_ identifier: String) {
+        settingsManager.unpinApp(identifier)
+    }
+
+    /// Check if an app is pinned.
+    func isPinned(_ app: AudioApp) -> Bool {
+        settingsManager.isPinned(app.persistenceIdentifier)
+    }
+
     /// Audio levels for all active apps (for VU meter visualization)
     /// Returns a dictionary mapping PID to peak audio level (0-1)
     var audioLevels: [pid_t: Float] {
