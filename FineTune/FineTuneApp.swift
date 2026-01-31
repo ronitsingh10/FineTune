@@ -2,12 +2,30 @@
 import SwiftUI
 import UserNotifications
 import FluidMenuBarExtra
+import AppKit
 import os
 
 private let logger = Logger(subsystem: "com.finetuneapp.FineTune", category: "App")
 
+@MainActor
+final class AppDelegate: NSObject, NSApplicationDelegate {
+    var audioEngine: AudioEngine?
+    
+    func application(_ application: NSApplication, open urls: [URL]) {
+        guard let audioEngine = audioEngine else {
+            return
+        }
+        let urlHandler = URLHandler(audioEngine: audioEngine)
+
+        for url in urls {
+            urlHandler.handleURL(url)
+        }
+    }
+}
+
 @main
 struct FineTuneApp: App {
+    @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @State private var audioEngine: AudioEngine
     @StateObject private var updateManager = UpdateManager()
     @State private var showMenuBarExtra = true
@@ -65,6 +83,9 @@ struct FineTuneApp: App {
         let settings = SettingsManager()
         let engine = AudioEngine(settingsManager: settings)
         _audioEngine = State(initialValue: engine)
+
+        // Pass engine to AppDelegate
+        _appDelegate.wrappedValue.audioEngine = engine
 
         // Capture icon style at launch - requires restart to change
         let iconStyle = settings.appSettings.menuBarIconStyle
