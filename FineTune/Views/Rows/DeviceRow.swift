@@ -63,6 +63,7 @@ struct DeviceRow: View {
             Text(device.name)
                 .font(isDefault ? DesignTokens.Typography.rowNameBold : DesignTokens.Typography.rowName)
                 .lineLimit(1)
+                .help(device.name)
                 .frame(maxWidth: .infinity, alignment: .leading)
 
             // Mute button
