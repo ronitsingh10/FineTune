@@ -128,6 +128,7 @@ struct InactiveAppRow: View {
                 Text(appInfo.displayName)
                     .font(DesignTokens.Typography.rowName)
                     .lineLimit(1)
+                    .help(appInfo.displayName)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .foregroundStyle(DesignTokens.Colors.textSecondary)  // Dimmed text
 

@@ -149,6 +149,7 @@ struct AppRow: View {
                 Text(app.name)
                     .font(DesignTokens.Typography.rowName)
                     .lineLimit(1)
+                    .help(app.name)
                     .frame(maxWidth: .infinity, alignment: .leading)
 
                 // Shared controls section
