@@ -87,6 +87,19 @@ final class ProcessTapController {
     private var secondaryDeviceProcID: AudioDeviceIOProcID?
     private var secondaryTapDescription: CATapDescription?
 
+    // Sample rate change detection (Bluetooth HFP profile switches)
+    private var sampleRateListenerBlock: AudioObjectPropertyListenerBlock?
+    private var sampleRateAddress = AudioObjectPropertyAddress(
+        mSelector: kAudioDevicePropertyNominalSampleRate,
+        mScope: kAudioObjectPropertyScopeGlobal,
+        mElement: kAudioObjectPropertyElementMain
+    )
+    /// Callback invoked when the aggregate device's sample rate changes (e.g., Bluetooth HFP switch).
+    /// AudioEngine uses this to trigger a tap rebuild with correct parameters.
+    var onSampleRateChanged: (() -> Void)?
+    /// Tracks the sample rate the tap was configured with, to detect actual changes.
+    private var activeSampleRate: Float64 = 0
+
     // MARK: - Public Properties
 
     var audioLevel: Float { _peakLevel }
@@ -256,8 +269,26 @@ final class ProcessTapController {
         // Track current devices for external queries
         currentDeviceUIDs = targetDeviceUIDs
 
+        // Track active sample rate for change detection
+        activeSampleRate = sampleRate
+
+        // Listen for sample rate changes on the aggregate device.
+        // This catches Bluetooth HFP profile switches (48kHz → 8/16kHz) that would
+        // otherwise cause high-pitched distorted audio from sample rate mismatch.
+        installSampleRateListener(on: aggregateDeviceID)
+
         activated = true
         logger.info("Tap activated for \(self.app.name) on \(self.targetDeviceUIDs.count) device(s)")
+    }
+
+    /// Forces a destructive rebuild of the tap on the current devices.
+    /// Used when the device sample rate changes (e.g., Bluetooth HFP profile switch)
+    /// and the existing tap needs to be recreated with correct parameters.
+    func rebuildTap() async throws {
+        guard activated, !currentDeviceUIDs.isEmpty else { return }
+        let deviceUIDs = currentDeviceUIDs
+        logger.info("Rebuilding tap for \(self.app.name) due to sample rate change")
+        try await performDestructiveDeviceSwitch(to: deviceUIDs[0], allDeviceUIDs: deviceUIDs)
     }
 
     /// Switch to a single device (convenience for backward compatibility).
@@ -309,6 +340,7 @@ final class ProcessTapController {
 
         logger.debug("Invalidating tap for \(self.app.name)")
 
+        removeSampleRateListener()
         _isCrossfading = false
 
         // SAFE CLEANUP PATTERN: Capture IDs before clearing instance state.
@@ -342,6 +374,41 @@ final class ProcessTapController {
 
     deinit {
         invalidate()
+    }
+
+    // MARK: - Sample Rate Change Detection
+
+    private func installSampleRateListener(on deviceID: AudioObjectID) {
+        removeSampleRateListener()
+
+        let block: AudioObjectPropertyListenerBlock = { [weak self] _, _ in
+            guard let self else { return }
+            let newRate = (try? deviceID.readNominalSampleRate()) ?? 0
+            guard newRate > 0, newRate != self.activeSampleRate else { return }
+            self.logger.warning("Sample rate changed: \(self.activeSampleRate)Hz → \(newRate)Hz (Bluetooth profile switch?)")
+            self.activeSampleRate = newRate
+            self.onSampleRateChanged?()
+        }
+        sampleRateListenerBlock = block
+
+        let status = AudioObjectAddPropertyListenerBlock(
+            deviceID,
+            &sampleRateAddress,
+            DispatchQueue.main,
+            block
+        )
+        if status != noErr {
+            logger.error("Failed to add sample rate listener: \(status)")
+        }
+    }
+
+    private func removeSampleRateListener() {
+        guard let block = sampleRateListenerBlock else { return }
+        // Remove from both primary and secondary aggregate (one will be valid)
+        if aggregateDeviceID.isValid {
+            AudioObjectRemovePropertyListenerBlock(aggregateDeviceID, &sampleRateAddress, DispatchQueue.main, block)
+        }
+        sampleRateListenerBlock = nil
     }
 
     // MARK: - Crossfade Operations
@@ -512,7 +579,10 @@ final class ProcessTapController {
             let rampTimeSeconds: Float = 0.030
             rampCoefficient = 1 - exp(-1 / (Float(deviceSampleRate) * rampTimeSeconds))
             eqProcessor?.updateSampleRate(deviceSampleRate)
+            activeSampleRate = deviceSampleRate
         }
+
+        installSampleRateListener(on: aggregateDeviceID)
 
         _primaryCurrentVolume = _secondaryCurrentVolume
         _secondaryCurrentVolume = 0
@@ -619,7 +689,10 @@ final class ProcessTapController {
         if let deviceSampleRate = try? aggregateDeviceID.readNominalSampleRate() {
             rampCoefficient = 1 - exp(-1 / (Float(deviceSampleRate) * 0.030))
             eqProcessor?.updateSampleRate(deviceSampleRate)
+            activeSampleRate = deviceSampleRate
         }
+
+        installSampleRateListener(on: aggregateDeviceID)
     }
 
     private func cleanupPartialActivation() {
