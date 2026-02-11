@@ -35,6 +35,12 @@ final class AudioEngine {
     /// Grace period to detect automatic device switching after connection (2 seconds)
     private let autoSwitchGracePeriod: TimeInterval = 2.0
 
+    /// Last priority-based default override UID to suppress echo callbacks
+    private var lastPriorityDefaultOverrideUID: String?
+
+    /// Tracks the last known default output device UID for disconnect detection
+    private var lastKnownDefaultDeviceUID: String?
+
     var outputDevices: [AudioDevice] {
         #if !APP_STORE
         // Before DDC probe completes, show all devices (don't prematurely hide monitors)
@@ -222,6 +228,7 @@ final class AudioEngine {
 
             applyPersistedSettings()
             registerNewDevicesInPriority()
+            lastKnownDefaultDeviceUID = deviceVolumeMonitor.defaultDeviceUID
 
             // Restore locked input device if feature is enabled
             if manager.appSettings.lockInputDevice {
@@ -742,6 +749,9 @@ final class AudioEngine {
 
     /// Called when device disappears - updates routing and switches taps immediately
     private func handleDeviceDisconnected(_ deviceUID: String, name deviceName: String) {
+        // Snapshot before async callbacks can update it
+        let wasDefaultOutput = deviceUID == deviceVolumeMonitor.defaultDeviceUID
+
         // Use priority-based fallback, then system default, then any device
         let fallbackDevice: (uid: String, name: String)?
         if let priorityFallback = findPriorityFallbackDevice(excluding: deviceUID) {
@@ -828,6 +838,15 @@ final class AudioEngine {
             if settingsManager.appSettings.showDeviceDisconnectAlerts {
                 showDisconnectNotification(deviceName: deviceName, fallbackName: fallbackName, affectedApps: affectedApps)
             }
+        }
+
+        // If the disconnected device was the system default, override to priority fallback
+        if wasDefaultOutput,
+           let fallback = fallbackDevice,
+           let fallbackAudioDevice = deviceMonitor.device(for: fallback.uid) {
+            lastPriorityDefaultOverrideUID = fallback.uid
+            deviceVolumeMonitor.setDefaultDevice(fallbackAudioDevice.id)
+            logger.info("System default overridden to priority fallback: \(fallback.name)")
         }
     }
 
@@ -927,6 +946,32 @@ final class AudioEngine {
 
     /// Called when system default output device changes - switches apps that follow default
     private func handleDefaultDeviceChanged(_ newDefaultUID: String) {
+        let oldDefaultUID = lastKnownDefaultDeviceUID
+        lastKnownDefaultDeviceUID = newDefaultUID
+
+        // Suppress echo from our own priority-based override (UID match only)
+        if let overrideUID = lastPriorityDefaultOverrideUID,
+           newDefaultUID == overrideUID {
+            lastPriorityDefaultOverrideUID = nil
+            return
+        }
+        lastPriorityDefaultOverrideUID = nil
+
+        // If the old default device was disconnected, override to priority fallback.
+        // Use isDeviceAlive() to query Core Audio directly (cache may be stale).
+        if let oldUID = oldDefaultUID,
+           let oldDevice = deviceMonitor.device(for: oldUID),
+           !oldDevice.id.isDeviceAlive() {
+            if let fallback = findPriorityFallbackDevice(excluding: oldUID),
+               fallback.uid != newDefaultUID,
+               let fallbackDevice = deviceMonitor.device(for: fallback.uid) {
+                lastPriorityDefaultOverrideUID = fallback.uid
+                deviceVolumeMonitor.setDefaultDevice(fallbackDevice.id)
+                logger.info("System default overridden to priority fallback: \(fallback.name)")
+                return
+            }
+        }
+
         // Update routing for ALL apps following default (including those in grace period)
         // This ensures apps resuming during grace period get the correct device
         for pid in followsDefault {
