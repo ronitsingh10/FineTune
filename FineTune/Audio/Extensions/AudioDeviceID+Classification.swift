@@ -64,6 +64,16 @@ extension AudioDeviceID {
 
         // Beats
         if name.contains("Beats") { return "beats.headphones" }
+        
+        // Mac variants
+        if name.contains("Mac Studio") { return "macstudio.fill" }
+        if name.contains("Mac mini") { return "macmini.fill" }
+        if name.contains("MacBook") { return "macbook" }
+        if name.contains("iMac") { return "desktopcomputer" }
+        
+        // Display speakers
+        if name.contains("Studio Display") { return "display" }
+        if name.contains("Pro Display XDR") { return "display" }
 
         // Fall back to transport type default
         return transport.defaultIconSymbol
@@ -91,6 +101,10 @@ extension AudioDeviceID {
 
         // MacBook built-in
         if name.contains("MacBook") { return "laptopcomputer" }
+        
+        // Display mic
+        if name.contains("Studio Display") { return "display" }
+        if name.contains("Pro Display XDR") { return "display" }
 
         // Transport-based fallbacks
         switch transport {
