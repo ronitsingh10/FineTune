@@ -14,6 +14,17 @@ struct EQPanelView: View {
         }
     }
 
+    private var currentParametricPreset: CustomEQPreset? {
+        PresetManager.shared.presets.first { preset in
+            // Compare values (bands and preamp) to identify if we match a saved preset
+            preset.preampGain == settings.preampGain && preset.bands == settings.parametricBands
+        }
+    }
+    
+    // We use a State to trigger the window opening, but we don't bind it to a sheet modifier anymore.
+    @State private var isImportingParametric: Bool = false
+    @State private var isEditingPreset: Bool = false
+
     var body: some View {
         // Entire EQ panel content inside recessed background
         VStack(spacing: 12) {
@@ -35,35 +46,86 @@ struct EQPanelView: View {
 
                 Spacer()
 
+                // Mode Picker (Graphic / Parametric)
+                Picker("Mode", selection: $settings.mode) {
+                    Text("Graphic").tag(EQSettings.Mode.graphic)
+                    Text("Parametric").tag(EQSettings.Mode.parametric)
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .controlSize(.small)
+                .onChange(of: settings.mode) { _, _ in
+                     onSettingsChanged(settings)
+                }
+
+                Spacer()
+
                 // Preset picker on right
                 HStack(spacing: DesignTokens.Spacing.sm) {
-                    Text("Preset")
-                        .font(DesignTokens.Typography.pickerText)
-                        .foregroundColor(DesignTokens.Colors.textSecondary)
+                    if settings.mode == .graphic {
+                        Text("Preset")
+                            .font(DesignTokens.Typography.pickerText)
+                            .foregroundColor(DesignTokens.Colors.textSecondary)
 
-                    EQPresetPicker(
-                        selectedPreset: currentPreset,
-                        onPresetSelected: onPresetSelected
-                    )
+                        EQPresetPicker(
+                            selectedPreset: currentPreset,
+                            onPresetSelected: onPresetSelected
+                        )
+                    } else {
+                        ParametricPresetPicker(
+                            isImportSheetPresented: $isImportingParametric,
+                            selectedPreset: currentParametricPreset,
+                            onApplyPreset: { preset in
+                                settings.preampGain = preset.preampGain
+                                settings.parametricBands = preset.bands
+                                onSettingsChanged(settings)
+                            },
+                            onDeletePreset: { preset in
+                                PresetManager.shared.deletePreset(preset)
+                            }
+                        )
+                        
+                        // Edit button (only visible when a preset is selected)
+                        if currentParametricPreset != nil {
+                            Button(action: {
+                                isEditingPreset = true
+                            }) {
+                                Image(systemName: "pencil")
+                                    .font(.system(size: 11))
+                            }
+                            .buttonStyle(.plain)
+                            .foregroundColor(.accentColor)
+                            .help("Edit preset")
+                        }
+                    }
                 }
             }
             .zIndex(1)  // Ensure dropdown renders above sliders
 
-            // 10-band sliders
-            HStack(spacing: 22) {
-                ForEach(0..<10, id: \.self) { index in
-                    EQSliderView(
-                        frequency: frequencyLabels[index],
-                        gain: Binding(
-                            get: { settings.bandGains[index] },
-                            set: { newValue in
-                                settings.bandGains[index] = newValue
-                                onSettingsChanged(settings)
-                            }
+
+
+            // Content Area based on Mode
+            if settings.mode == .graphic {
+                // 10-band sliders
+                HStack(spacing: 22) {
+                    ForEach(0..<10, id: \.self) { index in
+                        EQSliderView(
+                            frequency: frequencyLabels[index],
+                            gain: Binding(
+                                get: { settings.bandGains[index] },
+                                set: { newValue in
+                                    settings.bandGains[index] = newValue
+                                    onSettingsChanged(settings)
+                                }
+                            )
                         )
-                    )
-                    .frame(width: 26, height: 100)
+                        .frame(width: 26, height: 100)
+                    }
                 }
+            } else {
+                // Parametric View
+                ParametricEQView(settings: $settings, onSettingsChanged: onSettingsChanged)
+                    .frame(height: 120) // Match approximate height of slider view
             }
         }
         .padding(.horizontal, 12)
@@ -74,6 +136,29 @@ struct EQPanelView: View {
         }
         .padding(.horizontal, 2)
         .padding(.vertical, 4)
+        .onChange(of: isImportingParametric) { _, newValue in
+            if newValue {
+                // Open Standalone Window
+                ImportWindowManager.shared.showImportWindow { preset in
+                    settings.preampGain = preset.preampGain
+                    settings.parametricBands = preset.bands
+                    onSettingsChanged(settings)
+                }
+                // Reset trigger immediately so it can be triggered again later if needed
+                isImportingParametric = false
+            }
+        }
+        .onChange(of: isEditingPreset) { _, newValue in
+            if newValue, let preset = currentParametricPreset {
+                // Open Edit Window
+                ImportWindowManager.shared.showEditWindow(preset: preset) { updatedPreset in
+                    settings.preampGain = updatedPreset.preampGain
+                    settings.parametricBands = updatedPreset.bands
+                    onSettingsChanged(settings)
+                }
+                isEditingPreset = false
+            }
+        }
         // No outer background - parent ExpandableGlassRow provides the glass container
     }
 }
