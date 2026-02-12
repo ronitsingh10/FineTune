@@ -641,6 +641,12 @@ final class AudioEngine {
             tap.isDeviceMuted = deviceVolumeMonitor.muteStates[device.id] ?? false
         }
 
+        // Rebuild tap when device sample rate changes (e.g., Bluetooth HFP profile switch)
+        tap.onSampleRateChanged = { [weak self, weak tap] in
+            guard let self, let tap else { return }
+            self.handleSampleRateChanged(for: tap)
+        }
+
         do {
             try tap.activate()
             taps[app.id] = tap
@@ -758,6 +764,12 @@ final class AudioEngine {
             tap.isDeviceMuted = deviceVolumeMonitor.muteStates[device.id] ?? false
         }
 
+        // Rebuild tap when device sample rate changes (e.g., Bluetooth HFP profile switch)
+        tap.onSampleRateChanged = { [weak self, weak tap] in
+            guard let self, let tap else { return }
+            self.handleSampleRateChanged(for: tap)
+        }
+
         do {
             try tap.activate()
             taps[app.id] = tap
@@ -769,6 +781,22 @@ final class AudioEngine {
             logger.debug("Created tap for \(app.name)")
         } catch {
             logger.error("Failed to create tap for \(app.name): \(error.localizedDescription)")
+        }
+    }
+
+    /// Called when a tap's aggregate device sample rate changes (e.g., Bluetooth switching to HFP).
+    /// Rebuilds the tap with correct parameters to prevent distorted audio.
+    private func handleSampleRateChanged(for tap: ProcessTapController) {
+        logger.info("Sample rate changed for \(tap.app.name), rebuilding tap")
+
+        Task {
+            do {
+                try await tap.rebuildTap()
+                tap.volume = self.volumeState.getVolume(for: tap.app.id)
+                tap.isMuted = self.volumeState.getMute(for: tap.app.id)
+            } catch {
+                self.logger.error("Failed to rebuild tap for \(tap.app.name) after sample rate change: \(error.localizedDescription)")
+            }
         }
     }
 
