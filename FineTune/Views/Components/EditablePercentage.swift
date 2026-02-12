@@ -71,7 +71,7 @@ struct EditablePercentage: View {
                     .fill(Color.primary.opacity(0.08))
             }
         }
-        .frame(minWidth: DesignTokens.Dimensions.percentageWidth, alignment: .trailing)
+        .frame(width: DesignTokens.Dimensions.percentageWidth, alignment: .trailing)
         .contentShape(Rectangle())
         .onTapGesture { if !isEditing { startEditing() } }
         .onHover { hovering in

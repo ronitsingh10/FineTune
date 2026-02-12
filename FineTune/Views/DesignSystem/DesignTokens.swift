@@ -249,8 +249,8 @@ enum DesignTokens {
             contentWidth - iconSize - Spacing.sm - 100
         }
 
-        /// Percentage text width
-        static let percentageWidth: CGFloat = 32
+        /// Percentage text width (fixed to prevent layout shift)
+        static let percentageWidth: CGFloat = 40
 
         // MARK: VU Meter
 
