@@ -47,6 +47,7 @@ struct AppSettings: Codable, Equatable {
     // Audio
     var defaultNewAppVolume: Float = 1.0      // 100% (unity gain)
     var maxVolumeBoost: Float = 2.0           // 200% max
+    var defaultEQEnabled: Bool = true         // Whether EQ is enabled by default for new apps
 
     // Input Device Lock
     var lockInputDevice: Bool = true          // Prevent auto-switching input device
@@ -148,7 +149,11 @@ final class SettingsManager {
     }
 
     func getEQSettings(for appIdentifier: String) -> EQSettings {
-        return settings.appEQSettings[appIdentifier] ?? EQSettings.flat
+        if let savedSettings = settings.appEQSettings[appIdentifier] {
+            return savedSettings
+        }
+        // Return default EQ with isEnabled based on user preference
+        return EQSettings(isEnabled: settings.appSettings.defaultEQEnabled)
     }
 
     func setEQSettings(_ eqSettings: EQSettings, for appIdentifier: String) {

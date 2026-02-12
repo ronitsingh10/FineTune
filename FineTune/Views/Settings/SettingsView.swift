@@ -85,6 +85,13 @@ struct SettingsView: View {
             )
 
             SettingsToggleRow(
+                icon: "slider.vertical.3",
+                title: "Enable EQ by Default",
+                description: "Automatically enable equalizer for new apps",
+                isOn: $settings.defaultEQEnabled
+            )
+
+            SettingsToggleRow(
                 icon: "mic",
                 title: "Lock Input Device",
                 description: "Prevent auto-switching when devices connect",
