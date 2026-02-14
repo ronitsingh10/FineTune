@@ -148,6 +148,10 @@ struct MenuBarPopupView: View {
             Button("") { toggleSettings() }
                 .keyboardShortcut(",", modifiers: .command)
                 .hidden()
+            // Hidden button to handle Escape key to dismiss popup
+            Button("") { handleEscape() }
+                .keyboardShortcut(.escape, modifiers: [])
+                .hidden()
         }
     }
 
@@ -193,6 +197,19 @@ struct MenuBarPopupView: View {
         }
         .buttonStyle(.plain)
         .animation(.spring(response: 0.3, dampingFraction: 0.75), value: isSettingsOpen)
+    }
+
+    /// Handles Escape key: closes settings/EQ first, then dismisses the popup
+    private func handleEscape() {
+        if isSettingsOpen {
+            toggleSettings()
+        } else if expandedEQAppID != nil {
+            withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+                expandedEQAppID = nil
+            }
+        } else {
+            NSApp.keyWindow?.orderOut(nil)
+        }
     }
 
     private func toggleSettings() {
