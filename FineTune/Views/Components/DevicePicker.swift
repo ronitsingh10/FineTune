@@ -10,6 +10,7 @@ enum DeviceSelection: Equatable {
 /// A styled device picker dropdown with "System Audio" option and single/multi mode support
 struct DevicePicker: View {
     let devices: [AudioDevice]
+    let unconnectedBluetoothSources: [BluetoothAudioSource]
     let selectedDeviceUID: String  // For single mode
     let selectedDeviceUIDs: Set<String>  // For multi mode
     let isFollowingDefault: Bool
@@ -19,10 +20,12 @@ struct DevicePicker: View {
     let onDeviceSelected: (String) -> Void  // Single mode callback
     let onDevicesSelected: (Set<String>) -> Void  // Multi mode callback
     let onSelectFollowDefault: () -> Void
+    let onConnectBluetoothSource: (BluetoothAudioSource) -> Void
     let showModeToggle: Bool
 
     @State private var isExpanded = false
     @State private var isButtonHovered = false
+    @State private var connectingBluetoothSourceIDs: Set<String> = []
 
     // Local state mirrors props for popover reactivity
     @State private var currentMode: DeviceSelectionMode = .single
@@ -39,11 +42,13 @@ struct DevicePicker: View {
     enum MenuItem: Identifiable, Equatable {
         case systemAudio
         case device(AudioDevice)
+        case unconnectedBluetooth(BluetoothAudioSource)
 
         var id: String {
             switch self {
             case .systemAudio: return "__system_audio__"
             case .device(let device): return device.uid
+            case .unconnectedBluetooth(let source): return "__bt_\(source.id)"
             }
         }
 
@@ -51,6 +56,7 @@ struct DevicePicker: View {
             switch self {
             case .systemAudio: return "System Audio"
             case .device(let device): return device.name
+            case .unconnectedBluetooth(let source): return source.name
             }
         }
 
@@ -58,12 +64,17 @@ struct DevicePicker: View {
             switch self {
             case .systemAudio: return nil
             case .device(let device): return device.icon
+            case .unconnectedBluetooth(let source): return source.icon
             }
         }
     }
 
-    private var menuItems: [MenuItem] {
+    private var connectedMenuItems: [MenuItem] {
         [.systemAudio] + devices.map { .device($0) }
+    }
+
+    private var unconnectedBluetoothMenuItems: [MenuItem] {
+        unconnectedBluetoothSources.map { .unconnectedBluetooth($0) }
     }
 
     /// Display text for trigger button
@@ -146,6 +157,10 @@ struct DevicePicker: View {
                 currentMode = mode
                 currentSelectedUIDs = selectedDeviceUIDs
             }
+            .onChange(of: unconnectedBluetoothSources) { _, newSources in
+                let availableIDs = Set(newSources.map(\.id))
+                connectingBluetoothSourceIDs = connectingBluetoothSourceIDs.intersection(availableIDs)
+            }
     }
 
     // MARK: - Trigger Button
@@ -218,8 +233,25 @@ struct DevicePicker: View {
             // Device list
             ScrollView(.vertical, showsIndicators: false) {
                 LazyVStack(spacing: itemSpacing) {
-                    ForEach(menuItems) { item in
+                    ForEach(connectedMenuItems) { item in
                         deviceRow(for: item)
+                    }
+
+                    if !unconnectedBluetoothMenuItems.isEmpty {
+                        Divider()
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 4)
+
+                        Text("Unconnected Bluetooth")
+                            .font(DesignTokens.Typography.caption)
+                            .foregroundStyle(DesignTokens.Colors.textTertiary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.horizontal, 8)
+                            .padding(.bottom, 2)
+
+                        ForEach(unconnectedBluetoothMenuItems) { item in
+                            deviceRow(for: item)
+                        }
                     }
                 }
                 .padding(.vertical, 6)
@@ -259,8 +291,28 @@ struct DevicePicker: View {
             }(),
             onTap: {
                 handleItemTap(item)
-            }
+            },
+            onConnect: { source in
+                startConnecting(source)
+            },
+            isConnectingBluetooth: {
+                if case .unconnectedBluetooth(let source) = item {
+                    return connectingBluetoothSourceIDs.contains(source.id)
+                }
+                return false
+            }()
         )
+    }
+
+    private func startConnecting(_ source: BluetoothAudioSource) {
+        guard !connectingBluetoothSourceIDs.contains(source.id) else { return }
+        connectingBluetoothSourceIDs.insert(source.id)
+        onConnectBluetoothSource(source)
+
+        // Remove spinner after a short timeout; source will usually disappear once connected.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 6) {
+            connectingBluetoothSourceIDs.remove(source.id)
+        }
     }
 
     private func isItemSelected(_ item: MenuItem) -> Bool {
@@ -270,6 +322,8 @@ struct DevicePicker: View {
                 return isFollowingDefault
             } else if case .device(let device) = item {
                 return !isFollowingDefault && device.uid == selectedDeviceUID
+            } else if case .unconnectedBluetooth = item {
+                return false
             }
             return false
         case .multi:
@@ -288,6 +342,9 @@ struct DevicePicker: View {
                 onSelectFollowDefault()
             case .device(let device):
                 onDeviceSelected(device.uid)
+            case .unconnectedBluetooth(let source):
+                onConnectBluetoothSource(source)
+                return
             }
             withAnimation(.easeOut(duration: 0.15)) {
                 isExpanded = false
@@ -317,44 +374,95 @@ private struct DevicePickerRow: View {
     let isMultiMode: Bool
     let isDefaultDevice: Bool
     let onTap: () -> Void
+    let onConnect: (BluetoothAudioSource) -> Void
+    let isConnectingBluetooth: Bool
 
     @State private var isHovered = false
 
     var body: some View {
-        Button(action: onTap) {
-            HStack(spacing: DesignTokens.Spacing.xs) {
-                // Selection indicator
-                selectionIndicator
+        Group {
+            if case .unconnectedBluetooth(let source) = item {
+                HStack(spacing: DesignTokens.Spacing.xs) {
+                    Spacer()
+                        .frame(width: 16)
 
-                // Icon
-                itemIcon
+                    itemIcon
+                    itemText
 
-                // Text content
-                itemText
+                    Spacer()
 
-                Spacer()
-
-                // Default device star
-                if isDefaultDevice {
-                    Image(systemName: "star.fill")
-                        .font(.system(size: 9))
-                        .foregroundStyle(DesignTokens.Colors.textTertiary)
+                    if isConnectingBluetooth {
+                        ZStack {
+                            Capsule()
+                                .fill(Color.white.opacity(0.2))
+                            ProgressView()
+                                .controlSize(.small)
+                                .tint(.white)
+                        }
+                        .frame(width: 68, height: 22)
+                    } else {
+                        Button("Connect") {
+                            onConnect(source)
+                        }
+                        .buttonStyle(.plain)
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(DesignTokens.Colors.textPrimary)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 4)
+                        .background(
+                            Capsule()
+                                .fill(Color.white.opacity(0.2))
+                        )
+                    }
                 }
+                .font(.system(size: 11))
+                .foregroundColor(.primary)
+                .padding(.horizontal, 8)
+                .frame(height: 26)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(
+                    RoundedRectangle(cornerRadius: 5)
+                        .fill(isHovered ? Color.accentColor.opacity(0.12) : Color.clear)
+                )
+                .contentShape(Rectangle())
+                .whenHovered { isHovered = $0 }
+            } else {
+                Button(action: onTap) {
+                    HStack(spacing: DesignTokens.Spacing.xs) {
+                        // Selection indicator
+                        selectionIndicator
+
+                        // Icon
+                        itemIcon
+
+                        // Text content
+                        itemText
+
+                        Spacer()
+
+                        // Default device star
+                        if isDefaultDevice {
+                            Image(systemName: "star.fill")
+                                .font(.system(size: 9))
+                                .foregroundStyle(DesignTokens.Colors.textTertiary)
+                        }
+                    }
+                    .font(.system(size: 11))
+                    .foregroundColor(isDisabled ? DesignTokens.Colors.textQuaternary : .primary)
+                    .padding(.horizontal, 8)
+                    .frame(height: 26)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(
+                        RoundedRectangle(cornerRadius: 5)
+                            .fill(isHovered && !isDisabled ? Color.accentColor.opacity(0.15) : Color.clear)
+                    )
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .disabled(isDisabled)
+                .whenHovered { isHovered = $0 }
             }
-            .font(.system(size: 11))
-            .foregroundColor(isDisabled ? DesignTokens.Colors.textQuaternary : .primary)
-            .padding(.horizontal, 8)
-            .frame(height: 26)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(
-                RoundedRectangle(cornerRadius: 5)
-                    .fill(isHovered && !isDisabled ? Color.accentColor.opacity(0.15) : Color.clear)
-            )
-            .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
-        .disabled(isDisabled)
-        .whenHovered { isHovered = $0 }
     }
 
     @ViewBuilder
@@ -399,6 +507,17 @@ private struct DevicePickerRow: View {
                     .font(.system(size: 13))
                     .frame(width: 16)
             }
+        case .unconnectedBluetooth(let source):
+            if let icon = source.icon {
+                Image(nsImage: icon)
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+                    .frame(width: 16, height: 16)
+            } else {
+                Image(systemName: "headphones")
+                    .font(.system(size: 13))
+                    .frame(width: 16)
+            }
         }
     }
 
@@ -421,6 +540,9 @@ private struct DevicePickerRow: View {
         case .device(let device):
             Text(device.name)
                 .lineLimit(1)
+        case .unconnectedBluetooth(let source):
+            Text(source.name)
+                .lineLimit(1)
         }
     }
 }
@@ -434,10 +556,13 @@ extension DevicePicker {
         selectedDeviceUID: String,
         isFollowingDefault: Bool,
         defaultDeviceUID: String?,
+        unconnectedBluetoothSources: [BluetoothAudioSource] = [],
+        onConnectBluetoothSource: @escaping (BluetoothAudioSource) -> Void = { _ in },
         onDeviceSelected: @escaping (String) -> Void,
         onSelectFollowDefault: @escaping () -> Void
     ) {
         self.devices = devices
+        self.unconnectedBluetoothSources = unconnectedBluetoothSources
         self.selectedDeviceUID = selectedDeviceUID
         self.selectedDeviceUIDs = []
         self.isFollowingDefault = isFollowingDefault
@@ -447,6 +572,7 @@ extension DevicePicker {
         self.onDeviceSelected = onDeviceSelected
         self.onDevicesSelected = { _ in }
         self.onSelectFollowDefault = onSelectFollowDefault
+        self.onConnectBluetoothSource = onConnectBluetoothSource
         self.showModeToggle = false
     }
 }
@@ -478,6 +604,7 @@ extension DevicePicker {
                 VStack(spacing: DesignTokens.Spacing.md) {
                     DevicePicker(
                         devices: MockData.sampleDevices,
+                        unconnectedBluetoothSources: [],
                         selectedDeviceUID: MockData.sampleDevices[0].uid,
                         selectedDeviceUIDs: selectedUIDs,
                         isFollowingDefault: false,
@@ -487,6 +614,7 @@ extension DevicePicker {
                         onDeviceSelected: { _ in },
                         onDevicesSelected: { selectedUIDs = $0 },
                         onSelectFollowDefault: {},
+                        onConnectBluetoothSource: { _ in },
                         showModeToggle: true
                     )
 
@@ -512,6 +640,7 @@ extension DevicePicker {
                 VStack(spacing: DesignTokens.Spacing.md) {
                     DevicePicker(
                         devices: MockData.sampleDevices,
+                        unconnectedBluetoothSources: [],
                         selectedDeviceUID: selectedUID,
                         selectedDeviceUIDs: selectedUIDs,
                         isFollowingDefault: isFollowingDefault,
@@ -533,6 +662,7 @@ extension DevicePicker {
                         onSelectFollowDefault: {
                             isFollowingDefault = true
                         },
+                        onConnectBluetoothSource: { _ in },
                         showModeToggle: true
                     )
 

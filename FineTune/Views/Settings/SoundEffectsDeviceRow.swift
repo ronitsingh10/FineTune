@@ -4,11 +4,13 @@ import SwiftUI
 /// Settings row for selecting the sound effects output device
 struct SoundEffectsDeviceRow: View {
     let devices: [AudioDevice]
+    let unconnectedBluetoothSources: [BluetoothAudioSource]
     let selectedDeviceUID: String?
     let defaultDeviceUID: String?
     let isFollowingDefault: Bool
     let onDeviceSelected: (String) -> Void
     let onSelectFollowDefault: () -> Void
+    let onConnectBluetoothSource: (BluetoothAudioSource) -> Void
 
     var body: some View {
         SettingsRowView(
@@ -21,6 +23,8 @@ struct SoundEffectsDeviceRow: View {
                 selectedDeviceUID: selectedDeviceUID ?? "",
                 isFollowingDefault: isFollowingDefault,
                 defaultDeviceUID: defaultDeviceUID,
+                unconnectedBluetoothSources: unconnectedBluetoothSources,
+                onConnectBluetoothSource: onConnectBluetoothSource,
                 onDeviceSelected: { onDeviceSelected($0) },
                 onSelectFollowDefault: { onSelectFollowDefault() }
             )
@@ -34,11 +38,13 @@ struct SoundEffectsDeviceRow: View {
     VStack(spacing: DesignTokens.Spacing.sm) {
         SoundEffectsDeviceRow(
             devices: MockData.sampleDevices,
+            unconnectedBluetoothSources: [],
             selectedDeviceUID: MockData.sampleDevices[0].uid,
             defaultDeviceUID: MockData.sampleDevices[0].uid,
             isFollowingDefault: true,
             onDeviceSelected: { _ in },
-            onSelectFollowDefault: {}
+            onSelectFollowDefault: {},
+            onConnectBluetoothSource: { _ in }
         )
     }
     .padding()

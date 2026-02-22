@@ -12,6 +12,7 @@ struct InactiveAppRow: View {
     let icon: NSImage
     let volume: Float  // Linear gain 0-maxVolumeBoost
     let devices: [AudioDevice]
+    let unconnectedBluetoothSources: [BluetoothAudioSource]
     let selectedDeviceUID: String?
     let selectedDeviceUIDs: Set<String>
     let isFollowingDefault: Bool
@@ -25,6 +26,7 @@ struct InactiveAppRow: View {
     let onDevicesSelected: (Set<String>) -> Void
     let onDeviceModeChange: (DeviceSelectionMode) -> Void
     let onSelectFollowDefault: () -> Void
+    let onConnectBluetoothSource: (BluetoothAudioSource) -> Void
     let onUnpin: () -> Void  // Inactive apps can only be unpinned
     let eqSettings: EQSettings
     let onEQChange: (EQSettings) -> Void
@@ -48,6 +50,7 @@ struct InactiveAppRow: View {
         icon: NSImage,
         volume: Float,
         devices: [AudioDevice],
+        unconnectedBluetoothSources: [BluetoothAudioSource] = [],
         selectedDeviceUID: String?,
         selectedDeviceUIDs: Set<String> = [],
         isFollowingDefault: Bool = true,
@@ -61,6 +64,7 @@ struct InactiveAppRow: View {
         onDevicesSelected: @escaping (Set<String>) -> Void = { _ in },
         onDeviceModeChange: @escaping (DeviceSelectionMode) -> Void = { _ in },
         onSelectFollowDefault: @escaping () -> Void = {},
+        onConnectBluetoothSource: @escaping (BluetoothAudioSource) -> Void = { _ in },
         onUnpin: @escaping () -> Void,
         eqSettings: EQSettings = EQSettings(),
         onEQChange: @escaping (EQSettings) -> Void = { _ in },
@@ -71,6 +75,7 @@ struct InactiveAppRow: View {
         self.icon = icon
         self.volume = volume
         self.devices = devices
+        self.unconnectedBluetoothSources = unconnectedBluetoothSources
         self.selectedDeviceUID = selectedDeviceUID
         self.selectedDeviceUIDs = selectedDeviceUIDs
         self.isFollowingDefault = isFollowingDefault
@@ -84,6 +89,7 @@ struct InactiveAppRow: View {
         self.onDevicesSelected = onDevicesSelected
         self.onDeviceModeChange = onDeviceModeChange
         self.onSelectFollowDefault = onSelectFollowDefault
+        self.onConnectBluetoothSource = onConnectBluetoothSource
         self.onUnpin = onUnpin
         self.eqSettings = eqSettings
         self.onEQChange = onEQChange
@@ -138,6 +144,7 @@ struct InactiveAppRow: View {
                     isMuted: isMuted,
                     audioLevel: 0,  // No audio for inactive apps
                     devices: devices,
+                    unconnectedBluetoothSources: unconnectedBluetoothSources,
                     selectedDeviceUID: selectedDeviceUID ?? defaultDeviceUID ?? "",
                     selectedDeviceUIDs: selectedDeviceUIDs,
                     isFollowingDefault: isFollowingDefault,
@@ -151,6 +158,7 @@ struct InactiveAppRow: View {
                     onDevicesSelected: onDevicesSelected,
                     onDeviceModeChange: onDeviceModeChange,
                     onSelectFollowDefault: onSelectFollowDefault,
+                    onConnectBluetoothSource: onConnectBluetoothSource,
                     onEQToggle: onEQToggle
                 )
             }
