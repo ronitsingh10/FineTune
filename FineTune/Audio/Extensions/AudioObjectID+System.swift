@@ -6,53 +6,17 @@ import Foundation
 
 extension AudioObjectID {
     static func readDeviceList() throws -> [AudioDeviceID] {
-        var address = AudioObjectPropertyAddress(
-            mSelector: kAudioHardwarePropertyDevices,
-            mScope: kAudioObjectPropertyScopeGlobal,
-            mElement: kAudioObjectPropertyElementMain
+        try AudioObjectID.system.readArray(
+            kAudioHardwarePropertyDevices,
+            defaultValue: AudioDeviceID.unknown
         )
-        var size: UInt32 = 0
-        var err = AudioObjectGetPropertyDataSize(
-            AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &size
-        )
-        guard err == noErr else {
-            throw NSError(domain: NSOSStatusErrorDomain, code: Int(err))
-        }
-
-        let count = Int(size) / MemoryLayout<AudioDeviceID>.size
-        var deviceIDs = [AudioDeviceID](repeating: .unknown, count: count)
-        err = AudioObjectGetPropertyData(
-            AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &size, &deviceIDs
-        )
-        guard err == noErr else {
-            throw NSError(domain: NSOSStatusErrorDomain, code: Int(err))
-        }
-        return deviceIDs
     }
 
     static func readProcessList() throws -> [AudioObjectID] {
-        var address = AudioObjectPropertyAddress(
-            mSelector: kAudioHardwarePropertyProcessObjectList,
-            mScope: kAudioObjectPropertyScopeGlobal,
-            mElement: kAudioObjectPropertyElementMain
+        try AudioObjectID.system.readArray(
+            kAudioHardwarePropertyProcessObjectList,
+            defaultValue: AudioObjectID.unknown
         )
-        var size: UInt32 = 0
-        var err = AudioObjectGetPropertyDataSize(
-            AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &size
-        )
-        guard err == noErr else {
-            throw NSError(domain: NSOSStatusErrorDomain, code: Int(err))
-        }
-
-        let count = Int(size) / MemoryLayout<AudioObjectID>.size
-        var objectIDs = [AudioObjectID](repeating: .unknown, count: count)
-        err = AudioObjectGetPropertyData(
-            AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &size, &objectIDs
-        )
-        guard err == noErr else {
-            throw NSError(domain: NSOSStatusErrorDomain, code: Int(err))
-        }
-        return objectIDs
     }
 }
 
@@ -66,13 +30,6 @@ extension AudioDeviceID {
             kAudioHardwarePropertyDefaultOutputDevice,  // Main audio output, NOT system alert sounds
             defaultValue: AudioDeviceID.unknown
         )
-    }
-
-    /// Reads the UID of the main audio output device
-    /// NOTE: Use DeviceVolumeMonitor.defaultDeviceUID when available
-    static func readDefaultOutputDeviceUID() throws -> String {
-        let deviceID = try readDefaultOutputDevice()
-        return try deviceID.readDeviceUID()
     }
 
     static func setDefaultOutputDevice(_ deviceID: AudioDeviceID) throws {
@@ -134,13 +91,6 @@ extension AudioDeviceID {
             kAudioHardwarePropertyDefaultInputDevice,
             defaultValue: AudioDeviceID.unknown
         )
-    }
-
-    /// Reads the UID of the main audio input device
-    /// NOTE: Use DeviceVolumeMonitor.defaultInputDeviceUID when available
-    static func readDefaultInputDeviceUID() throws -> String {
-        let deviceID = try readDefaultInputDevice()
-        return try deviceID.readDeviceUID()
     }
 
     /// Sets the default input device (microphone)
