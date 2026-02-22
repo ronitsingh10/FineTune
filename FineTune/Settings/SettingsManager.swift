@@ -50,6 +50,7 @@ struct AppSettings: Codable, Equatable {
 
     // Input Device Lock
     var lockInputDevice: Bool = true          // Prevent auto-switching input device
+    var displayUnconnectedBluetoothAudioSources: Bool = false
 
     // Notifications
     var showDeviceDisconnectAlerts: Bool = true

@@ -36,6 +36,8 @@ struct MenuBarPopupView: View {
 
     /// Local copy of app settings for binding
     @State private var localAppSettings: AppSettings = AppSettings()
+    private let bluetoothAudioSourceService = BluetoothAudioSourceService()
+    @State private var connectingBluetoothSourceIDs: Set<String> = []
 
     /// Whether device priority edit mode is active
     @State private var isEditingDevicePriority = false
@@ -99,7 +101,9 @@ struct MenuBarPopupView: View {
                         deviceVolumeMonitor.setSystemFollowDefault()
                     },
                     deviceVolumeMonitor: deviceVolumeMonitor,
-                    outputDevices: sortedDevices
+                    outputDevices: sortedDevices,
+                    unconnectedBluetoothSources: unconnectedBluetoothSources,
+                    onConnectBluetoothSource: connectBluetoothSource
                 )
                 .transition(.asymmetric(
                     insertion: .move(edge: .trailing).combined(with: .opacity),
@@ -376,10 +380,12 @@ struct MenuBarPopupView: View {
 
     @ViewBuilder
     private var devicesSection: some View {
-        let devices = showingInputDevices ? sortedInputDevices : sortedDevices
+        let devicesCount = showingInputDevices
+            ? sortedInputDevices.count
+            : sortedDevices.count + (isEditingDevicePriority ? 0 : unconnectedBluetoothSources.count)
         let threshold = deviceScrollThreshold
 
-        if !isEditingDevicePriority && devices.count > threshold {
+        if !isEditingDevicePriority && devicesCount > threshold {
             ScrollView {
                 devicesContent
             }
@@ -471,6 +477,67 @@ struct MenuBarPopupView: View {
                         }
                     )
                 }
+
+                if !unconnectedBluetoothSources.isEmpty {
+                    Divider()
+                        .padding(.vertical, 2)
+
+                    HStack {
+                        Text("Unconnected Bluetooth")
+                            .font(DesignTokens.Typography.caption)
+                            .foregroundStyle(DesignTokens.Colors.textTertiary)
+                        Spacer()
+                    }
+                    .padding(.horizontal, 8)
+
+                    ForEach(unconnectedBluetoothSources) { source in
+                        HStack(spacing: DesignTokens.Spacing.sm) {
+                            if let icon = source.icon {
+                                Image(nsImage: icon)
+                                    .resizable()
+                                    .aspectRatio(contentMode: .fit)
+                                    .frame(width: 16, height: 16)
+                            } else {
+                                Image(systemName: "headphones")
+                                    .font(.system(size: 13))
+                                    .foregroundStyle(DesignTokens.Colors.textSecondary)
+                                    .frame(width: 16)
+                            }
+
+                            Text(source.name)
+                                .font(DesignTokens.Typography.rowName)
+                                .lineLimit(1)
+
+                            Spacer()
+
+                            if connectingBluetoothSourceIDs.contains(source.id) {
+                                ZStack {
+                                    Capsule()
+                                        .fill(Color.white.opacity(0.2))
+                                    ProgressView()
+                                        .controlSize(.small)
+                                        .tint(.white)
+                                }
+                                .frame(width: 76, height: 24)
+                            } else {
+                                Button("Connect") {
+                                    connectBluetoothSource(source)
+                                }
+                                .buttonStyle(.plain)
+                                .font(.system(size: 11, weight: .semibold))
+                                .foregroundStyle(DesignTokens.Colors.textPrimary)
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 4)
+                                .background(
+                                    Capsule()
+                                        .fill(Color.white.opacity(0.2))
+                                )
+                            }
+                        }
+                        .padding(.horizontal, 8)
+                        .frame(height: DesignTokens.Dimensions.rowContentHeight)
+                    }
+                }
             }
         }
     }
@@ -535,6 +602,7 @@ struct MenuBarPopupView: View {
                 volume: audioEngine.getVolume(for: app),
                 isMuted: audioEngine.getMute(for: app),
                 devices: sortedDevices,
+                unconnectedBluetoothSources: unconnectedBluetoothSources,
                 selectedDeviceUID: deviceUID,
                 selectedDeviceUIDs: audioEngine.getSelectedDeviceUIDs(for: app),
                 isFollowingDefault: audioEngine.isFollowingDefault(for: app),
@@ -562,6 +630,7 @@ struct MenuBarPopupView: View {
                 onSelectFollowDefault: {
                     audioEngine.setDevice(for: app, deviceUID: nil)
                 },
+                onConnectBluetoothSource: connectBluetoothSource,
                 onAppActivate: {
                     activateApp(pid: app.id, bundleID: app.bundleID)
                 },
@@ -594,6 +663,7 @@ struct MenuBarPopupView: View {
             icon: displayableApp.icon,
             volume: audioEngine.getVolumeForInactive(identifier: identifier),
             devices: sortedDevices,
+            unconnectedBluetoothSources: unconnectedBluetoothSources,
             selectedDeviceUID: audioEngine.getDeviceRoutingForInactive(identifier: identifier),
             selectedDeviceUIDs: audioEngine.getSelectedDeviceUIDsForInactive(identifier: identifier),
             isFollowingDefault: audioEngine.isFollowingDefaultForInactive(identifier: identifier),
@@ -619,6 +689,7 @@ struct MenuBarPopupView: View {
             onSelectFollowDefault: {
                 audioEngine.setDeviceRoutingForInactive(identifier: identifier, deviceUID: nil)
             },
+            onConnectBluetoothSource: connectBluetoothSource,
             onUnpin: {
                 audioEngine.unpinApp(identifier)
             },
@@ -694,6 +765,32 @@ struct MenuBarPopupView: View {
     }
 
     // MARK: - Helpers
+
+    private var unconnectedBluetoothSources: [BluetoothAudioSource] {
+        guard localAppSettings.displayUnconnectedBluetoothAudioSources else { return [] }
+
+        let connectedBluetoothNames = Set(
+            sortedDevices
+                .filter { device in
+                    let transport = device.id.readTransportType()
+                    return transport == .bluetooth || transport == .bluetoothLE
+                }
+                .map(\.name)
+        )
+
+        return bluetoothAudioSourceService.unconnectedPairedAudioSources(
+            excludingConnectedNames: connectedBluetoothNames
+        )
+    }
+
+    private func connectBluetoothSource(_ source: BluetoothAudioSource) {
+        guard !connectingBluetoothSourceIDs.contains(source.id) else { return }
+        connectingBluetoothSourceIDs.insert(source.id)
+        bluetoothAudioSourceService.connect(source)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 6) {
+            connectingBluetoothSourceIDs.remove(source.id)
+        }
+    }
 
     /// Recomputes sorted output devices using priority order
     private func updateSortedDevices() {

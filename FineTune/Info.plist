@@ -6,6 +6,8 @@
 	<true/>
 	<key>NSAudioCaptureUsageDescription</key>
 	<string>FineTune needs access to control volume levels for individual applications.</string>
+	<key>NSBluetoothAlwaysUsageDescription</key>
+	<string>FineTune uses Bluetooth to display paired audio devices and let you connect them from the app.</string>
 	<key>SUFeedURL</key>
 	<string>https://raw.githubusercontent.com/ronitsingh10/FineTune/main/appcast.xml</string>
 	<key>SUPublicEDKey</key>

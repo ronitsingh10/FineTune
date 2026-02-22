@@ -8,6 +8,7 @@ struct AppRowControls: View {
     let isMuted: Bool
     let audioLevel: Float
     let devices: [AudioDevice]
+    let unconnectedBluetoothSources: [BluetoothAudioSource]
     let selectedDeviceUID: String
     let selectedDeviceUIDs: Set<String>
     let isFollowingDefault: Bool
@@ -21,6 +22,7 @@ struct AppRowControls: View {
     let onDevicesSelected: (Set<String>) -> Void
     let onDeviceModeChange: (DeviceSelectionMode) -> Void
     let onSelectFollowDefault: () -> Void
+    let onConnectBluetoothSource: (BluetoothAudioSource) -> Void
     let onEQToggle: () -> Void
 
     @State private var dragOverrideValue: Double?
@@ -100,6 +102,7 @@ struct AppRowControls: View {
             // Device picker
             DevicePicker(
                 devices: devices,
+                unconnectedBluetoothSources: unconnectedBluetoothSources,
                 selectedDeviceUID: selectedDeviceUID,
                 selectedDeviceUIDs: selectedDeviceUIDs,
                 isFollowingDefault: isFollowingDefault,
@@ -109,6 +112,7 @@ struct AppRowControls: View {
                 onDeviceSelected: onDeviceSelected,
                 onDevicesSelected: onDevicesSelected,
                 onSelectFollowDefault: onSelectFollowDefault,
+                onConnectBluetoothSource: onConnectBluetoothSource,
                 showModeToggle: true
             )
 

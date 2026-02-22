@@ -11,6 +11,8 @@ struct SettingsView: View {
     // System sounds control
     @Bindable var deviceVolumeMonitor: DeviceVolumeMonitor
     let outputDevices: [AudioDevice]
+    let unconnectedBluetoothSources: [BluetoothAudioSource]
+    let onConnectBluetoothSource: (BluetoothAudioSource) -> Void
 
     @State private var showResetConfirmation = false
 
@@ -91,9 +93,17 @@ struct SettingsView: View {
                 isOn: $settings.lockInputDevice
             )
 
+            SettingsToggleRow(
+                icon: "dot.radiowaves.left.and.right",
+                title: "Display unconnected Bluetooth audio source",
+                description: "Show paired Bluetooth audio sources with a connect button",
+                isOn: $settings.displayUnconnectedBluetoothAudioSources
+            )
+
             // Sound Effects device selection
             SoundEffectsDeviceRow(
                 devices: outputDevices,
+                unconnectedBluetoothSources: unconnectedBluetoothSources,
                 selectedDeviceUID: deviceVolumeMonitor.systemDeviceUID,
                 defaultDeviceUID: deviceVolumeMonitor.defaultDeviceUID,
                 isFollowingDefault: deviceVolumeMonitor.isSystemFollowingDefault,
@@ -104,7 +114,8 @@ struct SettingsView: View {
                 },
                 onSelectFollowDefault: {
                     deviceVolumeMonitor.setSystemFollowDefault()
-                }
+                },
+                onConnectBluetoothSource: onConnectBluetoothSource
             )
         }
     }

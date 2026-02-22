@@ -9,6 +9,7 @@ struct AppRow: View {
     let volume: Float  // Linear gain 0-maxVolumeBoost
     let audioLevel: Float
     let devices: [AudioDevice]
+    let unconnectedBluetoothSources: [BluetoothAudioSource]
     let selectedDeviceUID: String  // For single mode
     let selectedDeviceUIDs: Set<String>  // For multi mode
     let isFollowingDefault: Bool
@@ -23,6 +24,7 @@ struct AppRow: View {
     let onDevicesSelected: (Set<String>) -> Void  // Multi mode
     let onDeviceModeChange: (DeviceSelectionMode) -> Void
     let onSelectFollowDefault: () -> Void
+    let onConnectBluetoothSource: (BluetoothAudioSource) -> Void
     let onAppActivate: () -> Void
     let onPinToggle: () -> Void  // Toggle pin state
     let eqSettings: EQSettings
@@ -53,6 +55,7 @@ struct AppRow: View {
         volume: Float,
         audioLevel: Float = 0,
         devices: [AudioDevice],
+        unconnectedBluetoothSources: [BluetoothAudioSource] = [],
         selectedDeviceUID: String,
         selectedDeviceUIDs: Set<String> = [],
         isFollowingDefault: Bool = true,
@@ -67,6 +70,7 @@ struct AppRow: View {
         onDevicesSelected: @escaping (Set<String>) -> Void = { _ in },
         onDeviceModeChange: @escaping (DeviceSelectionMode) -> Void = { _ in },
         onSelectFollowDefault: @escaping () -> Void = {},
+        onConnectBluetoothSource: @escaping (BluetoothAudioSource) -> Void = { _ in },
         onAppActivate: @escaping () -> Void = {},
         onPinToggle: @escaping () -> Void = {},
         eqSettings: EQSettings = EQSettings(),
@@ -78,6 +82,7 @@ struct AppRow: View {
         self.volume = volume
         self.audioLevel = audioLevel
         self.devices = devices
+        self.unconnectedBluetoothSources = unconnectedBluetoothSources
         self.selectedDeviceUID = selectedDeviceUID
         self.selectedDeviceUIDs = selectedDeviceUIDs
         self.isFollowingDefault = isFollowingDefault
@@ -92,6 +97,7 @@ struct AppRow: View {
         self.onDevicesSelected = onDevicesSelected
         self.onDeviceModeChange = onDeviceModeChange
         self.onSelectFollowDefault = onSelectFollowDefault
+        self.onConnectBluetoothSource = onConnectBluetoothSource
         self.onAppActivate = onAppActivate
         self.onPinToggle = onPinToggle
         self.eqSettings = eqSettings
@@ -158,6 +164,7 @@ struct AppRow: View {
                     isMuted: isMutedExternal,
                     audioLevel: audioLevel,
                     devices: devices,
+                    unconnectedBluetoothSources: unconnectedBluetoothSources,
                     selectedDeviceUID: selectedDeviceUID,
                     selectedDeviceUIDs: selectedDeviceUIDs,
                     isFollowingDefault: isFollowingDefault,
@@ -171,6 +178,7 @@ struct AppRow: View {
                     onDevicesSelected: onDevicesSelected,
                     onDeviceModeChange: onDeviceModeChange,
                     onSelectFollowDefault: onSelectFollowDefault,
+                    onConnectBluetoothSource: onConnectBluetoothSource,
                     onEQToggle: onEQToggle
                 )
             }
@@ -206,6 +214,7 @@ struct AppRowWithLevelPolling: View {
     let volume: Float
     let isMuted: Bool
     let devices: [AudioDevice]
+    let unconnectedBluetoothSources: [BluetoothAudioSource]
     let selectedDeviceUID: String
     let selectedDeviceUIDs: Set<String>
     let isFollowingDefault: Bool
@@ -221,6 +230,7 @@ struct AppRowWithLevelPolling: View {
     let onDevicesSelected: (Set<String>) -> Void
     let onDeviceModeChange: (DeviceSelectionMode) -> Void
     let onSelectFollowDefault: () -> Void
+    let onConnectBluetoothSource: (BluetoothAudioSource) -> Void
     let onAppActivate: () -> Void
     let onPinToggle: () -> Void  // Toggle pin state
     let eqSettings: EQSettings
@@ -236,6 +246,7 @@ struct AppRowWithLevelPolling: View {
         volume: Float,
         isMuted: Bool,
         devices: [AudioDevice],
+        unconnectedBluetoothSources: [BluetoothAudioSource] = [],
         selectedDeviceUID: String,
         selectedDeviceUIDs: Set<String> = [],
         isFollowingDefault: Bool = true,
@@ -251,6 +262,7 @@ struct AppRowWithLevelPolling: View {
         onDevicesSelected: @escaping (Set<String>) -> Void = { _ in },
         onDeviceModeChange: @escaping (DeviceSelectionMode) -> Void = { _ in },
         onSelectFollowDefault: @escaping () -> Void = {},
+        onConnectBluetoothSource: @escaping (BluetoothAudioSource) -> Void = { _ in },
         onAppActivate: @escaping () -> Void = {},
         onPinToggle: @escaping () -> Void = {},
         eqSettings: EQSettings = EQSettings(),
@@ -262,6 +274,7 @@ struct AppRowWithLevelPolling: View {
         self.volume = volume
         self.isMuted = isMuted
         self.devices = devices
+        self.unconnectedBluetoothSources = unconnectedBluetoothSources
         self.selectedDeviceUID = selectedDeviceUID
         self.selectedDeviceUIDs = selectedDeviceUIDs
         self.isFollowingDefault = isFollowingDefault
@@ -277,6 +290,7 @@ struct AppRowWithLevelPolling: View {
         self.onDevicesSelected = onDevicesSelected
         self.onDeviceModeChange = onDeviceModeChange
         self.onSelectFollowDefault = onSelectFollowDefault
+        self.onConnectBluetoothSource = onConnectBluetoothSource
         self.onAppActivate = onAppActivate
         self.onPinToggle = onPinToggle
         self.eqSettings = eqSettings
@@ -291,6 +305,7 @@ struct AppRowWithLevelPolling: View {
             volume: volume,
             audioLevel: displayLevel,
             devices: devices,
+            unconnectedBluetoothSources: unconnectedBluetoothSources,
             selectedDeviceUID: selectedDeviceUID,
             selectedDeviceUIDs: selectedDeviceUIDs,
             isFollowingDefault: isFollowingDefault,
@@ -305,6 +320,7 @@ struct AppRowWithLevelPolling: View {
             onDevicesSelected: onDevicesSelected,
             onDeviceModeChange: onDeviceModeChange,
             onSelectFollowDefault: onSelectFollowDefault,
+            onConnectBluetoothSource: onConnectBluetoothSource,
             onAppActivate: onAppActivate,
             onPinToggle: onPinToggle,
             eqSettings: eqSettings,
