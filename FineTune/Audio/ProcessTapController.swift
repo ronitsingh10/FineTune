@@ -738,6 +738,144 @@ final class ProcessTapController {
         primaryResources.destroy()
     }
 
+    @inline(__always)
+    private func processMappedBuffers(
+        inputBuffers: UnsafeMutableAudioBufferListPointer,
+        outputBuffers: UnsafeMutableAudioBufferListPointer,
+        targetVol: Float,
+        crossfadeMultiplier: Float,
+        rampCoefficient: Float,
+        preferredStereoLeft: Int,
+        preferredStereoRight: Int,
+        currentVol: inout Float
+    ) {
+        let inputBufferCount = inputBuffers.count
+        let outputBufferCount = outputBuffers.count
+
+        for outputIndex in 0..<outputBufferCount {
+            let outputBuffer = outputBuffers[outputIndex]
+            guard let outputData = outputBuffer.mData else { continue }
+
+            let inputIndex: Int
+            if inputBufferCount > outputBufferCount {
+                inputIndex = inputBufferCount - outputBufferCount + outputIndex
+            } else {
+                inputIndex = outputIndex
+            }
+
+            guard inputIndex < inputBufferCount else {
+                memset(outputData, 0, Int(outputBuffer.mDataByteSize))
+                continue
+            }
+
+            let inputBuffer = inputBuffers[inputIndex]
+            guard let inputData = inputBuffer.mData else {
+                memset(outputData, 0, Int(outputBuffer.mDataByteSize))
+                continue
+            }
+
+            let inputSamples = inputData.assumingMemoryBound(to: Float.self)
+            let outputSamples = outputData.assumingMemoryBound(to: Float.self)
+            let inputChannels = max(1, Int(inputBuffer.mNumberChannels))
+            let outputChannels = max(1, Int(outputBuffer.mNumberChannels))
+            let inputSampleCount = Int(inputBuffer.mDataByteSize) / MemoryLayout<Float>.size
+            let outputSampleCount = Int(outputBuffer.mDataByteSize) / MemoryLayout<Float>.size
+            let inputFrameCount = inputSampleCount / inputChannels
+            let outputFrameCount = outputSampleCount / outputChannels
+            let frameCount = min(inputFrameCount, outputFrameCount)
+
+            guard frameCount > 0 else {
+                memset(outputData, 0, Int(outputBuffer.mDataByteSize))
+                continue
+            }
+
+            let safeLeft = min(max(preferredStereoLeft, 0), max(outputChannels - 1, 0))
+            let safeRight = min(max(preferredStereoRight, 0), max(outputChannels - 1, 0))
+
+            let eq = eqProcessor  // Single atomic read — prevents TOCTOU with EQ check below
+            let eqCanProcessStereoInterleaved = (inputChannels == 2 && outputChannels == 2)
+            let preamp: Float = (eq?.isEnabled == true && eqCanProcessStereoInterleaved && !crossfadeState.isActive) ? (eq?.preampAttenuation ?? 1.0) : 1.0
+
+            if inputChannels == outputChannels {
+                let sampleCount = frameCount * inputChannels
+                for frame in 0..<frameCount {
+                    currentVol += (targetVol - currentVol) * rampCoefficient
+                    let gain = currentVol * crossfadeMultiplier * preamp
+                    let base = frame * inputChannels
+                    for ch in 0..<inputChannels {
+                        outputSamples[base + ch] = inputSamples[base + ch] * gain
+                    }
+                }
+                if sampleCount < outputSampleCount {
+                    memset(outputSamples.advanced(by: sampleCount), 0, (outputSampleCount - sampleCount) * MemoryLayout<Float>.size)
+                }
+            } else if inputChannels == 2 && outputChannels > 2 {
+                for frame in 0..<frameCount {
+                    currentVol += (targetVol - currentVol) * rampCoefficient
+                    let gain = currentVol * crossfadeMultiplier * preamp
+                    let inBase = frame * 2
+                    let outBase = frame * outputChannels
+                    let left = inputSamples[inBase] * gain
+                    let right = inputSamples[inBase + 1] * gain
+
+                    for ch in 0..<outputChannels {
+                        outputSamples[outBase + ch] = 0
+                    }
+                    outputSamples[outBase + safeLeft] = left
+                    outputSamples[outBase + safeRight] = right
+                }
+                let writtenSamples = frameCount * outputChannels
+                if writtenSamples < outputSampleCount {
+                    memset(outputSamples.advanced(by: writtenSamples), 0, (outputSampleCount - writtenSamples) * MemoryLayout<Float>.size)
+                }
+            } else if inputChannels == 1 && outputChannels > 1 {
+                for frame in 0..<frameCount {
+                    currentVol += (targetVol - currentVol) * rampCoefficient
+                    let gain = currentVol * crossfadeMultiplier * preamp
+                    let sample = inputSamples[frame] * gain
+                    let outBase = frame * outputChannels
+
+                    for ch in 0..<outputChannels {
+                        outputSamples[outBase + ch] = 0
+                    }
+                    outputSamples[outBase + safeLeft] = sample
+                    outputSamples[outBase + safeRight] = sample
+                }
+                let writtenSamples = frameCount * outputChannels
+                if writtenSamples < outputSampleCount {
+                    memset(outputSamples.advanced(by: writtenSamples), 0, (outputSampleCount - writtenSamples) * MemoryLayout<Float>.size)
+                }
+            } else {
+                for frame in 0..<frameCount {
+                    currentVol += (targetVol - currentVol) * rampCoefficient
+                    let gain = currentVol * crossfadeMultiplier * preamp
+                    let inBase = frame * inputChannels
+                    let outBase = frame * outputChannels
+                    let copiedChannels = min(inputChannels, outputChannels)
+                    for ch in 0..<copiedChannels {
+                        outputSamples[outBase + ch] = inputSamples[inBase + ch] * gain
+                    }
+                    if copiedChannels < outputChannels {
+                        for ch in copiedChannels..<outputChannels {
+                            outputSamples[outBase + ch] = 0
+                        }
+                    }
+                }
+                let writtenSamples = frameCount * outputChannels
+                if writtenSamples < outputSampleCount {
+                    memset(outputSamples.advanced(by: writtenSamples), 0, (outputSampleCount - writtenSamples) * MemoryLayout<Float>.size)
+                }
+            }
+
+            if let eq = eq, eq.isEnabled, eqCanProcessStereoInterleaved, !crossfadeState.isActive {
+                eq.process(input: outputSamples, output: outputSamples, frameCount: frameCount)
+            }
+
+            let writtenSampleCount = frameCount * outputChannels
+            SoftLimiter.processBuffer(outputSamples, sampleCount: writtenSampleCount)
+        }
+    }
+
     // MARK: - RT-Safe Audio Callbacks (DO NOT MODIFY WITHOUT RT-SAFETY REVIEW)
     // These callbacks run on CoreAudio's real-time HAL I/O thread.
     // See .claude/rules/rt-safety.md for constraints.
@@ -798,147 +936,16 @@ final class ProcessTapController {
         // guard (returns 0.0 when progress >= 1.0 in idle phase after crossfade completes).
         let crossfadeMultiplier = crossfadeState.primaryMultiplier
 
-        let inputBufferCount = inputBuffers.count
-        let outputBufferCount = outputBuffers.count
-
-        // Buffer routing: Aggregate devices can have more input than output buffers.
-        // Extra inputs appear at the BEGINNING of the list (e.g., device mic channels).
-        // The process tap output occupies the LAST N input buffers.
-        //
-        // Offset formula: inputIndex = (inputCount - outputCount) + outputIndex
-        //
-        // Example: 4-in/2-out USB interface
-        //   inputs[0..1] = device mic (skip)
-        //   inputs[2..3] = tap output → map to outputs[0..1]
-        //
-        // If inputCount < outputCount, we map 1:1 and zero any unmatched output buffers
-        // (handled by the guard below).
-        for outputIndex in 0..<outputBufferCount {
-            let outputBuffer = outputBuffers[outputIndex]
-            guard let outputData = outputBuffer.mData else { continue }
-
-            let inputIndex: Int
-            if inputBufferCount > outputBufferCount {
-                inputIndex = inputBufferCount - outputBufferCount + outputIndex
-            } else {
-                inputIndex = outputIndex
-            }
-
-            guard inputIndex < inputBufferCount else {
-                memset(outputData, 0, Int(outputBuffer.mDataByteSize))
-                continue
-            }
-
-            let inputBuffer = inputBuffers[inputIndex]
-            guard let inputData = inputBuffer.mData else {
-                memset(outputData, 0, Int(outputBuffer.mDataByteSize))
-                continue
-            }
-
-            let inputSamples = inputData.assumingMemoryBound(to: Float.self)
-            let outputSamples = outputData.assumingMemoryBound(to: Float.self)
-            let inputChannels = max(1, Int(inputBuffer.mNumberChannels))
-            let outputChannels = max(1, Int(outputBuffer.mNumberChannels))
-            let inputSampleCount = Int(inputBuffer.mDataByteSize) / MemoryLayout<Float>.size
-            let outputSampleCount = Int(outputBuffer.mDataByteSize) / MemoryLayout<Float>.size
-            let inputFrameCount = inputSampleCount / inputChannels
-            let outputFrameCount = outputSampleCount / outputChannels
-            let frameCount = min(inputFrameCount, outputFrameCount)
-
-            guard frameCount > 0 else {
-                memset(outputData, 0, Int(outputBuffer.mDataByteSize))
-                continue
-            }
-
-            // Read preamp attenuation once per buffer (RT-safe atomic Float read).
-            // This reduces signal before EQ to prevent clipping when bands are boosted.
-            // When EQ is disabled or crossfading, skip preamp (no EQ boost to compensate for).
-            let eq = eqProcessor  // Single atomic read — prevents TOCTOU with EQ check below
-            let eqCanProcessStereoInterleaved = (inputChannels == 2 && outputChannels == 2)
-            let preamp: Float = (eq?.isEnabled == true && eqCanProcessStereoInterleaved && !crossfadeState.isActive) ? (eq?.preampAttenuation ?? 1.0) : 1.0
-
-            // Per-frame volume ramping prevents clicks while staying channel-count invariant.
-            // (currentVol += (target - current) * coeff) gives smooth transitions.
-            if inputChannels == outputChannels {
-                let sampleCount = frameCount * inputChannels
-                for frame in 0..<frameCount {
-                    currentVol += (targetVol - currentVol) * rampCoefficient
-                    let gain = currentVol * crossfadeMultiplier * preamp
-                    let base = frame * inputChannels
-                    for ch in 0..<inputChannels {
-                        outputSamples[base + ch] = inputSamples[base + ch] * gain
-                    }
-                }
-                if sampleCount < outputSampleCount {
-                    memset(outputSamples.advanced(by: sampleCount), 0, (outputSampleCount - sampleCount) * MemoryLayout<Float>.size)
-                }
-            } else if inputChannels == 2 && outputChannels > 2 {
-                // Upmix stereo to multichannel by duplicating L/R across channel pairs.
-                for frame in 0..<frameCount {
-                    currentVol += (targetVol - currentVol) * rampCoefficient
-                    let gain = currentVol * crossfadeMultiplier * preamp
-                    let inBase = frame * 2
-                    let outBase = frame * outputChannels
-                    let left = inputSamples[inBase] * gain
-                    let right = inputSamples[inBase + 1] * gain
-                    for ch in 0..<outputChannels {
-                        outputSamples[outBase + ch] = (ch & 1) == 0 ? left : right
-                    }
-                }
-                let writtenSamples = frameCount * outputChannels
-                if writtenSamples < outputSampleCount {
-                    memset(outputSamples.advanced(by: writtenSamples), 0, (outputSampleCount - writtenSamples) * MemoryLayout<Float>.size)
-                }
-            } else if inputChannels == 1 && outputChannels > 1 {
-                // Upmix mono to all output channels.
-                for frame in 0..<frameCount {
-                    currentVol += (targetVol - currentVol) * rampCoefficient
-                    let gain = currentVol * crossfadeMultiplier * preamp
-                    let sample = inputSamples[frame] * gain
-                    let outBase = frame * outputChannels
-                    for ch in 0..<outputChannels {
-                        outputSamples[outBase + ch] = sample
-                    }
-                }
-                let writtenSamples = frameCount * outputChannels
-                if writtenSamples < outputSampleCount {
-                    memset(outputSamples.advanced(by: writtenSamples), 0, (outputSampleCount - writtenSamples) * MemoryLayout<Float>.size)
-                }
-            } else {
-                // Fallback: map common channels, silence any remaining outputs.
-                for frame in 0..<frameCount {
-                    currentVol += (targetVol - currentVol) * rampCoefficient
-                    let gain = currentVol * crossfadeMultiplier * preamp
-                    let inBase = frame * inputChannels
-                    let outBase = frame * outputChannels
-                    let copiedChannels = min(inputChannels, outputChannels)
-                    for ch in 0..<copiedChannels {
-                        outputSamples[outBase + ch] = inputSamples[inBase + ch] * gain
-                    }
-                    if copiedChannels < outputChannels {
-                        for ch in copiedChannels..<outputChannels {
-                            outputSamples[outBase + ch] = 0
-                        }
-                    }
-                }
-                let writtenSamples = frameCount * outputChannels
-                if writtenSamples < outputSampleCount {
-                    memset(outputSamples.advanced(by: writtenSamples), 0, (outputSampleCount - writtenSamples) * MemoryLayout<Float>.size)
-                }
-            }
-
-            // EQ intentionally disabled during crossfade: biquad delay buffers contain
-            // state tuned to the old device's sample rate. Processing through them produces
-            // incorrect frequency response. The ~50ms crossfade gap is inaudible.
-            if let eq = eq, eq.isEnabled, eqCanProcessStereoInterleaved, !crossfadeState.isActive {
-                eq.process(input: outputSamples, output: outputSamples, frameCount: frameCount)
-            }
-
-            // Post-EQ soft limiting: catches any clipping from EQ boost or volume > 1.0.
-            // Uses vDSP_maxmgv fast path — zero overhead when buffer is below threshold.
-            let writtenSampleCount = frameCount * outputChannels
-            SoftLimiter.processBuffer(outputSamples, sampleCount: writtenSampleCount)
-        }
+        processMappedBuffers(
+            inputBuffers: inputBuffers,
+            outputBuffers: outputBuffers,
+            targetVol: targetVol,
+            crossfadeMultiplier: crossfadeMultiplier,
+            rampCoefficient: rampCoefficient,
+            preferredStereoLeft: _primaryPreferredStereoLeftChannel,
+            preferredStereoRight: _primaryPreferredStereoRightChannel,
+            currentVol: &currentVol
+        )
 
         _primaryCurrentVolume = currentVol
     }
@@ -989,127 +996,16 @@ final class ProcessTapController {
         // .warmingUp → 0.0 (muted), .crossfading → sin(progress*π/2), .idle → 1.0
         let crossfadeMultiplier = crossfadeState.secondaryMultiplier
 
-        let inputBufferCount = inputBuffers.count
-        let outputBufferCount = outputBuffers.count
-
-        for outputIndex in 0..<outputBufferCount {
-            let outputBuffer = outputBuffers[outputIndex]
-            guard let outputData = outputBuffer.mData else { continue }
-
-            let inputIndex: Int
-            if inputBufferCount > outputBufferCount {
-                inputIndex = inputBufferCount - outputBufferCount + outputIndex
-            } else {
-                inputIndex = outputIndex
-            }
-
-            guard inputIndex < inputBufferCount else {
-                memset(outputData, 0, Int(outputBuffer.mDataByteSize))
-                continue
-            }
-
-            let inputBuffer = inputBuffers[inputIndex]
-            guard let inputData = inputBuffer.mData else {
-                memset(outputData, 0, Int(outputBuffer.mDataByteSize))
-                continue
-            }
-
-            let inputSamples = inputData.assumingMemoryBound(to: Float.self)
-            let outputSamples = outputData.assumingMemoryBound(to: Float.self)
-            let inputChannels = max(1, Int(inputBuffer.mNumberChannels))
-            let outputChannels = max(1, Int(outputBuffer.mNumberChannels))
-            let inputSampleCount = Int(inputBuffer.mDataByteSize) / MemoryLayout<Float>.size
-            let outputSampleCount = Int(outputBuffer.mDataByteSize) / MemoryLayout<Float>.size
-            let inputFrameCount = inputSampleCount / inputChannels
-            let outputFrameCount = outputSampleCount / outputChannels
-            let frameCount = min(inputFrameCount, outputFrameCount)
-
-            guard frameCount > 0 else {
-                memset(outputData, 0, Int(outputBuffer.mDataByteSize))
-                continue
-            }
-
-            let eq = eqProcessor  // Single atomic read — prevents TOCTOU with EQ check below
-            let eqCanProcessStereoInterleaved = (inputChannels == 2 && outputChannels == 2)
-            let preamp: Float = (eq?.isEnabled == true && eqCanProcessStereoInterleaved && !crossfadeState.isActive) ? (eq?.preampAttenuation ?? 1.0) : 1.0
-
-            if inputChannels == outputChannels {
-                let sampleCount = frameCount * inputChannels
-                for frame in 0..<frameCount {
-                    currentVol += (targetVol - currentVol) * secondaryRampCoefficient
-                    let gain = currentVol * crossfadeMultiplier * preamp
-                    let base = frame * inputChannels
-                    for ch in 0..<inputChannels {
-                        outputSamples[base + ch] = inputSamples[base + ch] * gain
-                    }
-                }
-                if sampleCount < outputSampleCount {
-                    memset(outputSamples.advanced(by: sampleCount), 0, (outputSampleCount - sampleCount) * MemoryLayout<Float>.size)
-                }
-            } else if inputChannels == 2 && outputChannels > 2 {
-                for frame in 0..<frameCount {
-                    currentVol += (targetVol - currentVol) * secondaryRampCoefficient
-                    let gain = currentVol * crossfadeMultiplier * preamp
-                    let inBase = frame * 2
-                    let outBase = frame * outputChannels
-                    let left = inputSamples[inBase] * gain
-                    let right = inputSamples[inBase + 1] * gain
-                    for ch in 0..<outputChannels {
-                        outputSamples[outBase + ch] = (ch & 1) == 0 ? left : right
-                    }
-                }
-                let writtenSamples = frameCount * outputChannels
-                if writtenSamples < outputSampleCount {
-                    memset(outputSamples.advanced(by: writtenSamples), 0, (outputSampleCount - writtenSamples) * MemoryLayout<Float>.size)
-                }
-            } else if inputChannels == 1 && outputChannels > 1 {
-                for frame in 0..<frameCount {
-                    currentVol += (targetVol - currentVol) * secondaryRampCoefficient
-                    let gain = currentVol * crossfadeMultiplier * preamp
-                    let sample = inputSamples[frame] * gain
-                    let outBase = frame * outputChannels
-                    for ch in 0..<outputChannels {
-                        outputSamples[outBase + ch] = sample
-                    }
-                }
-                let writtenSamples = frameCount * outputChannels
-                if writtenSamples < outputSampleCount {
-                    memset(outputSamples.advanced(by: writtenSamples), 0, (outputSampleCount - writtenSamples) * MemoryLayout<Float>.size)
-                }
-            } else {
-                for frame in 0..<frameCount {
-                    currentVol += (targetVol - currentVol) * secondaryRampCoefficient
-                    let gain = currentVol * crossfadeMultiplier * preamp
-                    let inBase = frame * inputChannels
-                    let outBase = frame * outputChannels
-                    let copiedChannels = min(inputChannels, outputChannels)
-                    for ch in 0..<copiedChannels {
-                        outputSamples[outBase + ch] = inputSamples[inBase + ch] * gain
-                    }
-                    if copiedChannels < outputChannels {
-                        for ch in copiedChannels..<outputChannels {
-                            outputSamples[outBase + ch] = 0
-                        }
-                    }
-                }
-                let writtenSamples = frameCount * outputChannels
-                if writtenSamples < outputSampleCount {
-                    memset(outputSamples.advanced(by: writtenSamples), 0, (outputSampleCount - writtenSamples) * MemoryLayout<Float>.size)
-                }
-            }
-
-            // EQ intentionally disabled during crossfade: biquad delay buffers contain
-            // state tuned to the old device's sample rate. Processing through them produces
-            // incorrect frequency response. The ~50ms crossfade gap is inaudible.
-            if let eq = eq, eq.isEnabled, eqCanProcessStereoInterleaved, !crossfadeState.isActive {
-                eq.process(input: outputSamples, output: outputSamples, frameCount: frameCount)
-            }
-
-            // Post-EQ soft limiting: catches any clipping from EQ boost or volume > 1.0.
-            // Uses vDSP_maxmgv fast path — zero overhead when buffer is below threshold.
-            let writtenSampleCount = frameCount * outputChannels
-            SoftLimiter.processBuffer(outputSamples, sampleCount: writtenSampleCount)
-        }
+        processMappedBuffers(
+            inputBuffers: inputBuffers,
+            outputBuffers: outputBuffers,
+            targetVol: targetVol,
+            crossfadeMultiplier: crossfadeMultiplier,
+            rampCoefficient: secondaryRampCoefficient,
+            preferredStereoLeft: _secondaryPreferredStereoLeftChannel,
+            preferredStereoRight: _secondaryPreferredStereoRightChannel,
+            currentVol: &currentVol
+        )
 
         _secondaryCurrentVolume = currentVol
     }
