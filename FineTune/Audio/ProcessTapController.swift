@@ -57,6 +57,10 @@ final class ProcessTapController {
     private nonisolated(unsafe) var _secondaryPeakLevel: Float = 0.0
     private nonisolated(unsafe) var _currentDeviceVolume: Float = 1.0
     private nonisolated(unsafe) var _isDeviceMuted: Bool = false
+    private nonisolated(unsafe) var _primaryPreferredStereoLeftChannel: Int = 0
+    private nonisolated(unsafe) var _primaryPreferredStereoRightChannel: Int = 1
+    private nonisolated(unsafe) var _secondaryPreferredStereoLeftChannel: Int = 0
+    private nonisolated(unsafe) var _secondaryPreferredStereoRightChannel: Int = 1
 
     /// Crossfade state machine (RT-safe).
     /// During device switch, we run two taps simultaneously with complementary gain curves:
@@ -96,6 +100,7 @@ final class ProcessTapController {
     private var isSwitching = false
     /// Cancellable crossfade task — cancelled when a new switch starts
     private var crossfadeTask: Task<Void, Error>?
+    private var didLogEQBypassForMultichannel = false
 
     // MARK: - Public Properties
 
@@ -182,25 +187,67 @@ final class ProcessTapController {
         ]
     }
 
+    private func preferredStereoChannels(for deviceUID: String?) -> (left: Int, right: Int) {
+        guard let deviceUID, let deviceID = audioDeviceID(for: deviceUID) else {
+            return (0, 1)
+        }
+        return deviceID.preferredStereoChannelIndices()
+    }
+
+    private func outputStreamIndex(for deviceUID: String?) -> UInt? {
+        guard let deviceUID, let deviceID = audioDeviceID(for: deviceUID) else {
+            return nil
+        }
+        return try? deviceID.firstOutputStreamIndex()
+    }
+
+    private func audioDeviceID(for deviceUID: String) -> AudioDeviceID? {
+        if let monitored = deviceMonitor?.device(for: deviceUID)?.id {
+            return monitored
+        }
+
+        guard let deviceIDs = try? AudioObjectID.readDeviceList() else { return nil }
+        for id in deviceIDs {
+            if (try? id.readDeviceUID()) == deviceUID {
+                return id
+            }
+        }
+        return nil
+    }
+
+    private func maybeLogEQBypass(for tapID: AudioObjectID) {
+        guard !didLogEQBypassForMultichannel else { return }
+        guard let asbd = try? tapID.readAudioTapStreamBasicDescription() else { return }
+        guard asbd.mChannelsPerFrame != 2 else { return }
+
+        didLogEQBypassForMultichannel = true
+        logger.info("EQ processing is stereo-only and will be bypassed for tap format with \(asbd.mChannelsPerFrame) channels.")
+    }
+
     /// Creates a process tap, preferring a device-stream tap to preserve multichannel routing.
     /// Falls back to stereo mixdown if stream-specific tap creation fails.
     private func createProcessTap(preferredDeviceUID: String?) throws -> (description: CATapDescription, tapID: AudioObjectID) {
         var lastError: OSStatus = noErr
 
         if let deviceUID = preferredDeviceUID {
-            let streamTap = CATapDescription(processes: [app.objectID], deviceUID: deviceUID, stream: 0)
-            streamTap.uuid = UUID()
-            streamTap.muteBehavior = .mutedWhenTapped
+            if let outputStream = outputStreamIndex(for: deviceUID) {
+                let streamTap = CATapDescription(processes: [app.objectID], deviceUID: deviceUID, stream: outputStream)
+                streamTap.uuid = UUID()
+                streamTap.muteBehavior = .mutedWhenTapped
 
-            var tapID: AudioObjectID = .unknown
-            let err = AudioHardwareCreateProcessTap(streamTap, &tapID)
-            if err == noErr {
-                logger.info("Created stream-specific tap for device \(deviceUID, privacy: .public)")
-                return (streamTap, tapID)
+                var tapID: AudioObjectID = .unknown
+                let err = AudioHardwareCreateProcessTap(streamTap, &tapID)
+                if err == noErr {
+                    logger.info("Created stream-specific tap for device \(deviceUID, privacy: .public) (stream \(outputStream))")
+                    maybeLogEQBypass(for: tapID)
+                    return (streamTap, tapID)
+                }
+
+                lastError = err
+                logger.warning("Stream-specific tap creation failed for device \(deviceUID, privacy: .public) stream \(outputStream): \(err). Falling back to stereo mixdown.")
+            } else {
+                logger.warning("Could not resolve an output stream index for device \(deviceUID, privacy: .public). Falling back to stereo mixdown.")
             }
-
-            lastError = err
-            logger.warning("Stream-specific tap creation failed for device \(deviceUID, privacy: .public): \(err). Falling back to stereo mixdown.")
         }
 
         let mixdownTap = CATapDescription(stereoMixdownOfProcesses: [app.objectID])
@@ -222,6 +269,7 @@ final class ProcessTapController {
         if preferredDeviceUID != nil {
             logger.info("Using stereo mixdown tap fallback")
         }
+        maybeLogEQBypass(for: mixdownTapID)
         return (mixdownTap, mixdownTapID)
     }
 
@@ -234,6 +282,9 @@ final class ProcessTapController {
         // stereo matrix attenuation on interfaces with many output channels.
         let (tapDesc, tapID) = try createProcessTap(preferredDeviceUID: targetDeviceUIDs.first)
         primaryResources.tapDescription = tapDesc
+        let preferred = preferredStereoChannels(for: targetDeviceUIDs.first)
+        _primaryPreferredStereoLeftChannel = preferred.left
+        _primaryPreferredStereoRightChannel = preferred.right
 
         primaryResources.tapID = tapID
         logger.debug("Created process tap #\(tapID)")
@@ -487,6 +538,9 @@ final class ProcessTapController {
 
         let (tapDesc, tapID) = try createProcessTap(preferredDeviceUID: outputUIDs.first)
         secondaryResources.tapDescription = tapDesc
+        let preferred = preferredStereoChannels(for: outputUIDs.first)
+        _secondaryPreferredStereoLeftChannel = preferred.left
+        _secondaryPreferredStereoRightChannel = preferred.right
 
         secondaryResources.tapID = tapID
         logger.debug("[CROSSFADE] Created secondary tap #\(tapID)")
@@ -576,6 +630,8 @@ final class ProcessTapController {
 
         _primaryCurrentVolume = _secondaryCurrentVolume
         _secondaryCurrentVolume = 0
+        _primaryPreferredStereoLeftChannel = _secondaryPreferredStereoLeftChannel
+        _primaryPreferredStereoRightChannel = _secondaryPreferredStereoRightChannel
 
         // CrossfadeState reset is handled by the caller (performCrossfadeSwitch calls complete())
     }
@@ -616,6 +672,9 @@ final class ProcessTapController {
 
         let (newTapDesc, tapID) = try createProcessTap(preferredDeviceUID: outputUIDs.first)
         newResources.tapDescription = newTapDesc
+        let preferred = preferredStereoChannels(for: outputUIDs.first)
+        _primaryPreferredStereoLeftChannel = preferred.left
+        _primaryPreferredStereoRightChannel = preferred.right
 
         newResources.tapID = tapID
 
