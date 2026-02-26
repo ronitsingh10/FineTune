@@ -22,6 +22,21 @@ struct AutoEQProfile: Codable, Equatable, Identifiable {
     static let maxFilters = 10
 }
 
+extension AutoEQProfile {
+    /// Validates filters using the same rules as the text parser.
+    func validated() -> AutoEQProfile {
+        let validFilters = filters.filter { f in
+            f.frequency > 0 && f.q > 0 && abs(f.gainDB) <= 30
+        }
+        let clampedPreamp = max(-30, min(30, preampDB))
+        return AutoEQProfile(
+            id: id, name: name, source: source,
+            preampDB: clampedPreamp,
+            filters: Array(validFilters.prefix(Self.maxFilters))
+        )
+    }
+}
+
 /// Where a profile came from.
 enum AutoEQSource: String, Codable {
     case bundled, imported
