@@ -75,10 +75,16 @@ struct PopoverHost<Content: View>: NSViewRepresentable {
             // Position below trigger
             let parentFrame = parentView.convert(parentView.bounds, to: nil)
             let screenFrame = parentWindow.convertToScreen(parentFrame)
-            let panelOrigin = NSPoint(
+            let preferredOrigin = NSPoint(
                 x: screenFrame.origin.x,
                 y: screenFrame.origin.y - panel.frame.height - 4
             )
+            let screen = parentWindow.screen ?? NSScreen.main
+            let visible = screen?.visibleFrame ?? NSRect(x: 0, y: 0, width: 0, height: 0)
+            let minX = visible.minX + 4
+            let maxX = max(minX, visible.maxX - panel.frame.width - 4)
+            let clampedX = min(max(preferredOrigin.x, minX), maxX)
+            let panelOrigin = NSPoint(x: clampedX, y: preferredOrigin.y)
             panel.setFrameOrigin(panelOrigin)
 
             // KEY: Add as child window - links to parent's event stream
@@ -120,13 +126,11 @@ struct PopoverHost<Content: View>: NSViewRepresentable {
 
         func updateContent<V: View>(_ content: () -> V) {
             guard let hostingView = hostingView else { return }
-            // Update existing hosting view's rootView instead of replacing it
-            // This allows SwiftUI to perform efficient diffing without flickering
-            hostingView.rootView = AnyView(content().preferredColorScheme(.dark))
-            // Resize panel if content size changed
-            let newSize = hostingView.fittingSize
-            if let panel = panel, panel.frame.size != newSize {
-                panel.setContentSize(newSize)
+            let updatedRootView = AnyView(content().preferredColorScheme(.dark))
+            // Defer content updates to the next runloop turn to avoid re-entrant
+            // AppKit layout warnings while parent views are being laid out.
+            DispatchQueue.main.async {
+                hostingView.rootView = updatedRootView
             }
         }
 
