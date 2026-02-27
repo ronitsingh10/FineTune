@@ -441,7 +441,18 @@ final class SettingsManager {
         saveTask = Task {
             try? await Task.sleep(for: .milliseconds(500))
             guard !Task.isCancelled else { return }
-            writeToDisk()
+            let snapshot = settings
+            let url = settingsURL
+            let data = try? JSONEncoder().encode(snapshot)
+            guard let data else { return }
+            Task.detached(priority: .utility) {
+                do {
+                    try Self.writeData(data, to: url)
+                } catch {
+                    // Avoid actor hops/logging on audio-critical paths; failures are
+                    // non-fatal and will retry on the next settings mutation.
+                }
+            }
         }
     }
 
@@ -455,15 +466,18 @@ final class SettingsManager {
 
     private func writeToDisk() {
         do {
-            let directory = settingsURL.deletingLastPathComponent()
-            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-
             let data = try JSONEncoder().encode(settings)
-            try data.write(to: settingsURL, options: .atomic)
+            try Self.writeData(data, to: settingsURL)
 
             logger.debug("Saved settings")
         } catch {
             logger.error("Failed to save settings: \(error.localizedDescription)")
         }
+    }
+
+    private nonisolated static func writeData(_ data: Data, to url: URL) throws {
+        let directory = url.deletingLastPathComponent()
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try data.write(to: url, options: .atomic)
     }
 }
