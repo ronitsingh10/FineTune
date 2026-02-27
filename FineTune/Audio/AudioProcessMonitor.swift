@@ -60,8 +60,8 @@ final class AudioProcessMonitor {
     }
 
     // Property listeners
-    private nonisolated(unsafe) var processListListenerBlock: AudioObjectPropertyListenerBlock?
-    private nonisolated(unsafe) var processListenerBlocks: [AudioObjectID: AudioObjectPropertyListenerBlock] = [:]
+    private var processListListenerBlock: AudioObjectPropertyListenerBlock?
+    private var processListenerBlocks: [AudioObjectID: AudioObjectPropertyListenerBlock] = [:]
     private var monitoredProcesses: Set<AudioObjectID> = []
 
     private var processListAddress = AudioObjectPropertyAddress(
@@ -274,25 +274,4 @@ final class AudioProcessMonitor {
         processListenerBlocks.removeAll()
     }
 
-    nonisolated deinit {
-        // HAL C functions don't require actor isolation
-        if let block = processListListenerBlock {
-            var addr = AudioObjectPropertyAddress(
-                mSelector: kAudioHardwarePropertyProcessObjectList,
-                mScope: kAudioObjectPropertyScopeGlobal,
-                mElement: kAudioObjectPropertyElementMain
-            )
-            AudioObjectRemovePropertyListenerBlock(.system, &addr, .main, block)
-        }
-
-        // Remove all per-process listeners
-        for (objectID, block) in processListenerBlocks {
-            var addr = AudioObjectPropertyAddress(
-                mSelector: kAudioProcessPropertyIsRunning,
-                mScope: kAudioObjectPropertyScopeGlobal,
-                mElement: kAudioObjectPropertyElementMain
-            )
-            AudioObjectRemovePropertyListenerBlock(objectID, &addr, .main, block)
-        }
-    }
 }

@@ -3,18 +3,20 @@ import AudioToolbox
 
 // MARK: - Volume Control Detection
 
+private let virtualMainVolumeSelector = kAudioHardwareServiceDeviceProperty_VirtualMainVolume
+
 extension AudioDeviceID {
     /// Returns true if this device supports CoreAudio volume control.
     /// Monitors connected via HDMI/DisplayPort often return false here.
     func hasOutputVolumeControl() -> Bool {
         var address = AudioObjectPropertyAddress(
-            mSelector: kAudioHardwareServiceDeviceProperty_VirtualMainVolume,
+            mSelector: virtualMainVolumeSelector,
             mScope: kAudioDevicePropertyScopeOutput,
             mElement: kAudioObjectPropertyElementMain
         )
-        guard AudioHardwareServiceHasProperty(self, &address) else { return false }
+        guard AudioObjectHasProperty(self, &address) else { return false }
         var settable: DarwinBoolean = false
-        let err = AudioHardwareServiceIsPropertySettable(self, &address, &settable)
+        let err = AudioObjectIsPropertySettable(self, &address, &settable)
         return err == noErr && settable.boolValue
     }
 }
@@ -24,22 +26,22 @@ extension AudioDeviceID {
 extension AudioDeviceID {
     /// Reads the scalar volume (0.0 to 1.0) for the device.
     /// Tries multiple strategies to find the most representative volume:
-    /// 1. Virtual main volume via AudioHardwareService (matches system volume slider)
+    /// 1. Virtual main volume (matches system volume slider)
     /// 2. Master volume scalar (element 0)
     /// 3. Left channel volume (element 1)
     /// Returns 1.0 for devices without volume control.
     func readOutputVolumeScalar() -> Float {
         // Strategy 1: Try virtual main volume (preferred - matches system slider)
         var address = AudioObjectPropertyAddress(
-            mSelector: kAudioHardwareServiceDeviceProperty_VirtualMainVolume,
+            mSelector: virtualMainVolumeSelector,
             mScope: kAudioDevicePropertyScopeOutput,
             mElement: kAudioObjectPropertyElementMain
         )
 
-        if AudioHardwareServiceHasProperty(self, &address) {
+        if AudioObjectHasProperty(self, &address) {
             var volume: Float32 = 1.0
             var size = UInt32(MemoryLayout<Float32>.size)
-            let err = AudioHardwareServiceGetPropertyData(self, &address, 0, nil, &size, &volume)
+            let err = AudioObjectGetPropertyData(self, &address, 0, nil, &size, &volume)
             if err == noErr {
                 return volume
             }
@@ -77,7 +79,7 @@ extension AudioDeviceID {
     }
 
     /// Sets the scalar volume (0.0 to 1.0) for the device.
-    /// Uses VirtualMainVolume via AudioHardwareService to match system volume slider behavior.
+    /// Uses VirtualMainVolume to match system volume slider behavior.
     /// Returns true if successful, false otherwise.
     func setOutputVolumeScalar(_ volume: Float) -> Bool {
         let clampedVolume = Swift.max(0.0, Swift.min(1.0, volume))
@@ -88,13 +90,13 @@ extension AudioDeviceID {
             mElement: kAudioObjectPropertyElementMain
         )
 
-        guard AudioHardwareServiceHasProperty(self, &address) else {
+        guard AudioObjectHasProperty(self, &address) else {
             return false
         }
 
         var volumeValue: Float32 = clampedVolume
         let size = UInt32(MemoryLayout<Float32>.size)
-        let err = AudioHardwareServiceSetPropertyData(self, &address, 0, nil, size, &volumeValue)
+        let err = AudioObjectSetPropertyData(self, &address, 0, nil, size, &volumeValue)
         return err == noErr
     }
 }
@@ -146,22 +148,22 @@ extension AudioDeviceID {
 extension AudioDeviceID {
     /// Reads the scalar volume (0.0 to 1.0) for the input device (microphone).
     /// Tries multiple strategies to find the most representative volume:
-    /// 1. Virtual main volume via AudioHardwareService (matches system input slider)
+    /// 1. Virtual main volume (matches system input slider)
     /// 2. Master volume scalar (element 0)
     /// 3. Left channel volume (element 1)
     /// Returns 1.0 for devices without volume control.
     func readInputVolumeScalar() -> Float {
         // Strategy 1: Try virtual main volume (preferred - matches system slider)
         var address = AudioObjectPropertyAddress(
-            mSelector: kAudioHardwareServiceDeviceProperty_VirtualMainVolume,
+            mSelector: virtualMainVolumeSelector,
             mScope: kAudioDevicePropertyScopeInput,
             mElement: kAudioObjectPropertyElementMain
         )
 
-        if AudioHardwareServiceHasProperty(self, &address) {
+        if AudioObjectHasProperty(self, &address) {
             var volume: Float32 = 1.0
             var size = UInt32(MemoryLayout<Float32>.size)
-            let err = AudioHardwareServiceGetPropertyData(self, &address, 0, nil, &size, &volume)
+            let err = AudioObjectGetPropertyData(self, &address, 0, nil, &size, &volume)
             if err == noErr {
                 return volume
             }
@@ -199,24 +201,24 @@ extension AudioDeviceID {
     }
 
     /// Sets the scalar volume (0.0 to 1.0) for the input device (microphone).
-    /// Uses VirtualMainVolume via AudioHardwareService to match system input slider behavior.
+    /// Uses VirtualMainVolume to match system input slider behavior.
     /// Returns true if successful, false otherwise.
     func setInputVolumeScalar(_ volume: Float) -> Bool {
         let clampedVolume = Swift.max(0.0, Swift.min(1.0, volume))
 
         var address = AudioObjectPropertyAddress(
-            mSelector: kAudioHardwareServiceDeviceProperty_VirtualMainVolume,
+            mSelector: virtualMainVolumeSelector,
             mScope: kAudioDevicePropertyScopeInput,
             mElement: kAudioObjectPropertyElementMain
         )
 
-        guard AudioHardwareServiceHasProperty(self, &address) else {
+        guard AudioObjectHasProperty(self, &address) else {
             return false
         }
 
         var volumeValue: Float32 = clampedVolume
         let size = UInt32(MemoryLayout<Float32>.size)
-        let err = AudioHardwareServiceSetPropertyData(self, &address, 0, nil, size, &volumeValue)
+        let err = AudioObjectSetPropertyData(self, &address, 0, nil, size, &volumeValue)
         return err == noErr
     }
 }

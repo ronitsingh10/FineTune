@@ -25,7 +25,7 @@ final class DDCController {
     private var deviceUIDs: [AudioDeviceID: String] = [:]  // For persistence keying
     private var debounceTimers: [AudioDeviceID: DispatchWorkItem] = [:]
     private var probeWorkItem: DispatchWorkItem?
-    private nonisolated(unsafe) var displayChangeObserver: NSObjectProtocol?
+    private var displayChangeObserver: NSObjectProtocol?
 
     private let ddcQueue = DispatchQueue(label: "com.finetune.ddc", qos: .utility)
     private let settingsManager: SettingsManager
@@ -36,12 +36,6 @@ final class DDCController {
 
     init(settingsManager: SettingsManager) {
         self.settingsManager = settingsManager
-    }
-
-    nonisolated deinit {
-        if let obs = displayChangeObserver {
-            NotificationCenter.default.removeObserver(obs)
-        }
     }
 
     // MARK: - Lifecycle
@@ -143,7 +137,7 @@ final class DDCController {
             let discovered = DDCService.discoverServices()
             self.logger.info("DDC probe: found \(discovered.count) DCPAVServiceProxy entries")
             guard !discovered.isEmpty else {
-                Task { @MainActor [weak self] in
+                DispatchQueue.main.async { [weak self] in
                     self?.ddcBackedDevices = []
                     self?.services = [:]
                     self?.probeCompleted = true
@@ -169,7 +163,7 @@ final class DDCController {
             guard !audioCapable.isEmpty else {
                 self.logger.info("DDC probe: no audio-capable displays found")
                 // Entries that failed supportsAudioVolume() were already released above
-                Task { @MainActor [weak self] in
+                DispatchQueue.main.async { [weak self] in
                     self?.ddcBackedDevices = []
                     self?.services = [:]
                     self?.probeCompleted = true
@@ -210,9 +204,8 @@ final class DDCController {
 
             // 4b. Second pass: match unmatched DDC displays to display-transport CoreAudio devices
             //     (HDMI, DisplayPort, Thunderbolt — these are monitor connections)
-            let displayTransports: Set<TransportType> = [.hdmi, .displayPort, .thunderbolt]
             let unmatchedDisplayDevices = coreAudioDevices.filter { ca in
-                !matched.keys.contains(ca.id) && displayTransports.contains(ca.transport)
+                !matched.keys.contains(ca.id) && Self.isDisplayTransport(ca.transportType)
             }
             let unmatchedDDC = audioCapable.enumerated().filter { !matchedDDCIndices.contains($0.offset) }
 
@@ -226,7 +219,7 @@ final class DDCController {
                         volumes[caDevice.id] = vol.current
                     }
 
-                    self.logger.info("Matched CoreAudio '\(caDevice.name)' → DDC '\(ddcDisplay.displayName)' (by transport: \(caDevice.transport))")
+                    self.logger.info("Matched CoreAudio '\(caDevice.name)' → DDC '\(ddcDisplay.displayName)' (by transport: \(Self.transportTypeName(for: caDevice.transportType)))")
                     break
                 }
             }
@@ -237,27 +230,30 @@ final class DDCController {
             }
 
             // 5. Publish results on main thread
-            Task { @MainActor [weak self] in
+            let matchedSnapshot = matched
+            let matchedUIDsSnapshot = matchedUIDs
+            let volumesSnapshot = volumes
+            DispatchQueue.main.async { [weak self] in
                 guard let self else { return }
-                self.services = matched
-                self.deviceUIDs = matchedUIDs
-                self.ddcBackedDevices = Set(matched.keys)
+                self.services = matchedSnapshot
+                self.deviceUIDs = matchedUIDsSnapshot
+                self.ddcBackedDevices = Set(matchedSnapshot.keys)
 
                 // Use persisted volumes if available, otherwise use read values
-                for (deviceID, uid) in matchedUIDs {
+                for (deviceID, uid) in matchedUIDsSnapshot {
                     if let savedVolume = self.settingsManager.getDDCVolume(for: uid) {
                         self.cachedVolumes[deviceID] = savedVolume
                         // Restore saved volume to the display
-                        let service = matched[deviceID]
+                        let service = matchedSnapshot[deviceID]
                         self.ddcQueue.async {
                             try? service?.setAudioVolume(savedVolume)
                         }
-                    } else if let readVolume = volumes[deviceID] {
+                    } else if let readVolume = volumesSnapshot[deviceID] {
                         self.cachedVolumes[deviceID] = readVolume
                     }
                 }
 
-                self.logger.info("DDC probe complete: \(matched.count) display(s) matched")
+                self.logger.info("DDC probe complete: \(matchedSnapshot.count) display(s) matched")
                 self.probeCompleted = true
                 self.onProbeCompleted?()
             }
@@ -270,27 +266,143 @@ final class DDCController {
         let id: AudioDeviceID
         let uid: String
         let name: String
-        let transport: TransportType
+        let transportType: UInt32
     }
 
     /// Gets all CoreAudio output devices as candidates for DDC matching.
     /// Includes devices both with and without CoreAudio volume control,
     /// since some monitors report having volume control that doesn't actually work.
     private nonisolated func getCoreAudioOutputDevices() -> [CoreAudioDeviceInfo] {
-        guard let deviceIDs = try? AudioObjectID.readDeviceList() else { return [] }
+        guard let deviceIDs = Self.readDeviceListRaw() else { return [] }
 
         var results: [CoreAudioDeviceInfo] = []
         for deviceID in deviceIDs {
-            guard !deviceID.isAggregateDevice(),
-                  !deviceID.isVirtualDevice(),
-                  deviceID.hasOutputStreams() else { continue }
+            guard !Self.isAggregateDeviceRaw(deviceID),
+                  !Self.isVirtualDeviceRaw(deviceID),
+                  Self.hasOutputStreamsRaw(deviceID) else { continue }
 
-            guard let uid = try? deviceID.readDeviceUID(),
-                  let name = try? deviceID.readDeviceName() else { continue }
+            guard let uid = Self.readDeviceUIDRaw(deviceID),
+                  let name = Self.readDeviceNameRaw(deviceID) else { continue }
 
-            results.append(CoreAudioDeviceInfo(id: deviceID, uid: uid, name: name, transport: deviceID.readTransportType()))
+            results.append(
+                CoreAudioDeviceInfo(
+                    id: deviceID,
+                    uid: uid,
+                    name: name,
+                    transportType: Self.readTransportTypeRaw(deviceID)
+                )
+            )
         }
         return results
+    }
+
+    private nonisolated static func readDeviceListRaw() -> [AudioDeviceID]? {
+        var address = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDevices,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        let systemObject = AudioObjectID(kAudioObjectSystemObject)
+        var size: UInt32 = 0
+        let sizeErr = AudioObjectGetPropertyDataSize(systemObject, &address, 0, nil, &size)
+        guard sizeErr == noErr else { return nil }
+
+        let count = Int(size) / MemoryLayout<AudioDeviceID>.size
+        var deviceIDs = [AudioDeviceID](repeating: AudioDeviceID(kAudioObjectUnknown), count: count)
+        var mutableSize = size
+        let dataErr = AudioObjectGetPropertyData(systemObject, &address, 0, nil, &mutableSize, &deviceIDs)
+        guard dataErr == noErr else { return nil }
+        return deviceIDs
+    }
+
+    private nonisolated static func readDeviceUIDRaw(_ deviceID: AudioDeviceID) -> String? {
+        readStringProperty(deviceID: deviceID, selector: kAudioDevicePropertyDeviceUID)
+    }
+
+    private nonisolated static func readDeviceNameRaw(_ deviceID: AudioDeviceID) -> String? {
+        readStringProperty(deviceID: deviceID, selector: kAudioObjectPropertyName)
+    }
+
+    private nonisolated static func readStringProperty(
+        deviceID: AudioDeviceID,
+        selector: AudioObjectPropertySelector
+    ) -> String? {
+        var address = AudioObjectPropertyAddress(
+            mSelector: selector,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var size: UInt32 = 0
+        let sizeErr = AudioObjectGetPropertyDataSize(deviceID, &address, 0, nil, &size)
+        guard sizeErr == noErr else { return nil }
+
+        var cfString: CFString = "" as CFString
+        let dataErr = withUnsafeMutablePointer(to: &cfString) { ptr in
+            AudioObjectGetPropertyData(deviceID, &address, 0, nil, &size, ptr)
+        }
+        guard dataErr == noErr else { return nil }
+        return cfString as String
+    }
+
+    private nonisolated static func readTransportTypeRaw(_ deviceID: AudioDeviceID) -> UInt32 {
+        var address = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyTransportType,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var transport: UInt32 = 0
+        var size = UInt32(MemoryLayout<UInt32>.size)
+        AudioObjectGetPropertyData(deviceID, &address, 0, nil, &size, &transport)
+        return transport
+    }
+
+    private nonisolated static func isAggregateDeviceRaw(_ deviceID: AudioDeviceID) -> Bool {
+        var address = AudioObjectPropertyAddress(
+            mSelector: kAudioObjectPropertyClass,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var classID: AudioClassID = 0
+        var size = UInt32(MemoryLayout<AudioClassID>.size)
+        let err = AudioObjectGetPropertyData(deviceID, &address, 0, nil, &size, &classID)
+        return err == noErr && classID == kAudioAggregateDeviceClassID
+    }
+
+    private nonisolated static func isVirtualDeviceRaw(_ deviceID: AudioDeviceID) -> Bool {
+        readTransportTypeRaw(deviceID) == kAudioDeviceTransportTypeVirtual
+    }
+
+    private nonisolated static func hasOutputStreamsRaw(_ deviceID: AudioDeviceID) -> Bool {
+        var address = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyStreams,
+            mScope: kAudioObjectPropertyScopeOutput,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var size: UInt32 = 0
+        let err = AudioObjectGetPropertyDataSize(deviceID, &address, 0, nil, &size)
+        return err == noErr && size > 0
+    }
+
+    private nonisolated static func isDisplayTransport(_ rawTransport: UInt32) -> Bool {
+        rawTransport == kAudioDeviceTransportTypeHDMI
+            || rawTransport == kAudioDeviceTransportTypeDisplayPort
+            || rawTransport == kAudioDeviceTransportTypeThunderbolt
+    }
+
+    private nonisolated static func transportTypeName(for rawTransport: UInt32) -> String {
+        switch rawTransport {
+        case kAudioDeviceTransportTypeHDMI: return "hdmi"
+        case kAudioDeviceTransportTypeDisplayPort: return "displayPort"
+        case kAudioDeviceTransportTypeThunderbolt: return "thunderbolt"
+        case kAudioDeviceTransportTypeUSB: return "usb"
+        case kAudioDeviceTransportTypeBuiltIn: return "builtIn"
+        case kAudioDeviceTransportTypeBluetooth: return "bluetooth"
+        case kAudioDeviceTransportTypeBluetoothLE: return "bluetoothLE"
+        case kAudioDeviceTransportTypeAirPlay: return "airPlay"
+        case kAudioDeviceTransportTypeVirtual: return "virtual"
+        case kAudioDeviceTransportTypeAggregate: return "aggregate"
+        default: return "unknown"
+        }
     }
 
     // MARK: - Name Matching
@@ -360,16 +472,19 @@ final class DDCController {
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            guard let self else { return }
-            self.probeWorkItem?.cancel()
-            let item = DispatchWorkItem { [weak self] in
-                Task { @MainActor in
-                    self?.logger.debug("Display configuration changed, re-probing DDC (after delay)")
-                    self?.probe()
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                self.probeWorkItem?.cancel()
+                let item = DispatchWorkItem { [weak self] in
+                    Task { @MainActor [weak self] in
+                        guard let self else { return }
+                        self.logger.debug("Display configuration changed, re-probing DDC (after delay)")
+                        self.probe()
+                    }
                 }
+                self.probeWorkItem = item
+                DispatchQueue.main.asyncAfter(deadline: .now() + 3.0, execute: item)
             }
-            self.probeWorkItem = item
-            DispatchQueue.main.asyncAfter(deadline: .now() + 3.0, execute: item)
         }
     }
 }

@@ -40,7 +40,7 @@ final class AudioDeviceMonitor {
 
     private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "FineTune", category: "AudioDeviceMonitor")
 
-    private nonisolated(unsafe) var deviceListListenerBlock: AudioObjectPropertyListenerBlock?
+    private var deviceListListenerBlock: AudioObjectPropertyListenerBlock?
     private var deviceListAddress = AudioObjectPropertyAddress(
         mSelector: kAudioHardwarePropertyDevices,
         mScope: kAudioObjectPropertyScopeGlobal,
@@ -223,15 +223,4 @@ final class AudioDeviceMonitor {
         }
     }
 
-    nonisolated deinit {
-        // HAL C functions don't require actor isolation
-        if let block = deviceListListenerBlock {
-            var addr = AudioObjectPropertyAddress(
-                mSelector: kAudioHardwarePropertyDevices,
-                mScope: kAudioObjectPropertyScopeGlobal,
-                mElement: kAudioObjectPropertyElementMain
-            )
-            AudioObjectRemovePropertyListenerBlock(.system, &addr, .main, block)
-        }
-    }
 }
