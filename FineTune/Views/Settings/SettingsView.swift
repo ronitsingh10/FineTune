@@ -38,6 +38,7 @@ struct SettingsView: View {
 
             SettingsToggleRow(
                 icon: "power",
+                titleOffsetX: -4,
                 title: "Launch at Login",
                 description: "Start FineTune when you log in",
                 isOn: $settings.launchAtLogin

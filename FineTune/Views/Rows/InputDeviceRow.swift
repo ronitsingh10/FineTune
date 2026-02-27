@@ -8,9 +8,15 @@ struct InputDeviceRow: View {
     let isDefault: Bool
     let volume: Float
     let isMuted: Bool
+    let currentSampleRate: Double
+    let availableSampleRates: [Double]
+    let canSetSampleRate: Bool
+    let canDisconnectBluetooth: Bool
     let onSetDefault: () -> Void
     let onVolumeChange: (Float) -> Void
     let onMuteToggle: () -> Void
+    let onSampleRateChange: (Double) -> Void
+    let onDisconnectBluetooth: () -> Void
 
     @State private var sliderValue: Double
     @State private var isEditing = false
@@ -26,17 +32,29 @@ struct InputDeviceRow: View {
         isDefault: Bool,
         volume: Float,
         isMuted: Bool,
+        currentSampleRate: Double,
+        availableSampleRates: [Double] = [],
+        canSetSampleRate: Bool = false,
+        canDisconnectBluetooth: Bool = false,
         onSetDefault: @escaping () -> Void,
         onVolumeChange: @escaping (Float) -> Void,
-        onMuteToggle: @escaping () -> Void
+        onMuteToggle: @escaping () -> Void,
+        onSampleRateChange: @escaping (Double) -> Void,
+        onDisconnectBluetooth: @escaping () -> Void = {}
     ) {
         self.device = device
         self.isDefault = isDefault
         self.volume = volume
         self.isMuted = isMuted
+        self.currentSampleRate = currentSampleRate
+        self.availableSampleRates = availableSampleRates
+        self.canSetSampleRate = canSetSampleRate
+        self.canDisconnectBluetooth = canDisconnectBluetooth
         self.onSetDefault = onSetDefault
         self.onVolumeChange = onVolumeChange
         self.onMuteToggle = onMuteToggle
+        self.onSampleRateChange = onSampleRateChange
+        self.onDisconnectBluetooth = onDisconnectBluetooth
         self._sliderValue = State(initialValue: Double(volume))
     }
 
@@ -105,6 +123,15 @@ struct InputDeviceRow: View {
                 ),
                 range: 0...100
             )
+
+            SampleRatePicker(
+                currentRate: currentSampleRate,
+                availableRates: availableSampleRates,
+                canSetRate: canSetSampleRate,
+                canDisconnect: canDisconnectBluetooth,
+                onSelect: onSampleRateChange,
+                onDisconnect: onDisconnectBluetooth
+            )
         }
         .frame(height: DesignTokens.Dimensions.rowContentHeight)
         .hoverableRow()
@@ -131,9 +158,11 @@ struct InputDeviceRow: View {
                 isDefault: true,
                 volume: 0.75,
                 isMuted: false,
+                currentSampleRate: 48000,
                 onSetDefault: {},
                 onVolumeChange: { _ in },
-                onMuteToggle: {}
+                onMuteToggle: {},
+                onSampleRateChange: { _ in }
             )
 
             InputDeviceRow(
@@ -146,9 +175,11 @@ struct InputDeviceRow: View {
                 isDefault: false,
                 volume: 1.0,
                 isMuted: false,
+                currentSampleRate: 44100,
                 onSetDefault: {},
                 onVolumeChange: { _ in },
-                onMuteToggle: {}
+                onMuteToggle: {},
+                onSampleRateChange: { _ in }
             )
 
             InputDeviceRow(
@@ -161,9 +192,11 @@ struct InputDeviceRow: View {
                 isDefault: false,
                 volume: 0.5,
                 isMuted: true,
+                currentSampleRate: 48000,
                 onSetDefault: {},
                 onVolumeChange: { _ in },
-                onMuteToggle: {}
+                onMuteToggle: {},
+                onSampleRateChange: { _ in }
             )
         }
     }
