@@ -31,21 +31,9 @@ struct AppRow: View {
 
     @State private var isRowHovered = false
     @State private var isIconHovered = false
-    @State private var isPinButtonHovered = false
-    @State private var isExcludeButtonHovered = false
-
-    /// Pin button color - visible when pinned or row is hovered
-    private var pinButtonColor: Color {
-        if isPinned {
-            return DesignTokens.Colors.interactiveActive
-        } else if isPinButtonHovered {
-            return DesignTokens.Colors.interactiveHover
-        } else if isRowHovered {
-            return DesignTokens.Colors.interactiveDefault
-        } else {
-            return .clear
-        }
-    }
+    @State private var isActionsMenuPresented = false
+    @State private var isPinActionHovered = false
+    @State private var isExcludeActionHovered = false
 
     init(
         app: AudioApp,
@@ -101,56 +89,14 @@ struct AppRow: View {
         ExpandableGlassRow(isExpanded: false) {
             // Header: Main row content (always visible)
             HStack(spacing: DesignTokens.Spacing.sm) {
-                // Pin/unpin star button - left of app icon
-                Button {
-                    guard !isExcluded else { return }
-                    onPinToggle()
-                } label: {
-                    Image(systemName: isPinned ? "star.fill" : "star")
+                if isPinned {
+                    Image(systemName: "star.fill")
                         .font(.system(size: 11))
                         .symbolRenderingMode(.hierarchical)
-                        .foregroundStyle(pinButtonColor)
-                        .frame(
-                            minWidth: DesignTokens.Dimensions.minTouchTarget,
-                            minHeight: DesignTokens.Dimensions.minTouchTarget
-                        )
-                        .contentShape(Rectangle())
-                        .scaleEffect(isPinButtonHovered ? 1.1 : 1.0)
+                        .foregroundStyle(DesignTokens.Colors.interactiveActive)
+                        .frame(width: 12, height: 12)
+                        .help("Pinned app")
                 }
-                .buttonStyle(.plain)
-                .onHover { isPinButtonHovered = $0 }
-                .help(isPinned ? "Unpin app" : "Pin app to top")
-                .opacity(isExcluded ? 0.45 : 1.0)
-                .animation(DesignTokens.Animation.hover, value: pinButtonColor)
-                .animation(DesignTokens.Animation.quick, value: isPinButtonHovered)
-
-                Button {
-                    if isExcluded {
-                        onInclude()
-                    } else {
-                        onExclude()
-                    }
-                } label: {
-                    Image(systemName: isExcluded ? "plus.circle.fill" : "slash.circle")
-                        .font(.system(size: 11))
-                        .symbolRenderingMode(.hierarchical)
-                        .foregroundStyle(
-                            isExcluded
-                                ? .green
-                                : (isExcludeButtonHovered
-                                    ? DesignTokens.Colors.mutedIndicator
-                                    : DesignTokens.Colors.interactiveDefault)
-                        )
-                        .frame(
-                            minWidth: DesignTokens.Dimensions.minTouchTarget,
-                            minHeight: DesignTokens.Dimensions.minTouchTarget
-                        )
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .onHover { isExcludeButtonHovered = $0 }
-                .help(isExcluded ? "Include in FineTune" : "Exclude from FineTune")
-                .animation(DesignTokens.Animation.hover, value: isExcludeButtonHovered)
 
                 // App icon - clickable to activate app
                 Image(nsImage: app.icon)
@@ -175,9 +121,81 @@ struct AppRow: View {
                 Text(app.name)
                     .font(DesignTokens.Typography.rowName)
                     .lineLimit(1)
+                    .truncationMode(.tail)
                     .help(app.name)
-                    .layoutPriority(1)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .frame(maxWidth: 180, alignment: .leading)
+
+                Button {
+                    isActionsMenuPresented.toggle()
+                } label: {
+                    Image(systemName: "ellipsis.circle")
+                        .font(.system(size: 12, weight: .medium))
+                        .symbolRenderingMode(.hierarchical)
+                        .foregroundStyle(DesignTokens.Colors.textSecondary)
+                        .frame(width: 16, height: 16)
+                }
+                .help("App actions")
+                .buttonStyle(.plain)
+                .opacity((isRowHovered || isActionsMenuPresented) ? 1.0 : 0.0)
+                .allowsHitTesting(isRowHovered || isActionsMenuPresented)
+                .background(
+                    PopoverHost(isPresented: $isActionsMenuPresented) {
+                        VStack(spacing: 2) {
+                            Button(isPinned ? "Unpin App" : "Pin App") {
+                                guard !isExcluded else { return }
+                                isActionsMenuPresented = false
+                                DispatchQueue.main.async {
+                                    onPinToggle()
+                                }
+                            }
+                            .buttonStyle(.plain)
+                            .disabled(isExcluded)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 6)
+                            .background(
+                                RoundedRectangle(cornerRadius: 6)
+                                    .fill(isPinActionHovered ? DesignTokens.Colors.interactiveDefault.opacity(0.18) : Color.clear)
+                            )
+                            .whenHovered { hovering in
+                                isPinActionHovered = hovering
+                            }
+
+                            Button(isExcluded ? "Include in FineTune" : "Exclude from FineTune") {
+                                isActionsMenuPresented = false
+                                DispatchQueue.main.async {
+                                    if isExcluded {
+                                        onInclude()
+                                    } else {
+                                        onExclude()
+                                    }
+                                }
+                            }
+                            .buttonStyle(.plain)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 6)
+                            .background(
+                                RoundedRectangle(cornerRadius: 6)
+                                    .fill(isExcludeActionHovered ? DesignTokens.Colors.interactiveDefault.opacity(0.18) : Color.clear)
+                            )
+                            .whenHovered { hovering in
+                                isExcludeActionHovered = hovering
+                            }
+                        }
+                        .font(.system(size: 11, weight: .medium))
+                        .frame(width: 160)
+                        .padding(4)
+                        .background {
+                            RoundedRectangle(cornerRadius: 8)
+                                .fill(.ultraThinMaterial)
+                        }
+                        .overlay {
+                            RoundedRectangle(cornerRadius: 8)
+                                .strokeBorder(DesignTokens.Colors.glassBorder, lineWidth: 0.5)
+                        }
+                    }
+                )
 
                 // Shared controls section
                 AppRowControls(
@@ -198,6 +216,7 @@ struct AppRow: View {
                     onDeviceModeChange: onDeviceModeChange,
                     onSelectFollowDefault: onSelectFollowDefault
                 )
+                .layoutPriority(1)
                 .allowsHitTesting(!isExcluded)
                 .opacity(isExcluded ? 0.45 : 1.0)
             }
