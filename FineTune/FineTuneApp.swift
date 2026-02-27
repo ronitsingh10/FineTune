@@ -159,11 +159,11 @@ struct FineTuneApp: App {
 
     var body: some Scene {
         // Single status item scene; for speaker style, icon image is updated in-place by updater.
-        FluidMenuBarExtra("FineTune", systemImage: launchSystemImageName ?? "speaker.wave.2", isInserted: staticSystemIconBinding) {
+        FluidMenuBarExtra("FineTune", systemImage: launchSystemImageName ?? "speaker.wave.2", isInserted: staticSystemIconBinding, alignment: .centre) {
             menuBarContent
         }
 
-        FluidMenuBarExtra("FineTune", image: launchAssetImageName ?? "MenuBarIcon", isInserted: assetIconBinding) {
+        FluidMenuBarExtra("FineTune", image: launchAssetImageName ?? "MenuBarIcon", isInserted: assetIconBinding, alignment: .centre) {
             menuBarContent
         }
         .commands {
