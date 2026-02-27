@@ -29,6 +29,9 @@ final class ProcessTapController {
 
     /// Weak reference to device monitor for O(1) device lookups during crossfade
     private weak var deviceMonitor: AudioDeviceMonitor?
+    /// Optional device UID to use for stream-specific tap capture.
+    /// When nil, tap creation always uses stereo mixdown capture.
+    private var preferredTapSourceDeviceUID: String?
 
     // MARK: - RT-Safe State (nonisolated(unsafe) for lock-free audio thread access)
     //
@@ -130,17 +133,33 @@ final class ProcessTapController {
 
     /// Initialize with multiple output devices for synchronized multi-device output.
     /// First device in array is the clock source, others have drift compensation enabled.
-    init(app: AudioApp, targetDeviceUIDs: [String], deviceMonitor: AudioDeviceMonitor? = nil) {
+    init(
+        app: AudioApp,
+        targetDeviceUIDs: [String],
+        deviceMonitor: AudioDeviceMonitor? = nil,
+        preferredTapSourceDeviceUID: String? = nil
+    ) {
         precondition(!targetDeviceUIDs.isEmpty, "Must have at least one target device")
         self.app = app
         self.targetDeviceUIDs = targetDeviceUIDs
         self.deviceMonitor = deviceMonitor
+        self.preferredTapSourceDeviceUID = preferredTapSourceDeviceUID
         self.logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "FineTune", category: "ProcessTapController(\(app.name))")
     }
 
     /// Convenience initializer for single device output.
-    convenience init(app: AudioApp, targetDeviceUID: String, deviceMonitor: AudioDeviceMonitor? = nil) {
-        self.init(app: app, targetDeviceUIDs: [targetDeviceUID], deviceMonitor: deviceMonitor)
+    convenience init(
+        app: AudioApp,
+        targetDeviceUID: String,
+        deviceMonitor: AudioDeviceMonitor? = nil,
+        preferredTapSourceDeviceUID: String? = nil
+    ) {
+        self.init(
+            app: app,
+            targetDeviceUIDs: [targetDeviceUID],
+            deviceMonitor: deviceMonitor,
+            preferredTapSourceDeviceUID: preferredTapSourceDeviceUID
+        )
     }
 
     // MARK: - Public Methods
@@ -280,7 +299,7 @@ final class ProcessTapController {
 
         // Create process tap. Prefer stream-specific tap for multichannel devices to avoid
         // stereo matrix attenuation on interfaces with many output channels.
-        let (tapDesc, tapID) = try createProcessTap(preferredDeviceUID: targetDeviceUIDs.first)
+        let (tapDesc, tapID) = try createProcessTap(preferredDeviceUID: preferredTapSourceDeviceUID)
         primaryResources.tapDescription = tapDesc
         let preferred = preferredStereoChannels(for: targetDeviceUIDs.first)
         _primaryPreferredStereoLeftChannel = preferred.left
@@ -365,14 +384,15 @@ final class ProcessTapController {
     }
 
     /// Switch to a single device (convenience for backward compatibility).
-    func switchDevice(to newDeviceUID: String) async throws {
-        try await updateDevices(to: [newDeviceUID])
+    func switchDevice(to newDeviceUID: String, preferredTapSourceDeviceUID: String? = nil) async throws {
+        try await updateDevices(to: [newDeviceUID], preferredTapSourceDeviceUID: preferredTapSourceDeviceUID)
     }
 
     /// Updates output devices using crossfade for seamless transition.
     /// Creates a second tap+aggregate for the new device set, crossfades, then destroys the old one.
-    func updateDevices(to newDeviceUIDs: [String]) async throws {
+    func updateDevices(to newDeviceUIDs: [String], preferredTapSourceDeviceUID: String? = nil) async throws {
         precondition(!newDeviceUIDs.isEmpty, "Must have at least one target device")
+        self.preferredTapSourceDeviceUID = preferredTapSourceDeviceUID
 
         guard activated else {
             targetDeviceUIDs = newDeviceUIDs
@@ -536,7 +556,7 @@ final class ProcessTapController {
     private func createSecondaryTap(for outputUIDs: [String]) throws {
         precondition(!outputUIDs.isEmpty, "Must have at least one output device")
 
-        let (tapDesc, tapID) = try createProcessTap(preferredDeviceUID: outputUIDs.first)
+        let (tapDesc, tapID) = try createProcessTap(preferredDeviceUID: preferredTapSourceDeviceUID)
         secondaryResources.tapDescription = tapDesc
         let preferred = preferredStereoChannels(for: outputUIDs.first)
         _secondaryPreferredStereoLeftChannel = preferred.left
@@ -670,7 +690,7 @@ final class ProcessTapController {
 
         var newResources = TapResources()
 
-        let (newTapDesc, tapID) = try createProcessTap(preferredDeviceUID: outputUIDs.first)
+        let (newTapDesc, tapID) = try createProcessTap(preferredDeviceUID: preferredTapSourceDeviceUID)
         newResources.tapDescription = newTapDesc
         let preferred = preferredStereoChannels(for: outputUIDs.first)
         _primaryPreferredStereoLeftChannel = preferred.left

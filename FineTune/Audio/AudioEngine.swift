@@ -684,10 +684,11 @@ final class AudioEngine {
 
         // Switch tap if needed
         guard let targetUID = appDeviceRouting[app.id] else { return }
+        let preferredTapSourceUID = preferredTapSourceDeviceUID(forOutputUIDs: [targetUID])
         if let tap = taps[app.id] {
             Task {
                 do {
-                    try await tap.switchDevice(to: targetUID)
+                    try await tap.switchDevice(to: targetUID, preferredTapSourceDeviceUID: preferredTapSourceUID)
                     // Restore saved volume/mute state after device switch
                     tap.volume = self.volumeState.getVolume(for: app.id)
                     tap.isMuted = self.volumeState.getMute(for: app.id)
@@ -787,7 +788,8 @@ final class AudioEngine {
             // Tap exists - update devices
             if tap.currentDeviceUIDs != deviceUIDs {
                 do {
-                    try await tap.updateDevices(to: deviceUIDs)
+                    let preferredTapSourceUID = preferredTapSourceDeviceUID(forOutputUIDs: deviceUIDs)
+                    try await tap.updateDevices(to: deviceUIDs, preferredTapSourceDeviceUID: preferredTapSourceUID)
                     tap.volume = volumeState.getVolume(for: app.id)
                     tap.isMuted = volumeState.getMute(for: app.id)
                     // Update device volume for VU meter (use primary device)
@@ -815,7 +817,13 @@ final class AudioEngine {
         guard !isExcluded(app) else { return }
         guard !deviceUIDs.isEmpty else { return }
 
-        let tap = ProcessTapController(app: app, targetDeviceUIDs: deviceUIDs, deviceMonitor: deviceMonitor)
+        let preferredTapSourceUID = preferredTapSourceDeviceUID(forOutputUIDs: deviceUIDs)
+        let tap = ProcessTapController(
+            app: app,
+            targetDeviceUIDs: deviceUIDs,
+            deviceMonitor: deviceMonitor,
+            preferredTapSourceDeviceUID: preferredTapSourceUID
+        )
         tap.volume = volumeState.getVolume(for: app.id)
 
         // Set initial device volume/mute for VU meter (use primary device)
@@ -935,7 +943,13 @@ final class AudioEngine {
         guard !isExcluded(app) else { return }
         guard taps[app.id] == nil else { return }
 
-        let tap = ProcessTapController(app: app, targetDeviceUID: deviceUID, deviceMonitor: deviceMonitor)
+        let preferredTapSourceUID = preferredTapSourceDeviceUID(forOutputUIDs: [deviceUID])
+        let tap = ProcessTapController(
+            app: app,
+            targetDeviceUID: deviceUID,
+            deviceMonitor: deviceMonitor,
+            preferredTapSourceDeviceUID: preferredTapSourceUID
+        )
         tap.volume = volumeState.getVolume(for: app.id)
 
         // Set initial device volume/mute for VU meter accuracy
@@ -1021,7 +1035,8 @@ final class AudioEngine {
                 // Handle single-mode switches
                 for (tap, fallbackUID) in singleModeTapsToSwitch {
                     do {
-                        try await tap.switchDevice(to: fallbackUID)
+                        let preferredTapSourceUID = self.preferredTapSourceDeviceUID(forOutputUIDs: [fallbackUID])
+                        try await tap.switchDevice(to: fallbackUID, preferredTapSourceDeviceUID: preferredTapSourceUID)
                         tap.volume = self.volumeState.getVolume(for: tap.app.id)
                         tap.isMuted = self.volumeState.getMute(for: tap.app.id)
                         tap.updateEQSettings(self.effectiveEQSettings(for: tap.app, deviceUID: fallbackUID))
@@ -1033,7 +1048,8 @@ final class AudioEngine {
                 // Handle multi-mode updates (remove disconnected device from aggregate)
                 for (tap, remainingUIDs) in multiModeTapsToUpdate {
                     do {
-                        try await tap.updateDevices(to: remainingUIDs)
+                        let preferredTapSourceUID = self.preferredTapSourceDeviceUID(forOutputUIDs: remainingUIDs)
+                        try await tap.updateDevices(to: remainingUIDs, preferredTapSourceDeviceUID: preferredTapSourceUID)
                         tap.volume = self.volumeState.getVolume(for: tap.app.id)
                         tap.isMuted = self.volumeState.getMute(for: tap.app.id)
                         tap.updateEQSettings(self.effectiveEQSettings(for: tap.app, deviceUID: remainingUIDs.first))
@@ -1097,7 +1113,8 @@ final class AudioEngine {
             Task {
                 for tap in tapsToSwitch {
                     do {
-                        try await tap.switchDevice(to: deviceUID)
+                        let preferredTapSourceUID = self.preferredTapSourceDeviceUID(forOutputUIDs: [deviceUID])
+                        try await tap.switchDevice(to: deviceUID, preferredTapSourceDeviceUID: preferredTapSourceUID)
                         tap.volume = self.volumeState.getVolume(for: tap.app.id)
                         tap.isMuted = self.volumeState.getMute(for: tap.app.id)
                         if let device = self.deviceMonitor.device(for: deviceUID) {
@@ -1203,7 +1220,7 @@ final class AudioEngine {
             Task {
                 for (app, tap) in tapsToSwitch {
                     do {
-                        try await tap.switchDevice(to: newDefaultUID)
+                        try await tap.switchDevice(to: newDefaultUID, preferredTapSourceDeviceUID: newDefaultUID)
                         tap.volume = self.volumeState.getVolume(for: app.id)
                         tap.isMuted = self.volumeState.getMute(for: app.id)
                         if let device = self.deviceMonitor.device(for: newDefaultUID) {
@@ -1246,6 +1263,14 @@ final class AudioEngine {
                 self?.logger.error("Failed to show notification: \(error.localizedDescription)")
             }
         }
+    }
+
+    /// Returns the device UID to use for stream-specific tap capture.
+    /// Only use stream-specific taping when the selected outputs include the current system default;
+    /// otherwise fall back to stereo mixdown to avoid tapping the wrong device stream.
+    private func preferredTapSourceDeviceUID(forOutputUIDs outputUIDs: [String]) -> String? {
+        guard let defaultUID = deviceVolumeMonitor.defaultDeviceUID else { return nil }
+        return outputUIDs.contains(defaultUID) ? defaultUID : nil
     }
 
     func cleanupStaleTaps() {
