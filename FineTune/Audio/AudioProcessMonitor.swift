@@ -8,6 +8,9 @@ import os
 final class AudioProcessMonitor {
     private(set) var activeApps: [AudioApp] = []
     var onAppsChanged: (([AudioApp]) -> Void)?
+    /// Optional callback used to gate helper-process merging.
+    /// Helpers are only folded into a parent app when that parent already has an active tap.
+    var hasActiveTapForPID: ((pid_t) -> Bool)?
 
     private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "FineTune", category: "AudioProcessMonitor")
 
@@ -170,10 +173,10 @@ final class AudioProcessMonitor {
             let runningApps = NSWorkspace.shared.runningApplications
             let myPID = ProcessInfo.processInfo.processIdentifier
 
-            var apps: [AudioApp] = []
+            var appsByPID: [pid_t: AudioApp] = [:]
             for objectID in processIDs {
-                guard objectID.readProcessIsRunning() else { continue }
                 guard let pid = try? objectID.readProcessPID(), pid != myPID else { continue }
+                guard objectID.readProcessIsRunning() else { continue }
 
                 // Try to find the parent app (for helper processes like Safari Graphics and Media)
                 let directApp = runningApps.first { $0.processIdentifier == pid }
@@ -181,6 +184,8 @@ final class AudioProcessMonitor {
                 // Check if it's a real app bundle (.app), not an XPC service (.xpc)
                 let isRealApp = directApp?.bundleURL?.pathExtension == "app"
                 let resolvedApp = isRealApp ? directApp : findResponsibleApp(for: pid, in: runningApps)
+                let parentPID = resolvedApp?.processIdentifier ?? pid
+                let isHelper = parentPID != pid
 
                 // Use resolved app's info, fall back to Core Audio bundle ID
                 let name = resolvedApp?.localizedName
@@ -206,20 +211,55 @@ final class AudioProcessMonitor {
                 // Skip system daemons (siri, coreaudio, etc.) - they shouldn't appear in the apps list
                 if isSystemDaemon(bundleID: bundleID, name: name) { continue }
 
-                let app = AudioApp(
-                    id: pid,
-                    objectID: objectID,
-                    name: name,
-                    icon: icon,
-                    bundleID: bundleID
-                )
-                apps.append(app)
+                // Narrow helper support: only merge helper process objects into a parent app
+                // when that parent already has an active tap. This avoids creating new helper-driven
+                // app identities that can cause tap attach/detach churn.
+                if isHelper, hasActiveTapForPID?(parentPID) != true {
+                    // Still surface helper-backed apps in the UI by seeding one representative
+                    // process object; defer additional helper-object merges until the parent tap exists.
+                    if appsByPID[parentPID] == nil {
+                        appsByPID[parentPID] = AudioApp(
+                            id: parentPID,
+                            processObjectIDs: [objectID],
+                            name: name,
+                            icon: icon,
+                            bundleID: bundleID,
+                            isHelperBacked: true
+                        )
+                    }
+                    continue
+                }
+
+                if let existing = appsByPID[parentPID] {
+                    if !existing.processObjectIDs.contains(objectID) {
+                        var mergedObjectIDs = existing.processObjectIDs
+                        mergedObjectIDs.append(objectID)
+                        mergedObjectIDs.sort()
+                        appsByPID[parentPID] = AudioApp(
+                            id: existing.id,
+                            processObjectIDs: mergedObjectIDs,
+                            name: existing.name,
+                            icon: existing.icon,
+                            bundleID: existing.bundleID,
+                            isHelperBacked: existing.isHelperBacked || isHelper
+                        )
+                    }
+                } else {
+                    appsByPID[parentPID] = AudioApp(
+                        id: parentPID,
+                        processObjectIDs: [objectID],
+                        name: name,
+                        icon: icon,
+                        bundleID: bundleID,
+                        isHelperBacked: isHelper
+                    )
+                }
             }
 
             // Update per-process listeners
             updateProcessListeners(for: processIDs)
 
-            activeApps = apps.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+            activeApps = appsByPID.values.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
             onAppsChanged?(activeApps)
 
         } catch {

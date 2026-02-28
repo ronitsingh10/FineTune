@@ -247,10 +247,11 @@ final class ProcessTapController {
     /// Falls back to stereo mixdown if stream-specific tap creation fails.
     private func createProcessTap(preferredDeviceUID: String?) throws -> (description: CATapDescription, tapID: AudioObjectID) {
         var lastError: OSStatus = noErr
+        let processObjectIDs = app.processObjectIDs.isEmpty ? [app.objectID] : app.processObjectIDs
 
         if let deviceUID = preferredDeviceUID {
             if let outputStream = outputStreamIndex(for: deviceUID) {
-                let streamTap = CATapDescription(processes: [app.objectID], deviceUID: deviceUID, stream: outputStream)
+                let streamTap = CATapDescription(processes: processObjectIDs, deviceUID: deviceUID, stream: outputStream)
                 streamTap.uuid = UUID()
                 streamTap.muteBehavior = .mutedWhenTapped
 
@@ -269,7 +270,7 @@ final class ProcessTapController {
             }
         }
 
-        let mixdownTap = CATapDescription(stereoMixdownOfProcesses: [app.objectID])
+        let mixdownTap = CATapDescription(stereoMixdownOfProcesses: processObjectIDs)
         mixdownTap.uuid = UUID()
         mixdownTap.muteBehavior = .mutedWhenTapped
 
@@ -441,7 +442,6 @@ final class ProcessTapController {
         _invalidating = true
         defer { _invalidating = false }
         activated = false
-
         // Cancel any in-flight crossfade task
         crossfadeTask?.cancel()
         crossfadeTask = nil
