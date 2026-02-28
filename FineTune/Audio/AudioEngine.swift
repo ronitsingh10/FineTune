@@ -417,7 +417,21 @@ final class AudioEngine {
     /// Combined list of active apps and pinned inactive apps for UI display.
     /// Pinned apps appear first (sorted alphabetically), then unpinned active apps (sorted alphabetically).
     var displayableApps: [DisplayableApp] {
-        let activeApps = processMonitor.activeApps
+        let monitorActiveApps = processMonitor.activeApps
+        // Keep stale apps visible while their tap still exists, so visibility tracks
+        // actual tap lifetime (including the debounce window before cleanup is queued).
+        let tapBackedApps = taps.values.map(\.app)
+
+        var activeByPID: [pid_t: AudioApp] = [:]
+        for app in monitorActiveApps {
+            activeByPID[app.id] = app
+        }
+        for app in tapBackedApps {
+            if activeByPID[app.id] == nil {
+                activeByPID[app.id] = app
+            }
+        }
+        let activeApps = Array(activeByPID.values)
         let activeIdentifiers = Set(activeApps.map { $0.persistenceIdentifier })
 
         // Get pinned apps that are not currently active
