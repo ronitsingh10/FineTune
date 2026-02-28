@@ -22,6 +22,7 @@ final class AudioEngine {
     private var appDeviceRouting: [pid_t: String] = [:]  // pid → deviceUID (always explicit)
     private var followsDefault: Set<pid_t> = []  // Apps that follow system default
     private var pendingCleanup: [pid_t: Task<Void, Never>] = [:]  // Grace period for stale tap cleanup
+    private var pendingStaleCleanupTask: Task<Void, Never>?
     private var eqSupportByOutputDevice: [AudioDeviceID: Bool] = [:]
     private var eqUnavailableReasonByOutputDevice: [AudioDeviceID: String] = [:]
     private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "FineTune", category: "AudioEngine")
@@ -39,6 +40,8 @@ final class AudioEngine {
 
     /// Extended grace period for Bluetooth devices (firmware handshake takes longer)
     private let btAutoSwitchGracePeriod: TimeInterval = 5.0
+    private let staleCleanupDebounceNs: UInt64 = 350_000_000
+    private let staleTapPurgeDelayMs: UInt64 = 30_000
 
     /// UIDs of priority-based default overrides pending echo suppression (handles rapid disconnects)
     private var pendingPriorityOverrideUIDs: Set<String> = []
@@ -351,8 +354,11 @@ final class AudioEngine {
             }
 
             processMonitor.onAppsChanged = { [weak self] _ in
-                self?.cleanupStaleTaps()
                 self?.applyPersistedSettings()
+                self?.scheduleStaleCleanupWork()
+            }
+            processMonitor.hasActiveTapForPID = { [weak self] pid in
+                self?.taps[pid] != nil
             }
 
             deviceMonitor.onDeviceDisconnected = { [weak self] deviceUID, deviceName in
@@ -603,6 +609,8 @@ final class AudioEngine {
     }
 
     func stop() {
+        pendingStaleCleanupTask?.cancel()
+        pendingStaleCleanupTask = nil
         processMonitor.stop()
         deviceMonitor.stop()
         for tap in taps.values {
@@ -619,6 +627,16 @@ final class AudioEngine {
         stop()
         deviceVolumeMonitor.stop()
         logger.info("AudioEngine shutdown complete")
+    }
+
+    private func scheduleStaleCleanupWork() {
+        pendingStaleCleanupTask?.cancel()
+        pendingStaleCleanupTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            try? await Task.sleep(nanoseconds: staleCleanupDebounceNs)
+            guard !Task.isCancelled else { return }
+            self.cleanupStaleTaps()
+        }
     }
 
     func setVolume(for app: AudioApp, to volume: Float) {
@@ -1302,7 +1320,7 @@ final class AudioEngine {
             guard pendingCleanup[pid] == nil else { continue }  // Already pending
 
             pendingCleanup[pid] = Task { @MainActor in
-                try? await Task.sleep(for: .milliseconds(500))
+                try? await Task.sleep(for: .milliseconds(staleTapPurgeDelayMs))
                 guard !Task.isCancelled else { return }
 
                 // Double-check still stale
