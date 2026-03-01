@@ -387,6 +387,7 @@ struct MenuBarPopupView: View {
                 devicesContent
             }
             .scrollIndicators(.never)
+            .frame(maxWidth: .infinity, alignment: .leading)
             .frame(height: deviceScrollHeight)
         } else {
             devicesContent
@@ -394,7 +395,7 @@ struct MenuBarPopupView: View {
     }
 
     private var devicesContent: some View {
-        VStack(spacing: DesignTokens.Spacing.xs) {
+        VStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {
             if isEditingDevicePriority {
                 // Edit mode: drag-and-drop reordering (works for both output and input)
                 let defaultDeviceID = showingInputDevices
@@ -512,6 +513,7 @@ struct MenuBarPopupView: View {
                 }
             }
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     @ViewBuilder
