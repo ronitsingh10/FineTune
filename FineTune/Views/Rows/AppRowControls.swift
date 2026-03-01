@@ -24,6 +24,7 @@ struct AppRowControls: View {
     @State private var dragOverrideValue: Double?
     private let unityNotchValue: Double = 0.5
     private let unitySnapThreshold: Double = 0.025
+    private let volumeEpsilon: Float = 0.0005
     private var shouldShowUnityNotch: Bool { maxVolumeBoost > 1.0 }
 
     private var sliderValue: Double {
@@ -60,7 +61,9 @@ struct AppRowControls: View {
                             let snappedValue = snappedToUnityIfNeeded(newValue)
                             dragOverrideValue = snappedValue
                             let gain = VolumeMapping.sliderToGain(snappedValue, maxBoost: maxVolumeBoost)
-                            onVolumeChange(gain)
+                            if abs(gain - volume) > volumeEpsilon {
+                                onVolumeChange(gain)
+                            }
                             if isMuted {
                                 onMuteChange(false)
                             }
@@ -85,7 +88,9 @@ struct AppRowControls: View {
                         },
                         set: { newPercentage in
                             let gain = Float(newPercentage) / 100.0
-                            onVolumeChange(gain)
+                            if abs(gain - volume) > volumeEpsilon {
+                                onVolumeChange(gain)
+                            }
                         }
                     ),
                     range: 0...Int(round(maxVolumeBoost * 100))
