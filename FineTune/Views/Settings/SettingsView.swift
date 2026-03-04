@@ -91,6 +91,13 @@ struct SettingsView: View {
                 isOn: $settings.lockInputDevice
             )
 
+            SettingsToggleRow(
+                icon: "square.stack.3d.up",
+                title: "Show Aggregate Devices",
+                description: "Include aggregate (combined) devices in device lists",
+                isOn: $settings.showAggregateDevices
+            )
+
             // Sound Effects device selection
             SoundEffectsDeviceRow(
                 devices: outputDevices,
