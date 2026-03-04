@@ -50,6 +50,17 @@ final class AudioDeviceMonitor {
     private var knownDeviceUIDs: Set<String> = []
     private var knownInputDeviceUIDs: Set<String> = []
 
+    private let settingsManager: SettingsManager
+
+    init(settingsManager: SettingsManager) {
+        self.settingsManager = settingsManager
+    }
+
+    /// Forces an immediate rebuild of output/input device lists.
+    func refreshNow() {
+        refresh()
+    }
+
     func start() {
         guard deviceListListenerBlock == nil else { return }
 
@@ -107,15 +118,13 @@ final class AudioDeviceMonitor {
     private func refresh() {
         do {
             let deviceIDs = try AudioObjectID.readDeviceList()
+            let showAggregateDevices = settingsManager.showAggregateDevices
             var outputDeviceList: [AudioDevice] = []
             var inputDeviceList: [AudioDevice] = []
 
             for deviceID in deviceIDs {
                 // Respect user preference for showing aggregate devices
-                if deviceID.isAggregateDevice() {
-                    let showAggregates = SettingsManager().showAggregateDevices
-                    if !showAggregates { continue }
-                }
+                if deviceID.isAggregateDevice() && !showAggregateDevices { continue }
 
                 guard let uid = try? deviceID.readDeviceUID(),
                       let name = try? deviceID.readDeviceName() else {

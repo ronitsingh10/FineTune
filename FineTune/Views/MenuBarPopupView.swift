@@ -133,8 +133,14 @@ struct MenuBarPopupView: View {
         .onChange(of: showingInputDevices) { _, _ in
             exitEditModeSaving()
         }
-        .onChange(of: localAppSettings) { _, newValue in
+        .onChange(of: localAppSettings) { oldValue, newValue in
             audioEngine.settingsManager.updateAppSettings(newValue)
+
+            if oldValue.showAggregateDevices != newValue.showAggregateDevices {
+                audioEngine.refreshDeviceLists()
+                updateSortedDevices()
+                updateSortedInputDevices()
+            }
         }
         .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { _ in
             isPopupVisible = true
