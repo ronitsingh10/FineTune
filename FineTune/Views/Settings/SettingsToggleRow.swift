@@ -45,9 +45,9 @@ struct SettingsToggleRow: View {
         )
 
         SettingsToggleRow(
-            icon: "bell",
-            title: "Device Disconnect Alerts",
-            description: "Show notification when device disconnects",
+            icon: "sparkles",
+            title: "Enable Effects",
+            description: "Apply processing effects in the app",
             isOn: .constant(false)
         )
     }

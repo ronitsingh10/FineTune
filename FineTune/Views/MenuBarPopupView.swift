@@ -455,7 +455,7 @@ struct MenuBarPopupView: View {
                         canSetSampleRate: audioEngine.canSetSampleRate(for: device.id),
                         canDisconnectBluetooth: audioEngine.canDisconnectBluetooth(for: device),
                         onSetDefault: {
-                            audioEngine.setLockedInputDevice(device)
+                            audioEngine.setDefaultInputDevice(device)
                         },
                         onVolumeChange: { volume in
                             deviceVolumeMonitor.setInputVolume(for: device.id, to: volume)
@@ -732,6 +732,7 @@ struct MenuBarPopupView: View {
         audioEngine.settingsManager.setDevicePriorityOrder(editableOutputDeviceOrder.map(\.uid))
         audioEngine.settingsManager.setInputDevicePriorityOrder(editableInputDeviceOrder.map(\.uid))
         audioEngine.enforceOutputPriorityDefaultPolicy()
+        audioEngine.enforceInputPriorityDefaultPolicy()
     }
 
     private func exitEditModeSaving() {

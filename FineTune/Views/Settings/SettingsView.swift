@@ -22,7 +22,6 @@ struct SettingsView: View {
             VStack(alignment: .leading, spacing: DesignTokens.Spacing.lg) {
                 generalSection
                 audioSection
-                notificationsSection
                 excludedAppsSection
                 dataSection
 
@@ -82,13 +81,6 @@ struct SettingsView: View {
 
             maxVolumeBoostRow
 
-            SettingsToggleRow(
-                icon: "mic",
-                title: "Lock Input Device",
-                description: "Prevent auto-switching when devices connect",
-                isOn: $settings.lockInputDevice
-            )
-
             // Sound Effects device selection
             SoundEffectsDeviceRow(
                 devices: outputDevices,
@@ -134,22 +126,6 @@ struct SettingsView: View {
                     .buttonStyle(.plain)
                 }
             }
-        }
-    }
-
-    // MARK: - Notifications Section
-
-    private var notificationsSection: some View {
-        VStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {
-            SectionHeader(title: "Notifications")
-                .padding(.bottom, DesignTokens.Spacing.xs)
-
-            SettingsToggleRow(
-                icon: "bell",
-                title: "Device Disconnect Alerts",
-                description: "Show notification when device disconnects",
-                isOn: $settings.showDeviceDisconnectAlerts
-            )
         }
     }
 

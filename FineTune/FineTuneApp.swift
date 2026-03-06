@@ -1,6 +1,5 @@
 // FineTune/FineTuneApp.swift
 import SwiftUI
-import UserNotifications
 import FluidMenuBarExtra
 import AppKit
 import os
@@ -224,14 +223,6 @@ struct FineTuneApp: App {
 
         // DeviceVolumeMonitor is now created and started inside AudioEngine
         // This ensures proper initialization order: deviceMonitor.start() -> deviceVolumeMonitor.start()
-
-        // Request notification authorization (for device disconnect alerts)
-        UNUserNotificationCenter.current().requestAuthorization(options: [.alert]) { granted, error in
-            if let error {
-                logger.error("Notification authorization error: \(error.localizedDescription)")
-            }
-            // If not granted, notifications will silently not appear - acceptable behavior
-        }
 
         // Flush settings on app termination to prevent data loss from debounced saves
         NotificationCenter.default.addObserver(
