@@ -1,5 +1,6 @@
 // FineTune/Audio/AudioEngine.swift
 import AudioToolbox
+import Darwin
 import Foundation
 import os
 import UserNotifications
@@ -26,7 +27,9 @@ final class AudioEngine {
     private var tapHealthMonitorTask: Task<Void, Never>?
     private var tapHealthMissesByPID: [pid_t: Int] = [:]
     private var tapRecoveryCooldownUntilByPID: [pid_t: Date] = [:]
+    @ObservationIgnored
     private var eqSupportByOutputDevice: [AudioDeviceID: Bool] = [:]
+    @ObservationIgnored
     private var eqUnavailableReasonByOutputDevice: [AudioDeviceID: String] = [:]
     private struct SampleRateSnapshot {
         var currentRate: Double
@@ -34,6 +37,7 @@ final class AudioEngine {
         var canSetRate: Bool
         var fetchedAt: Date
     }
+    @ObservationIgnored
     private var sampleRateSnapshotsByDeviceID: [AudioDeviceID: SampleRateSnapshot] = [:]
     private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "FineTune", category: "AudioEngine")
 
@@ -53,7 +57,6 @@ final class AudioEngine {
     private let staleCleanupDebounceNs: UInt64 = 350_000_000
     private let staleTapPurgeDelayMs: UInt64 = 30_000
     private let sampleRateCacheTTL: TimeInterval = 0.8
-    private let appDisplayRenderHeartbeatSeconds: Double = 2.5
 
     /// UIDs of priority-based default overrides pending echo suppression (handles rapid disconnects)
     private var pendingPriorityOverrideUIDs: Set<String> = []
@@ -481,9 +484,25 @@ final class AudioEngine {
     /// Combined list of active apps and pinned inactive apps for UI display.
     /// Pinned apps appear first (sorted alphabetically), then unpinned active apps (sorted alphabetically).
     var displayableApps: [DisplayableApp] {
-        let activeApps = processMonitor.activeApps.filter { app in
-            !settingsManager.isExcludedApp(app.persistenceIdentifier) && isRenderBackedForDisplay(app)
+        // Start from currently active CoreAudio apps.
+        var appsByIdentifier: [String: AudioApp] = [:]
+        for app in processMonitor.activeApps {
+            guard !settingsManager.isExcludedApp(app.persistenceIdentifier) else { continue }
+            appsByIdentifier[app.persistenceIdentifier] = app
         }
+
+        // Retain recently-active apps that still have a live tap (stale cleanup window),
+        // but only while the process is still alive.
+        for tap in taps.values {
+            let app = tap.app
+            guard !settingsManager.isExcludedApp(app.persistenceIdentifier) else { continue }
+            guard isProcessCurrentlyAlive(app.id) else { continue }
+            if appsByIdentifier[app.persistenceIdentifier] == nil {
+                appsByIdentifier[app.persistenceIdentifier] = app
+            }
+        }
+
+        let activeApps = Array(appsByIdentifier.values)
         let activeIdentifiers = Set(activeApps.map { $0.persistenceIdentifier })
 
         // Get pinned apps that are not currently active
@@ -513,9 +532,10 @@ final class AudioEngine {
         return pinnedActive + pinnedInactive + unpinnedActive
     }
 
-    private func isRenderBackedForDisplay(_ app: AudioApp) -> Bool {
-        guard let tap = taps[app.id] else { return false }
-        return tap.hasRecentAudioCallback(within: appDisplayRenderHeartbeatSeconds)
+    private func isProcessCurrentlyAlive(_ pid: pid_t) -> Bool {
+        guard pid > 0 else { return false }
+        if kill(pid, 0) == 0 { return true }
+        return errno == EPERM
     }
 
     // MARK: - Pinning
@@ -1151,15 +1171,25 @@ final class AudioEngine {
     /// CoreAudio can rotate process object IDs while PID remains stable.
     /// Existing taps bound to stale object IDs may stop processing until recreated.
     private func shouldRecreateTap(existingTap: ProcessTapController, for app: AudioApp) -> Bool {
-        if existingTap.app.objectID != app.objectID {
-            return true
+        let existingApp = existingTap.app
+        let objectIDChanged = existingApp.objectID != app.objectID
+        let currentObjectIDs = Set(existingApp.processObjectIDs)
+        let latestObjectIDs = Set(app.processObjectIDs)
+        let objectSetChanged = currentObjectIDs != latestObjectIDs
+
+        guard objectIDChanged || objectSetChanged else { return false }
+
+        // Helper-backed object sets can reorder and drop stale object IDs frequently.
+        // Ignore pure reordering/removal deltas, but recreate when new helper objects appear
+        // so the tap can follow the active render object as helpers roll over.
+        if existingApp.isHelperBacked || app.isHelperBacked {
+            let addedObjectIDs = latestObjectIDs.subtracting(currentObjectIDs)
+            if addedObjectIDs.isEmpty {
+                return false
+            }
         }
-        let currentObjectIDs = existingTap.app.processObjectIDs.sorted()
-        let latestObjectIDs = app.processObjectIDs.sorted()
-        if currentObjectIDs != latestObjectIDs {
-            return true
-        }
-        return false
+
+        return true
     }
 
     private func ensureTapExists(for app: AudioApp, deviceUID: String) {
