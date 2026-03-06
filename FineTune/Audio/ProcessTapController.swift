@@ -205,6 +205,10 @@ final class ProcessTapController {
         eqProcessor?.updateSettings(settings)
     }
 
+    func updateHeadphoneEQSettings(_ settings: HeadphoneEQSettings) {
+        eqProcessor?.updateHeadphoneSettings(settings)
+    }
+
     // MARK: - Multi-Device Aggregate Configuration
 
     /// Builds aggregate device description for synchronized multi-device output.
@@ -815,6 +819,7 @@ final class ProcessTapController {
         var maxPeak: Float = 0.0
         let inputBufferCount = inputBuffers.count
         let outputBufferCount = outputBuffers.count
+        let crossfadeActive = crossfadeState.isActive
 
         for outputIndex in 0..<outputBufferCount {
             let outputBuffer = outputBuffers[outputIndex]
@@ -858,7 +863,8 @@ final class ProcessTapController {
 
             let eq = eqProcessor  // Single atomic read — prevents TOCTOU with EQ check below
             let eqCanProcessStereoInterleaved = (inputChannels == 2 && outputChannels == 2)
-            let preamp: Float = (eq?.isEnabled == true && eqCanProcessStereoInterleaved && !crossfadeState.isActive) ? (eq?.preampAttenuation ?? 1.0) : 1.0
+            let shouldApplyEQ = (eq?.isEnabled == true && eqCanProcessStereoInterleaved && !crossfadeActive)
+            let preamp: Float = shouldApplyEQ ? (eq?.preampAttenuation ?? 1.0) : 1.0
 
             if inputChannels == outputChannels {
                 let sampleCount = frameCount * inputChannels
@@ -876,6 +882,7 @@ final class ProcessTapController {
                     memset(outputSamples.advanced(by: sampleCount), 0, (outputSampleCount - sampleCount) * MemoryLayout<Float>.size)
                 }
             } else if inputChannels == 2 && outputChannels > 2 {
+                memset(outputData, 0, Int(outputBuffer.mDataByteSize))
                 for frame in 0..<frameCount {
                     currentVol += (targetVol - currentVol) * rampCoefficient
                     let gain = currentVol * crossfadeMultiplier * preamp
@@ -886,17 +893,11 @@ final class ProcessTapController {
                     let probe = abs(inputSamples[inBase])
                     if probe > maxPeak { maxPeak = probe }
 
-                    for ch in 0..<outputChannels {
-                        outputSamples[outBase + ch] = 0
-                    }
                     outputSamples[outBase + safeLeft] = left
                     outputSamples[outBase + safeRight] = right
                 }
-                let writtenSamples = frameCount * outputChannels
-                if writtenSamples < outputSampleCount {
-                    memset(outputSamples.advanced(by: writtenSamples), 0, (outputSampleCount - writtenSamples) * MemoryLayout<Float>.size)
-                }
             } else if inputChannels == 1 && outputChannels > 1 {
+                memset(outputData, 0, Int(outputBuffer.mDataByteSize))
                 for frame in 0..<frameCount {
                     currentVol += (targetVol - currentVol) * rampCoefficient
                     let gain = currentVol * crossfadeMultiplier * preamp
@@ -905,41 +906,33 @@ final class ProcessTapController {
                     let probe = abs(inputSamples[frame])
                     if probe > maxPeak { maxPeak = probe }
 
-                    for ch in 0..<outputChannels {
-                        outputSamples[outBase + ch] = 0
-                    }
                     outputSamples[outBase + safeLeft] = sample
                     outputSamples[outBase + safeRight] = sample
                 }
-                let writtenSamples = frameCount * outputChannels
-                if writtenSamples < outputSampleCount {
-                    memset(outputSamples.advanced(by: writtenSamples), 0, (outputSampleCount - writtenSamples) * MemoryLayout<Float>.size)
-                }
             } else {
+                let copiedChannels = min(inputChannels, outputChannels)
+                let shouldPreclearOutput = copiedChannels < outputChannels
+                if shouldPreclearOutput {
+                    memset(outputData, 0, Int(outputBuffer.mDataByteSize))
+                }
                 for frame in 0..<frameCount {
                     currentVol += (targetVol - currentVol) * rampCoefficient
                     let gain = currentVol * crossfadeMultiplier * preamp
                     let inBase = frame * inputChannels
                     let outBase = frame * outputChannels
-                    let copiedChannels = min(inputChannels, outputChannels)
                     let probe = abs(inputSamples[inBase])
                     if probe > maxPeak { maxPeak = probe }
                     for ch in 0..<copiedChannels {
                         outputSamples[outBase + ch] = inputSamples[inBase + ch] * gain
                     }
-                    if copiedChannels < outputChannels {
-                        for ch in copiedChannels..<outputChannels {
-                            outputSamples[outBase + ch] = 0
-                        }
-                    }
                 }
                 let writtenSamples = frameCount * outputChannels
-                if writtenSamples < outputSampleCount {
+                if !shouldPreclearOutput && writtenSamples < outputSampleCount {
                     memset(outputSamples.advanced(by: writtenSamples), 0, (outputSampleCount - writtenSamples) * MemoryLayout<Float>.size)
                 }
             }
 
-            if let eq = eq, eq.isEnabled, eqCanProcessStereoInterleaved, !crossfadeState.isActive {
+            if shouldApplyEQ, let eq {
                 eq.process(input: outputSamples, output: outputSamples, frameCount: frameCount)
             }
 

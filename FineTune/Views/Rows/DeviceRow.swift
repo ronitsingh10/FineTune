@@ -1,5 +1,6 @@
 // FineTune/Views/Rows/DeviceRow.swift
 import SwiftUI
+import Foundation
 
 /// A row displaying a device with volume controls
 /// Used in the Output Devices section
@@ -14,6 +15,7 @@ struct DeviceRow: View {
     let canSetSampleRate: Bool
     let canDisconnectBluetooth: Bool
     let eqSettings: EQSettings
+    let headphoneEQSettings: HeadphoneEQSettings
     let isEQExpanded: Bool
     let canUseEQ: Bool
     let eqDisabledReason: String?
@@ -24,10 +26,13 @@ struct DeviceRow: View {
     let onDisconnectBluetooth: () -> Void
     let onEQToggle: () -> Void
     let onEQChange: (EQSettings) -> Void
+    let onHeadphoneEQChange: (HeadphoneEQSettings) -> Void
+    let onHeadphoneEQImport: (URL) -> Result<HeadphoneEQSettings, Error>
 
     @State private var sliderValue: Double
     @State private var isEditing = false
     @State private var localEQSettings: EQSettings
+    @State private var localHeadphoneEQSettings: HeadphoneEQSettings
 
     /// Show muted icon when system muted OR volume is 0
     private var showMutedIcon: Bool { isMuted || sliderValue == 0 }
@@ -46,6 +51,7 @@ struct DeviceRow: View {
         canSetSampleRate: Bool = false,
         canDisconnectBluetooth: Bool = false,
         eqSettings: EQSettings = .flat,
+        headphoneEQSettings: HeadphoneEQSettings = .empty,
         isEQExpanded: Bool = false,
         canUseEQ: Bool = true,
         eqDisabledReason: String? = nil,
@@ -55,7 +61,9 @@ struct DeviceRow: View {
         onSampleRateChange: @escaping (Double) -> Void,
         onDisconnectBluetooth: @escaping () -> Void = {},
         onEQToggle: @escaping () -> Void = {},
-        onEQChange: @escaping (EQSettings) -> Void = { _ in }
+        onEQChange: @escaping (EQSettings) -> Void = { _ in },
+        onHeadphoneEQChange: @escaping (HeadphoneEQSettings) -> Void = { _ in },
+        onHeadphoneEQImport: @escaping (URL) -> Result<HeadphoneEQSettings, Error> = { _ in .failure(NSError(domain: "DeviceRow", code: -1, userInfo: [NSLocalizedDescriptionKey: "Import unavailable"])) }
     ) {
         self.device = device
         self.isDefault = isDefault
@@ -67,6 +75,7 @@ struct DeviceRow: View {
         self.canSetSampleRate = canSetSampleRate
         self.canDisconnectBluetooth = canDisconnectBluetooth
         self.eqSettings = eqSettings
+        self.headphoneEQSettings = headphoneEQSettings
         self.isEQExpanded = isEQExpanded
         self.canUseEQ = canUseEQ
         self.eqDisabledReason = eqDisabledReason
@@ -77,8 +86,11 @@ struct DeviceRow: View {
         self.onDisconnectBluetooth = onDisconnectBluetooth
         self.onEQToggle = onEQToggle
         self.onEQChange = onEQChange
+        self.onHeadphoneEQChange = onHeadphoneEQChange
+        self.onHeadphoneEQImport = onHeadphoneEQImport
         self._sliderValue = State(initialValue: Double(volume))
         self._localEQSettings = State(initialValue: eqSettings)
+        self._localHeadphoneEQSettings = State(initialValue: headphoneEQSettings)
     }
 
     var body: some View {
@@ -166,7 +178,7 @@ struct DeviceRow: View {
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .help(canUseEQ ? "Graphic EQ" : (eqDisabledReason ?? "Graphic EQ unavailable for this output configuration"))
+                .help(canUseEQ ? "EQ" : (eqDisabledReason ?? "EQ unavailable for this output configuration"))
 
                 SampleRatePicker(
                     currentRate: currentSampleRate,
@@ -191,6 +203,12 @@ struct DeviceRow: View {
                     localEQSettings = updated
                     onEQChange(updated)
                 },
+                headphoneSettings: $localHeadphoneEQSettings,
+                onHeadphoneSettingsChanged: { updated in
+                    localHeadphoneEQSettings = updated
+                    onHeadphoneEQChange(updated)
+                },
+                onHeadphoneProfileImport: onHeadphoneEQImport,
                 isUsingDeviceEQ: true,
                 onUseDeviceEQ: nil
             )
@@ -203,6 +221,9 @@ struct DeviceRow: View {
         }
         .onChange(of: eqSettings) { _, newValue in
             localEQSettings = newValue
+        }
+        .onChange(of: headphoneEQSettings) { _, newValue in
+            localHeadphoneEQSettings = newValue
         }
     }
 }

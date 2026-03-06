@@ -42,11 +42,12 @@ struct MenuBarPopupView: View {
     /// Whether device priority edit mode is active
     @State private var isEditingDevicePriority = false
 
-    /// Tracks which tab was active when edit mode started (for correct save on exit)
-    @State private var wasEditingInputDevices = false
-
-    /// Editable copy of device order for drag-and-drop reordering
+    /// Editable copy of currently visible device order while in edit mode
     @State private var editableDeviceOrder: [AudioDevice] = []
+    /// Output device edit draft
+    @State private var editableOutputDeviceOrder: [AudioDevice] = []
+    /// Input device edit draft
+    @State private var editableInputDeviceOrder: [AudioDevice] = []
 
     /// Namespace for device toggle animation
     @Namespace private var deviceToggleNamespace
@@ -101,7 +102,11 @@ struct MenuBarPopupView: View {
                         deviceVolumeMonitor.setSystemFollowDefault()
                     },
                     deviceVolumeMonitor: deviceVolumeMonitor,
-                    outputDevices: sortedDevices
+                    settingsManager: audioEngine.settingsManager,
+                    outputDevices: sortedDevices,
+                    onIncludeExcludedApp: { identifier in
+                        audioEngine.includeApp(identifier: identifier)
+                    }
                 )
                 .transition(.opacity)
             } else {
@@ -114,33 +119,30 @@ struct MenuBarPopupView: View {
         .darkGlassBackground()
         .environment(\.colorScheme, .dark)
         .onAppear {
+            isPopupVisible = true
             applyPendingDismissResetIfNeeded()
             updateSortedDevices()
             updateSortedInputDevices()
             localAppSettings = audioEngine.settingsManager.appSettings
         }
-        .onChange(of: audioEngine.outputDevices) { _, _ in
-            exitEditModeSaving()
-            updateSortedDevices()
-        }
-        .onChange(of: audioEngine.inputDevices) { _, _ in
-            exitEditModeSaving()
-            updateSortedInputDevices()
-        }
-        .onChange(of: showingInputDevices) { _, _ in
-            exitEditModeSaving()
-        }
-        .onChange(of: localAppSettings) { _, newValue in
-            audioEngine.settingsManager.updateAppSettings(newValue)
-        }
-        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { _ in
-            isPopupVisible = true
-            applyPendingDismissResetIfNeeded()
-        }
-        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didResignKeyNotification)) { _ in
+        .onDisappear {
             isPopupVisible = false
             exitEditModeSaving()
             shouldResetOnNextOpen = true
+        }
+        .onChange(of: audioEngine.outputDevices) { _, _ in
+            updateSortedDevices()
+            refreshEditableOutputDevicesAfterDeviceListChange()
+        }
+        .onChange(of: audioEngine.inputDevices) { _, _ in
+            updateSortedInputDevices()
+            refreshEditableInputDevicesAfterDeviceListChange()
+        }
+        .onChange(of: showingInputDevices) { oldValue, newValue in
+            handleDeviceTabSwitch(fromInputTab: oldValue, toInputTab: newValue)
+        }
+        .onChange(of: localAppSettings) { _, newValue in
+            audioEngine.settingsManager.updateAppSettings(newValue)
         }
         .background {
             // Hidden button to handle ⌘, keyboard shortcut for toggling settings
@@ -484,6 +486,7 @@ struct MenuBarPopupView: View {
                         canSetSampleRate: audioEngine.canSetSampleRate(for: device.id),
                         canDisconnectBluetooth: audioEngine.canDisconnectBluetooth(for: device),
                         eqSettings: audioEngine.getDeviceEQSettings(for: device.uid),
+                        headphoneEQSettings: audioEngine.getDeviceHeadphoneEQSettings(for: device.uid),
                         isEQExpanded: eqSupported && expandedDeviceEQUID == device.uid,
                         canUseEQ: eqSupported,
                         eqDisabledReason: audioEngine.eqUnavailableReason(for: device.id),
@@ -508,6 +511,12 @@ struct MenuBarPopupView: View {
                         },
                         onEQChange: { settings in
                             audioEngine.setDeviceEQSettings(for: device.uid, to: settings)
+                        },
+                        onHeadphoneEQChange: { settings in
+                            audioEngine.setDeviceHeadphoneEQSettings(for: device.uid, to: settings)
+                        },
+                        onHeadphoneEQImport: { fileURL in
+                            audioEngine.importHeadphoneEQProfile(for: device.uid, from: fileURL)
                         }
                     )
                 }
@@ -687,37 +696,90 @@ struct MenuBarPopupView: View {
 
     private func toggleDevicePriorityEdit() {
         if isEditingDevicePriority {
-            // Exiting edit mode: persist to the correct priority list
-            persistEditableOrder()
+            persistEditingDrafts()
             isEditingDevicePriority = false
-            if wasEditingInputDevices {
-                updateSortedInputDevices()
-            } else {
-                updateSortedDevices()
-            }
+            updateSortedInputDevices()
+            updateSortedDevices()
         } else {
-            // Entering edit mode: copy the current tab's sorted devices
-            wasEditingInputDevices = showingInputDevices
-            editableDeviceOrder = showingInputDevices ? audioEngine.prioritySortedInputDevices : audioEngine.prioritySortedOutputDevices
+            editableOutputDeviceOrder = audioEngine.prioritySortedOutputDevices
+            editableInputDeviceOrder = audioEngine.prioritySortedInputDevices
+            editableDeviceOrder = showingInputDevices ? editableInputDeviceOrder : editableOutputDeviceOrder
             isEditingDevicePriority = true
         }
     }
 
-    /// Persists the editable order to the correct priority list.
-    private func persistEditableOrder() {
-        let uids = editableDeviceOrder.map(\.uid)
-        if wasEditingInputDevices {
-            audioEngine.settingsManager.setInputDevicePriorityOrder(uids)
+    private func handleDeviceTabSwitch(fromInputTab oldValue: Bool, toInputTab newValue: Bool) {
+        guard isEditingDevicePriority, oldValue != newValue else { return }
+
+        if oldValue {
+            editableInputDeviceOrder = editableDeviceOrder
         } else {
-            audioEngine.settingsManager.setDevicePriorityOrder(uids)
+            editableOutputDeviceOrder = editableDeviceOrder
+        }
+
+        editableDeviceOrder = newValue ? editableInputDeviceOrder : editableOutputDeviceOrder
+    }
+
+    private func persistEditingDrafts() {
+        guard isEditingDevicePriority else { return }
+
+        if showingInputDevices {
+            editableInputDeviceOrder = editableDeviceOrder
+        } else {
+            editableOutputDeviceOrder = editableDeviceOrder
+        }
+
+        audioEngine.settingsManager.setDevicePriorityOrder(editableOutputDeviceOrder.map(\.uid))
+        audioEngine.settingsManager.setInputDevicePriorityOrder(editableInputDeviceOrder.map(\.uid))
+        audioEngine.enforceOutputPriorityDefaultPolicy()
+    }
+
+    private func exitEditModeSaving() {
+        guard isEditingDevicePriority else { return }
+        persistEditingDrafts()
+        isEditingDevicePriority = false
+    }
+
+    private func refreshEditableOutputDevicesAfterDeviceListChange() {
+        guard isEditingDevicePriority else { return }
+        editableOutputDeviceOrder = mergedEditableOrder(
+            draft: editableOutputDeviceOrder,
+            latest: audioEngine.prioritySortedOutputDevices
+        )
+        if !showingInputDevices {
+            editableDeviceOrder = editableOutputDeviceOrder
         }
     }
 
-    /// Exits edit mode, saving the current order. Called on edge cases like device changes.
-    private func exitEditModeSaving() {
+    private func refreshEditableInputDevicesAfterDeviceListChange() {
         guard isEditingDevicePriority else { return }
-        persistEditableOrder()
-        isEditingDevicePriority = false
+        editableInputDeviceOrder = mergedEditableOrder(
+            draft: editableInputDeviceOrder,
+            latest: audioEngine.prioritySortedInputDevices
+        )
+        if showingInputDevices {
+            editableDeviceOrder = editableInputDeviceOrder
+        }
+    }
+
+    private func mergedEditableOrder(draft: [AudioDevice], latest: [AudioDevice]) -> [AudioDevice] {
+        guard !draft.isEmpty else { return latest }
+
+        let latestByUID = Dictionary(uniqueKeysWithValues: latest.map { ($0.uid, $0) })
+        var merged: [AudioDevice] = []
+        var seen = Set<String>()
+
+        for device in draft {
+            guard let refreshed = latestByUID[device.uid] else { continue }
+            merged.append(refreshed)
+            seen.insert(refreshed.uid)
+        }
+
+        for device in latest where !seen.contains(device.uid) {
+            merged.append(device)
+        }
+
+        return merged
     }
 
     // MARK: - Helpers

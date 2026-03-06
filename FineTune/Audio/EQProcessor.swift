@@ -3,71 +3,81 @@ import Foundation
 import Accelerate
 import os
 
-/// RT-safe 10-band graphic EQ processor using vDSP_biquad
+/// RT-safe EQ processor with two serial stages:
+/// 1) Headphone EQ (AutoEQ parametric filters)
+/// 2) Graphic EQ (10 fixed bands)
 final class EQProcessor: @unchecked Sendable {
     private let logger = Logger(subsystem: "com.finetune.audio", category: "EQProcessor")
 
-    /// Number of delay samples per channel: (2 * sections) + 2
-    private static let delayBufferSize = (2 * EQSettings.bandCount) + 2  // 22
+    /// Number of delay samples per channel for 10-band graphic EQ: (2 * sections) + 2
+    private static let graphicDelayBufferSize = (2 * EQSettings.bandCount) + 2
 
     private var sampleRate: Double
 
-    /// Currently applied EQ settings (needed for sample rate updates)
-    private var _currentSettings: EQSettings?
-
-    /// Read-only access to current settings
-    var currentSettings: EQSettings? { _currentSettings }
+    // Persisted settings snapshot (main thread only)
+    private var _currentGraphicSettings: EQSettings = .flat
+    private var _currentHeadphoneSettings: HeadphoneEQSettings = .empty
 
     // Lock-free state for RT-safe access
-    private nonisolated(unsafe) var _eqSetup: vDSP_biquad_Setup?
-    private nonisolated(unsafe) var _isEnabled: Bool = true
-    /// Pre-EQ attenuation to prevent post-EQ clipping when bands are boosted.
-    /// Computed as: pow(10, -maxBoostDB / 20) when any band has positive gain.
-    /// Audio callback reads this atomically; main thread writes in updateSettings().
+    private nonisolated(unsafe) var _graphicSetup: vDSP_biquad_Setup?
+    private nonisolated(unsafe) var _headphoneSetup: vDSP_biquad_Setup?
+    private nonisolated(unsafe) var _isGraphicEnabled: Bool = false
+    private nonisolated(unsafe) var _isHeadphoneEnabled: Bool = false
+
+    /// Pre-EQ attenuation to prevent clipping when boosted filters are enabled.
     private nonisolated(unsafe) var _preampAttenuation: Float = 1.0
 
-    // Pre-allocated delay buffers (raw pointers for RT-safety)
-    private let delayBufferL: UnsafeMutablePointer<Float>
-    private let delayBufferR: UnsafeMutablePointer<Float>
+    // Graphic EQ delay buffers (fixed 10-section topology)
+    private let graphicDelayBufferL: UnsafeMutablePointer<Float>
+    private let graphicDelayBufferR: UnsafeMutablePointer<Float>
 
-    /// Whether EQ processing is enabled
+    // Headphone EQ delay buffers (dynamic section count)
+    private nonisolated(unsafe) var _headphoneDelayBufferL: UnsafeMutablePointer<Float>?
+    private nonisolated(unsafe) var _headphoneDelayBufferR: UnsafeMutablePointer<Float>?
+    private nonisolated(unsafe) var _headphoneDelayBufferCount: Int = 0
+
+    /// Whether any EQ stage is enabled.
     var isEnabled: Bool {
-        get { _isEnabled }
+        _isGraphicEnabled || _isHeadphoneEnabled
     }
 
-    /// Pre-EQ gain reduction to prevent clipping (RT-safe read)
+    /// Pre-EQ gain reduction to prevent clipping (RT-safe read).
     var preampAttenuation: Float { _preampAttenuation }
 
     init(sampleRate: Double) {
         self.sampleRate = sampleRate
 
-        // Allocate raw buffers (done once, on main thread)
-        delayBufferL = UnsafeMutablePointer<Float>.allocate(capacity: Self.delayBufferSize)
-        delayBufferL.initialize(repeating: 0, count: Self.delayBufferSize)
+        // Allocate fixed graphic delay buffers once.
+        graphicDelayBufferL = UnsafeMutablePointer<Float>.allocate(capacity: Self.graphicDelayBufferSize)
+        graphicDelayBufferL.initialize(repeating: 0, count: Self.graphicDelayBufferSize)
 
-        delayBufferR = UnsafeMutablePointer<Float>.allocate(capacity: Self.delayBufferSize)
-        delayBufferR.initialize(repeating: 0, count: Self.delayBufferSize)
+        graphicDelayBufferR = UnsafeMutablePointer<Float>.allocate(capacity: Self.graphicDelayBufferSize)
+        graphicDelayBufferR.initialize(repeating: 0, count: Self.graphicDelayBufferSize)
 
-        // Initialize with flat EQ
-        updateSettings(EQSettings.flat)
+        // Initialize stages with defaults.
+        updateSettings(.flat)
+        updateHeadphoneSettings(.empty)
     }
 
     deinit {
-        if let setup = _eqSetup {
+        if let setup = _graphicSetup {
             vDSP_biquad_DestroySetup(setup)
         }
-        delayBufferL.deallocate()
-        delayBufferR.deallocate()
+        if let setup = _headphoneSetup {
+            vDSP_biquad_DestroySetup(setup)
+        }
+
+        graphicDelayBufferL.deallocate()
+        graphicDelayBufferR.deallocate()
+
+        _headphoneDelayBufferL?.deallocate()
+        _headphoneDelayBufferR?.deallocate()
     }
 
-    /// Update EQ settings (call from main thread)
+    /// Updates 10-band graphic EQ settings (main thread).
     func updateSettings(_ settings: EQSettings) {
-        _isEnabled = settings.isEnabled
-        _currentSettings = settings
-
-        // Compute pre-EQ attenuation to prevent post-EQ clipping
-        let maxBoostDB = settings.clampedGains.max() ?? 0
-        _preampAttenuation = maxBoostDB > 0 ? pow(10.0, -maxBoostDB / 20.0) : 1.0
+        _currentGraphicSettings = settings
+        _isGraphicEnabled = settings.isEnabled
 
         let coefficients = BiquadMath.coefficientsForAllBands(
             gains: settings.clampedGains,
@@ -78,128 +88,251 @@ final class EQProcessor: @unchecked Sendable {
             vDSP_biquad_CreateSetup(ptr.baseAddress!, vDSP_Length(EQSettings.bandCount))
         }
 
-        // Swap setup atomically
-        let oldSetup = _eqSetup
-        _eqSetup = newSetup
-
-        // Destroy old setup on background queue (after audio thread has moved on)
-        // 500ms margin: worst-case buffer is 4096 frames @ 44.1kHz = 93ms, plus scheduling jitter
-        if let old = oldSetup {
-            DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 0.5) {
-                vDSP_biquad_DestroySetup(old)
-            }
-        }
-
-        // Note: Do NOT reset delay buffers here - the filter naturally adapts to new
-        // coefficients using existing state, producing smooth transitions without clicks.
-        // Delay buffers are only reset on init and sample rate changes.
+        swapGraphicSetup(newSetup)
+        recomputePreampAttenuation()
     }
 
-    /// Updates the sample rate and recalculates all biquad coefficients.
-    /// Call this when the output device changes to a different sample rate.
-    /// Thread-safe: uses atomic swap for RT-safety.
-    ///
-    /// - Parameter newRate: The new device sample rate in Hz (e.g., 44100, 48000, 96000)
-    func updateSampleRate(_ newRate: Double) {
-        // Development-only check (stripped in Release). Safe because callers are always @MainActor.
-        // Note: delay buffer reset is protected by temporarily disabling EQ processing.
-        dispatchPrecondition(condition: .onQueue(.main))
-        let oldRate = sampleRate
-        guard newRate != sampleRate else { return }  // No change needed
-        guard let settings = _currentSettings else {
-            // No settings applied yet, just update the rate for future use
-            sampleRate = newRate
-            logger.info("[EQ] Sample rate updated: \(oldRate, format: .fixed(precision: 0))Hz → \(newRate, format: .fixed(precision: 0))Hz")
+    /// Updates headphone AutoEQ settings (main thread).
+    func updateHeadphoneSettings(_ settings: HeadphoneEQSettings) {
+        _currentHeadphoneSettings = settings
+
+        let shouldEnable = settings.isEnabled && !settings.filters.isEmpty
+        _isHeadphoneEnabled = shouldEnable
+
+        guard shouldEnable else {
+            swapHeadphoneResources(setup: nil, delayL: nil, delayR: nil, delayCount: 0)
+            recomputePreampAttenuation()
             return
         }
 
-        // Update stored rate
+        let coefficients = BiquadMath.coefficientsForParametricFilters(
+            filters: settings.filters,
+            sampleRate: sampleRate
+        )
+
+        guard !coefficients.isEmpty else {
+            _isHeadphoneEnabled = false
+            swapHeadphoneResources(setup: nil, delayL: nil, delayR: nil, delayCount: 0)
+            recomputePreampAttenuation()
+            return
+        }
+
+        let sectionCount = max(1, coefficients.count / 5)
+        let newSetup = coefficients.withUnsafeBufferPointer { ptr in
+            vDSP_biquad_CreateSetup(ptr.baseAddress!, vDSP_Length(sectionCount))
+        }
+
+        let delayCount = (2 * sectionCount) + 2
+        let newDelayL = UnsafeMutablePointer<Float>.allocate(capacity: delayCount)
+        newDelayL.initialize(repeating: 0, count: delayCount)
+
+        let newDelayR = UnsafeMutablePointer<Float>.allocate(capacity: delayCount)
+        newDelayR.initialize(repeating: 0, count: delayCount)
+
+        swapHeadphoneResources(setup: newSetup, delayL: newDelayL, delayR: newDelayR, delayCount: delayCount)
+        recomputePreampAttenuation()
+    }
+
+    /// Updates sample rate and rebuilds all stage coefficients.
+    /// Safe to call on main thread during device switches.
+    func updateSampleRate(_ newRate: Double) {
+        dispatchPrecondition(condition: .onQueue(.main))
+
+        let oldRate = sampleRate
+        guard newRate != oldRate else { return }
         sampleRate = newRate
         logger.info("[EQ] Sample rate updated: \(oldRate, format: .fixed(precision: 0))Hz → \(newRate, format: .fixed(precision: 0))Hz")
 
-        // Recalculate coefficients with new sample rate
-        let coefficients = BiquadMath.coefficientsForAllBands(
-            gains: settings.clampedGains,
-            sampleRate: newRate
-        )
+        let restoreGraphicEnabled = _isGraphicEnabled
+        let restoreHeadphoneEnabled = _isHeadphoneEnabled
 
-        // Create new biquad setup
-        let newSetup = coefficients.withUnsafeBufferPointer { ptr in
-            vDSP_biquad_CreateSetup(ptr.baseAddress!, vDSP_Length(EQSettings.bandCount))
-        }
-
-        // Atomic swap (RT-safe)
-        let oldSetup = _eqSetup
-        _eqSetup = newSetup
-
-        // Destroy old setup asynchronously (avoid blocking)
-        // 500ms margin: worst-case buffer is 4096 frames @ 44.1kHz = 93ms, plus scheduling jitter
-        if let old = oldSetup {
-            DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 0.5) {
-                vDSP_biquad_DestroySetup(old)
-            }
-        }
-
-        // Disable EQ before resetting delay buffers to prevent race with vDSP_biquad
-        // on audio thread. process() snapshots _isEnabled atomically at entry —
-        // any callback starting after this barrier will bypass the biquad path.
-        let wasEnabled = _isEnabled
-        _isEnabled = false
+        // Temporarily disable processing while rebuilding setups and clearing delay state.
+        _isGraphicEnabled = false
+        _isHeadphoneEnabled = false
         OSMemoryBarrier()
 
-        // Reset delay buffers (safe: new callbacks bypass, in-flight callbacks
-        // finish within microseconds since vDSP_biquad is SIMD-optimized)
-        memset(delayBufferL, 0, Self.delayBufferSize * MemoryLayout<Float>.size)
-        memset(delayBufferR, 0, Self.delayBufferSize * MemoryLayout<Float>.size)
+        // Rebuild graphic stage.
+        let graphicCoefficients = BiquadMath.coefficientsForAllBands(
+            gains: _currentGraphicSettings.clampedGains,
+            sampleRate: newRate
+        )
+        let newGraphicSetup = graphicCoefficients.withUnsafeBufferPointer { ptr in
+            vDSP_biquad_CreateSetup(ptr.baseAddress!, vDSP_Length(EQSettings.bandCount))
+        }
+        swapGraphicSetup(newGraphicSetup)
 
-        // Re-enable and publish
-        _isEnabled = wasEnabled
+        // Rebuild headphone stage if a profile exists.
+        if !_currentHeadphoneSettings.filters.isEmpty {
+            let hpCoefficients = BiquadMath.coefficientsForParametricFilters(
+                filters: _currentHeadphoneSettings.filters,
+                sampleRate: newRate
+            )
+
+            if hpCoefficients.isEmpty {
+                swapHeadphoneResources(setup: nil, delayL: nil, delayR: nil, delayCount: 0)
+            } else {
+                let sectionCount = max(1, hpCoefficients.count / 5)
+                let newHeadphoneSetup = hpCoefficients.withUnsafeBufferPointer { ptr in
+                    vDSP_biquad_CreateSetup(ptr.baseAddress!, vDSP_Length(sectionCount))
+                }
+                let delayCount = (2 * sectionCount) + 2
+                let newDelayL = UnsafeMutablePointer<Float>.allocate(capacity: delayCount)
+                newDelayL.initialize(repeating: 0, count: delayCount)
+                let newDelayR = UnsafeMutablePointer<Float>.allocate(capacity: delayCount)
+                newDelayR.initialize(repeating: 0, count: delayCount)
+                swapHeadphoneResources(
+                    setup: newHeadphoneSetup,
+                    delayL: newDelayL,
+                    delayR: newDelayR,
+                    delayCount: delayCount
+                )
+            }
+        } else {
+            swapHeadphoneResources(setup: nil, delayL: nil, delayR: nil, delayCount: 0)
+        }
+
+        // Reset stage delay state.
+        memset(graphicDelayBufferL, 0, Self.graphicDelayBufferSize * MemoryLayout<Float>.size)
+        memset(graphicDelayBufferR, 0, Self.graphicDelayBufferSize * MemoryLayout<Float>.size)
+
+        if let hpDelayL = _headphoneDelayBufferL,
+           let hpDelayR = _headphoneDelayBufferR,
+           _headphoneDelayBufferCount > 0 {
+            memset(hpDelayL, 0, _headphoneDelayBufferCount * MemoryLayout<Float>.size)
+            memset(hpDelayR, 0, _headphoneDelayBufferCount * MemoryLayout<Float>.size)
+        }
+
+        _isGraphicEnabled = restoreGraphicEnabled
+        _isHeadphoneEnabled = restoreHeadphoneEnabled && !_currentHeadphoneSettings.filters.isEmpty && _headphoneSetup != nil
+        recomputePreampAttenuation()
         OSMemoryBarrier()
     }
 
-    /// Process stereo interleaved audio (RT-safe)
+    /// Process stereo interleaved audio in-place (RT-safe).
     /// - Parameters:
     ///   - input: Input buffer (stereo interleaved Float32)
     ///   - output: Output buffer (stereo interleaved Float32)
     ///   - frameCount: Number of stereo frames (samples / 2)
     func process(input: UnsafePointer<Float>, output: UnsafeMutablePointer<Float>, frameCount: Int) {
-        // Read atomic state
-        let enabled = _isEnabled
-        let setup = _eqSetup
+        let graphicEnabled = _isGraphicEnabled
+        let headphoneEnabled = _isHeadphoneEnabled
 
-        // Bypass: copy input to output (skip if already in-place to avoid memcpy UB on overlap)
-        guard enabled, let setup = setup else {
-            if input != UnsafePointer(output) {
-                memcpy(output, input, frameCount * 2 * MemoryLayout<Float>.size)
-            }
-            return
-        }
+        let graphicSetup = _graphicSetup
+        let headphoneSetup = _headphoneSetup
+        let headphoneDelayL = _headphoneDelayBufferL
+        let headphoneDelayR = _headphoneDelayBufferR
 
-        // Copy input to output first for in-place processing (skip if same buffer)
+        // Bypass: copy input to output if needed.
         if input != UnsafePointer(output) {
             memcpy(output, input, frameCount * 2 * MemoryLayout<Float>.size)
         }
 
-        // Process left channel (stride=2, starts at index 0)
-        vDSP_biquad(
-            setup,
-            delayBufferL,
-            output,
-            2,
-            output,
-            2,
-            vDSP_Length(frameCount)
-        )
+        guard graphicEnabled || headphoneEnabled else {
+            return
+        }
 
-        // Process right channel (stride=2, starts at index 1)
-        vDSP_biquad(
-            setup,
-            delayBufferR,
-            output.advanced(by: 1),
-            2,
-            output.advanced(by: 1),
-            2,
-            vDSP_Length(frameCount)
-        )
+        if headphoneEnabled,
+           let hpSetup = headphoneSetup,
+           let hpDelayL = headphoneDelayL,
+           let hpDelayR = headphoneDelayR {
+            vDSP_biquad(
+                hpSetup,
+                hpDelayL,
+                output,
+                2,
+                output,
+                2,
+                vDSP_Length(frameCount)
+            )
+
+            vDSP_biquad(
+                hpSetup,
+                hpDelayR,
+                output.advanced(by: 1),
+                2,
+                output.advanced(by: 1),
+                2,
+                vDSP_Length(frameCount)
+            )
+        }
+
+        if graphicEnabled, let gSetup = graphicSetup {
+            vDSP_biquad(
+                gSetup,
+                graphicDelayBufferL,
+                output,
+                2,
+                output,
+                2,
+                vDSP_Length(frameCount)
+            )
+
+            vDSP_biquad(
+                gSetup,
+                graphicDelayBufferR,
+                output.advanced(by: 1),
+                2,
+                output.advanced(by: 1),
+                2,
+                vDSP_Length(frameCount)
+            )
+        }
+    }
+
+    // MARK: - Resource Swaps
+
+    private func swapGraphicSetup(_ newSetup: vDSP_biquad_Setup?) {
+        let oldSetup = _graphicSetup
+        _graphicSetup = newSetup
+        scheduleCleanup(setup: oldSetup)
+    }
+
+    private func swapHeadphoneResources(
+        setup newSetup: vDSP_biquad_Setup?,
+        delayL newDelayL: UnsafeMutablePointer<Float>?,
+        delayR newDelayR: UnsafeMutablePointer<Float>?,
+        delayCount newDelayCount: Int
+    ) {
+        let oldSetup = _headphoneSetup
+        let oldDelayL = _headphoneDelayBufferL
+        let oldDelayR = _headphoneDelayBufferR
+
+        _headphoneSetup = newSetup
+        _headphoneDelayBufferL = newDelayL
+        _headphoneDelayBufferR = newDelayR
+        _headphoneDelayBufferCount = newDelayCount
+
+        scheduleCleanup(setup: oldSetup, delayL: oldDelayL, delayR: oldDelayR)
+    }
+
+    private func scheduleCleanup(setup: vDSP_biquad_Setup?) {
+        guard let setup else { return }
+        DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 0.5) {
+            vDSP_biquad_DestroySetup(setup)
+        }
+    }
+
+    private func scheduleCleanup(
+        setup: vDSP_biquad_Setup?,
+        delayL: UnsafeMutablePointer<Float>?,
+        delayR: UnsafeMutablePointer<Float>?
+    ) {
+        guard setup != nil || delayL != nil || delayR != nil else { return }
+        DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 0.5) {
+            if let setup {
+                vDSP_biquad_DestroySetup(setup)
+            }
+            delayL?.deallocate()
+            delayR?.deallocate()
+        }
+    }
+
+    private func recomputePreampAttenuation() {
+        let maxGraphicBoost = _isGraphicEnabled ? (_currentGraphicSettings.clampedGains.max() ?? 0) : 0
+        let maxHeadphoneBoost = _isHeadphoneEnabled
+            ? (_currentHeadphoneSettings.filters.map(\.gainDB).max() ?? 0)
+            : 0
+        let maxBoostDB = max(maxGraphicBoost, maxHeadphoneBoost)
+        _preampAttenuation = maxBoostDB > 0 ? pow(10.0, -maxBoostDB / 20.0) : 1.0
     }
 }

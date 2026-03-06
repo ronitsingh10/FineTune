@@ -362,12 +362,14 @@ struct AppRowWithLevelPolling: View {
         // Guard against duplicate timers
         guard levelTimer == nil else { return }
 
-        levelTimer = Timer.scheduledTimer(
-            withTimeInterval: DesignTokens.Timing.vuMeterUpdateInterval,
+        let timer = Timer(
+            timeInterval: DesignTokens.Timing.vuMeterUpdateInterval,
             repeats: true
         ) { _ in
             displayLevel = getAudioLevel()
         }
+        RunLoop.main.add(timer, forMode: .common)
+        levelTimer = timer
     }
 
     private func stopLevelPolling() {
