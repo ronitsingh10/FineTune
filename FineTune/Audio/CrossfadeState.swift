@@ -12,7 +12,7 @@ enum CrossfadePhase: Int, Equatable {
 /// All fields are designed for lock-free access from audio callbacks.
 ///
 /// **Threading model:**
-/// - Main thread writes via `beginCrossfade()`, `beginCrossfading()`, `complete()`
+/// - Main thread writes via `beginWarmup()`, `beginCrossfading()`, `complete()`
 /// - Secondary audio callback writes via `updateProgress(samples:)` (single-writer)
 /// - Both audio callbacks read `phase`, `primaryMultiplier`, `secondaryMultiplier`
 ///
@@ -60,17 +60,6 @@ struct CrossfadeState: @unchecked Sendable {
         secondarySampleCount = 0
         secondarySamplesProcessed = 0
         totalSamples = 0
-        OSMemoryBarrier()    // Flush data stores before publishing phase
-        phase = .warmingUp
-    }
-
-    /// Resets all state and enters warmingUp phase.
-    /// Call when secondary tap is created and starting to receive audio.
-    mutating func beginCrossfade(at sampleRate: Double) {
-        progress = 0
-        secondarySampleCount = 0
-        secondarySamplesProcessed = 0
-        totalSamples = CrossfadeConfig.totalSamples(at: sampleRate)
         OSMemoryBarrier()    // Flush data stores before publishing phase
         phase = .warmingUp
     }

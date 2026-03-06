@@ -91,10 +91,13 @@ final class AudioProcessMonitor {
 
     /// Finds the responsible application for a helper/XPC process.
     /// Uses Apple's responsibility API first, falls back to process tree walking.
-    private func findResponsibleApp(for pid: pid_t, in runningApps: [NSRunningApplication]) -> NSRunningApplication? {
+    private func findResponsibleApp(
+        for pid: pid_t,
+        in runningAppsByPID: [pid_t: NSRunningApplication]
+    ) -> NSRunningApplication? {
         // First try Apple's responsibility API (works for XPC services like Safari's WebKit processes)
         if let responsiblePID = getResponsiblePID(for: pid),
-           let app = runningApps.first(where: { $0.processIdentifier == responsiblePID }),
+           let app = runningAppsByPID[responsiblePID],
            app.bundleURL?.pathExtension == "app" {
             return app
         }
@@ -107,7 +110,7 @@ final class AudioProcessMonitor {
             visited.insert(currentPID)
 
             // Check if this PID is a proper app bundle (.app, not .xpc service)
-            if let app = runningApps.first(where: { $0.processIdentifier == currentPID }),
+            if let app = runningAppsByPID[currentPID],
                app.bundleURL?.pathExtension == "app" {
                 return app
             }
@@ -171,6 +174,10 @@ final class AudioProcessMonitor {
         do {
             let processIDs = try AudioObjectID.readProcessList()
             let runningApps = NSWorkspace.shared.runningApplications
+            let runningAppsByPID = Dictionary(
+                runningApps.map { ($0.processIdentifier, $0) },
+                uniquingKeysWith: { _, latest in latest }
+            )
             let myPID = ProcessInfo.processInfo.processIdentifier
 
             var appsByPID: [pid_t: AudioApp] = [:]
@@ -179,11 +186,11 @@ final class AudioProcessMonitor {
                 guard objectID.readProcessIsRunning() else { continue }
 
                 // Try to find the parent app (for helper processes like Safari Graphics and Media)
-                let directApp = runningApps.first { $0.processIdentifier == pid }
+                let directApp = runningAppsByPID[pid]
 
                 // Check if it's a real app bundle (.app), not an XPC service (.xpc)
                 let isRealApp = directApp?.bundleURL?.pathExtension == "app"
-                let resolvedApp = isRealApp ? directApp : findResponsibleApp(for: pid, in: runningApps)
+                let resolvedApp = isRealApp ? directApp : findResponsibleApp(for: pid, in: runningAppsByPID)
                 let parentPID = resolvedApp?.processIdentifier ?? pid
                 let isHelper = parentPID != pid
 
