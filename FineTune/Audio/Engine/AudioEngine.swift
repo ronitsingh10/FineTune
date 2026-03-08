@@ -24,6 +24,8 @@ final class AudioEngine {
     private var appDeviceRouting: [pid_t: String] = [:]  // pid → deviceUID (always explicit)
     private var followsDefault: Set<pid_t> = []  // Apps that follow system default
     private var pendingCleanup: [pid_t: Task<Void, Never>] = [:]  // Grace period for stale tap cleanup
+    private var eqSupportByOutputDevice: [AudioDeviceID: Bool] = [:]
+    private var eqUnavailableReasonByOutputDevice: [AudioDeviceID: String] = [:]
     private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "FineTune", category: "AudioEngine")
 
     // MARK: - Input Device Lock State
@@ -66,6 +68,93 @@ final class AudioEngine {
         #endif
     }
 
+    func availableSampleRates(for deviceID: AudioDeviceID) -> [Double] {
+        (try? deviceID.readAvailableNominalSampleRates()) ?? []
+    }
+
+    func currentSampleRate(for deviceID: AudioDeviceID) -> Double {
+        (try? deviceID.readNominalSampleRate()) ?? 48000
+    }
+
+    func canSetSampleRate(for deviceID: AudioDeviceID) -> Bool {
+        deviceID.canSetNominalSampleRate()
+    }
+
+    func canDisconnectBluetooth(for device: AudioDevice) -> Bool {
+        let transport = device.id.readTransportType()
+        return transport == .bluetooth || transport == .bluetoothLE
+    }
+
+    func disconnectBluetooth(device: AudioDevice) {
+        guard canDisconnectBluetooth(for: device) else { return }
+
+        let disconnected = BluetoothDeviceController.shared.disconnectDevice(matchingAudioDeviceName: device.name)
+        if disconnected {
+            logger.info("Requested Bluetooth disconnect for \(device.uid, privacy: .public)")
+        } else {
+            logger.warning("No connected Bluetooth match found for \(device.uid, privacy: .public)")
+        }
+    }
+
+    /// Device EQ currently supports stereo tap formats only.
+    func isDeviceEQSupported(for deviceID: AudioDeviceID) -> Bool {
+        if let cached = eqSupportByOutputDevice[deviceID] {
+            return cached
+        }
+        let channels = deviceID.outputChannelCount()
+        let supported = channels == 2
+        eqSupportByOutputDevice[deviceID] = supported
+        if !supported {
+            let detail = "\(channels) channels"
+            eqUnavailableReasonByOutputDevice[deviceID] = "EQ is only available for stereo output (device reports \(detail))"
+        } else {
+            eqUnavailableReasonByOutputDevice.removeValue(forKey: deviceID)
+        }
+        return supported
+    }
+
+    func eqUnavailableReason(for deviceID: AudioDeviceID) -> String? {
+        if eqSupportByOutputDevice[deviceID] == nil {
+            _ = isDeviceEQSupported(for: deviceID)
+        }
+        return eqUnavailableReasonByOutputDevice[deviceID]
+    }
+
+    private func refreshOutputDeviceEQCapabilities() {
+        var support: [AudioDeviceID: Bool] = [:]
+        var reasons: [AudioDeviceID: String] = [:]
+
+        for device in deviceMonitor.outputDevices {
+            let channels = device.id.outputChannelCount()
+            let isSupported = channels == 2
+            support[device.id] = isSupported
+            if !isSupported {
+                let detail = "\(channels) channels"
+                reasons[device.id] = "EQ is only available for stereo output (device reports \(detail))"
+            }
+        }
+
+        eqSupportByOutputDevice = support
+        eqUnavailableReasonByOutputDevice = reasons
+    }
+
+    func setSampleRate(for device: AudioDevice, to rate: Double) {
+        let availableRates = availableSampleRates(for: device.id)
+        let supported = availableRates.isEmpty || availableRates.contains { abs($0 - rate) < 1 }
+        guard supported else {
+            logger.warning("Sample rate \(rate, format: .fixed(precision: 0)) unsupported for \(device.uid, privacy: .public)")
+            return
+        }
+
+        do {
+            try device.id.setNominalSampleRate(rate)
+            settingsManager.setPreferredSampleRate(for: device.uid, to: rate)
+            logger.info("Set sample rate \(rate, format: .fixed(precision: 0)) Hz for \(device.uid, privacy: .public)")
+        } catch {
+            logger.error("Failed to set sample rate for \(device.uid, privacy: .public): \(error.localizedDescription)")
+        }
+    }
+
     var inputDevices: [AudioDevice] {
         deviceMonitor.inputDevices
     }
@@ -96,6 +185,11 @@ final class AudioEngine {
         return sorted
     }
 
+    /// Output devices sorted by priority with hidden devices removed for normal display.
+    var visiblePrioritySortedOutputDevices: [AudioDevice] {
+        prioritySortedOutputDevices.filter { !settingsManager.isOutputDeviceHidden($0.uid) }
+    }
+
     /// Input devices sorted by user-defined priority order.
     var prioritySortedInputDevices: [AudioDevice] {
         let devices = inputDevices
@@ -119,6 +213,23 @@ final class AudioEngine {
         return sorted
     }
 
+    /// Input devices sorted by priority with hidden devices removed for normal display.
+    var visiblePrioritySortedInputDevices: [AudioDevice] {
+        prioritySortedInputDevices.filter { !settingsManager.isInputDeviceHidden($0.uid) }
+    }
+
+    func isDeviceHidden(uid: String, isInput: Bool) -> Bool {
+        isInput ? settingsManager.isInputDeviceHidden(uid) : settingsManager.isOutputDeviceHidden(uid)
+    }
+
+    func setDeviceHidden(uid: String, isInput: Bool, hidden: Bool) {
+        if isInput {
+            settingsManager.setInputDeviceHidden(uid, hidden: hidden)
+        } else {
+            settingsManager.setOutputDeviceHidden(uid, hidden: hidden)
+        }
+    }
+
     /// Registers any output devices not yet in the priority list.
     /// Call this when devices change (not from computed properties).
     func registerNewDevicesInPriority() {
@@ -128,6 +239,26 @@ final class AudioEngine {
         for device in inputDevices {
             settingsManager.ensureInputDeviceInPriority(device.uid)
         }
+    }
+
+    private func applyPreferredSampleRatesToConnectedDevices() {
+        for device in outputDevices {
+            applyPreferredSampleRateIfNeeded(for: device.uid)
+        }
+        for device in inputDevices {
+            applyPreferredSampleRateIfNeeded(for: device.uid)
+        }
+    }
+
+    private func applyPreferredSampleRateIfNeeded(for deviceUID: String) {
+        guard let preferredRate = settingsManager.getPreferredSampleRate(for: deviceUID) else { return }
+        guard let device = deviceMonitor.device(for: deviceUID) ?? deviceMonitor.inputDevice(for: deviceUID) else { return }
+
+        let currentRate = currentSampleRate(for: device.id)
+        guard abs(currentRate - preferredRate) >= 1 else { return }
+        guard canSetSampleRate(for: device.id) else { return }
+
+        setSampleRate(for: device, to: preferredRate)
     }
 
     /// Finds the highest-priority connected device excluding the given UID.
@@ -230,12 +361,13 @@ final class AudioEngine {
 
             deviceMonitor.onDeviceDisconnected = { [weak self] deviceUID, deviceName in
                 self?.handleDeviceDisconnected(deviceUID, name: deviceName)
-                self?.bluetoothDeviceMonitor.refresh()
+                self?.refreshOutputDeviceEQCapabilities()
             }
 
             deviceMonitor.onDeviceConnected = { [weak self] deviceUID, deviceName in
                 self?.handleDeviceConnected(deviceUID, name: deviceName)
-                self?.bluetoothDeviceMonitor.notifyDeviceAppearedInCoreAudio()
+                self?.applyPreferredSampleRateIfNeeded(for: deviceUID)
+                self?.refreshOutputDeviceEQCapabilities()
             }
 
             deviceMonitor.onInputDeviceDisconnected = { [weak self] deviceUID, deviceName in
@@ -247,6 +379,7 @@ final class AudioEngine {
                 self?.logger.info("Input device connected: \(deviceName) (\(deviceUID))")
                 self?.lastInputDeviceConnectTime = Date()
                 self?.settingsManager.ensureInputDeviceInPriority(deviceUID)
+                self?.applyPreferredSampleRateIfNeeded(for: deviceUID)
             }
 
             deviceVolumeMonitor.onDefaultDeviceChanged = { [weak self] newDefaultUID in
@@ -261,6 +394,8 @@ final class AudioEngine {
 
             applyPersistedSettings()
             registerNewDevicesInPriority()
+            applyPreferredSampleRatesToConnectedDevices()
+            refreshOutputDeviceEQCapabilities()
             lastKnownDefaultDeviceUID = deviceVolumeMonitor.defaultDeviceUID
             lastKnownDefaultInputDeviceUID = deviceVolumeMonitor.defaultInputDeviceUID
 
@@ -272,7 +407,7 @@ final class AudioEngine {
     }
 
     var apps: [AudioApp] {
-        processMonitor.activeApps
+        processMonitor.activeApps.filter { !isExcluded($0) }
     }
 
     // MARK: - Displayable Apps (Active + Pinned Inactive)
@@ -280,12 +415,15 @@ final class AudioEngine {
     /// Combined list of active apps and pinned inactive apps for UI display.
     /// Pinned apps appear first (sorted alphabetically), then unpinned active apps (sorted alphabetically).
     var displayableApps: [DisplayableApp] {
-        let activeApps = apps
+        let activeApps = processMonitor.activeApps
         let activeIdentifiers = Set(activeApps.map { $0.persistenceIdentifier })
 
         // Get pinned apps that are not currently active
         let pinnedInactiveInfos = settingsManager.getPinnedAppInfo()
-            .filter { !activeIdentifiers.contains($0.persistenceIdentifier) }
+            .filter {
+                !activeIdentifiers.contains($0.persistenceIdentifier)
+                && !settingsManager.isExcludedApp($0.persistenceIdentifier)
+            }
 
         // Pinned active apps (sorted alphabetically)
         let pinnedActive = activeApps
@@ -334,6 +472,50 @@ final class AudioEngine {
         settingsManager.isPinned(identifier)
     }
 
+    func excludeApp(identifier: String) {
+        guard !settingsManager.isExcludedApp(identifier) else { return }
+        settingsManager.excludeApp(identifier)
+        settingsManager.unpinApp(identifier)
+
+        var removedCount = 0
+        let matchingPIDs = taps.compactMap { pid, tap in
+            tap.app.persistenceIdentifier == identifier ? pid : nil
+        }
+
+        for pid in matchingPIDs {
+            if let tap = taps.removeValue(forKey: pid) {
+                tap.invalidate()
+                removedCount += 1
+            }
+            appliedPIDs.remove(pid)
+            followsDefault.remove(pid)
+            appDeviceRouting.removeValue(forKey: pid)
+            pendingCleanup[pid]?.cancel()
+            pendingCleanup.removeValue(forKey: pid)
+            volumeState.removeVolume(for: pid)
+        }
+
+        logger.info("Excluded app \(identifier, privacy: .public); removed \(removedCount) active tap(s)")
+    }
+
+    func includeApp(identifier: String) {
+        guard settingsManager.isExcludedApp(identifier) else { return }
+        settingsManager.includeApp(identifier)
+        logger.info("Included app \(identifier, privacy: .public)")
+        applyPersistedSettings()
+    }
+
+    func isExcluded(_ app: AudioApp) -> Bool {
+        settingsManager.isExcludedApp(app.persistenceIdentifier)
+    }
+
+    private func effectiveEQSettings(for app: AudioApp, deviceUID: String? = nil) -> EQSettings {
+        let resolvedDeviceUID = deviceUID
+            ?? appDeviceRouting[app.id]
+            ?? deviceVolumeMonitor.defaultDeviceUID
+        return settingsManager.getEffectiveEQSettings(deviceUID: resolvedDeviceUID)
+    }
+
     // MARK: - Inactive App Settings (by persistence identifier)
 
     /// Get volume for an inactive app by persistence identifier.
@@ -354,16 +536,6 @@ final class AudioEngine {
     /// Set mute state for an inactive app by persistence identifier.
     func setMuteForInactive(identifier: String, to muted: Bool) {
         settingsManager.setMute(for: identifier, to: muted)
-    }
-
-    /// Get EQ settings for an inactive app by persistence identifier.
-    func getEQSettingsForInactive(identifier: String) -> EQSettings {
-        settingsManager.getEQSettings(for: identifier)
-    }
-
-    /// Set EQ settings for an inactive app by persistence identifier.
-    func setEQSettingsForInactive(_ settings: EQSettings, identifier: String) {
-        settingsManager.setEQSettings(settings, for: identifier)
     }
 
     /// Get device routing for an inactive app by persistence identifier.
@@ -474,16 +646,17 @@ final class AudioEngine {
         volumeState.getMute(for: app.id)
     }
 
-    /// Update EQ settings for an app
-    func setEQSettings(_ settings: EQSettings, for app: AudioApp) {
-        guard let tap = taps[app.id] else { return }
-        tap.updateEQSettings(settings)
-        settingsManager.setEQSettings(settings, for: app.persistenceIdentifier)
+    func getDeviceEQSettings(for deviceUID: String) -> EQSettings {
+        settingsManager.getDeviceEQSettings(for: deviceUID)
     }
 
-    /// Get EQ settings for an app
-    func getEQSettings(for app: AudioApp) -> EQSettings {
-        return settingsManager.getEQSettings(for: app.persistenceIdentifier)
+    func setDeviceEQSettings(for deviceUID: String, to settings: EQSettings) {
+        settingsManager.setDeviceEQSettings(settings, for: deviceUID)
+
+        for tap in taps.values {
+            guard tap.currentDeviceUID == deviceUID else { continue }
+            tap.updateEQSettings(settings)
+        }
     }
 
     // MARK: - Per-Device AutoEQ
@@ -597,7 +770,7 @@ final class AudioEngine {
                         tap.currentDeviceVolume = self.deviceVolumeMonitor.volumes[device.id] ?? 1.0
                         tap.isDeviceMuted = self.deviceVolumeMonitor.muteStates[device.id] ?? false
                     }
-                    self.applyAutoEQToTap(tap)
+                    tap.updateEQSettings(self.effectiveEQSettings(for: app, deviceUID: targetUID))
                     self.logger.debug("Switched \(app.name) to device: \(targetUID)")
                 } catch {
                     self.logger.error("Failed to switch device for \(app.name): \(error.localizedDescription)")
@@ -658,6 +831,7 @@ final class AudioEngine {
 
     /// Updates tap configuration based on current mode and selected devices
     private func updateTapForCurrentMode(for app: AudioApp) async {
+        guard !isExcluded(app) else { return }
         let mode = getDeviceSelectionMode(for: app)
 
         let deviceUIDs: [String]
@@ -696,6 +870,9 @@ final class AudioEngine {
                         tap.currentDeviceVolume = deviceVolumeMonitor.volumes[device.id] ?? 1.0
                         tap.isDeviceMuted = deviceVolumeMonitor.muteStates[device.id] ?? false
                     }
+                    if let primaryUID = deviceUIDs.first {
+                        tap.updateEQSettings(effectiveEQSettings(for: app, deviceUID: primaryUID))
+                    }
                     logger.debug("Updated \(app.name) to \(deviceUIDs.count) device(s)")
                 } catch {
                     logger.error("Failed to update devices for \(app.name): \(error.localizedDescription)")
@@ -709,6 +886,7 @@ final class AudioEngine {
 
     /// Creates a tap with the specified device UIDs
     private func ensureTapWithDevices(for app: AudioApp, deviceUIDs: [String]) {
+        guard !isExcluded(app) else { return }
         guard !deviceUIDs.isEmpty else { return }
 
         let tap = ProcessTapController(app: app, targetDeviceUIDs: deviceUIDs, deviceMonitor: deviceMonitor)
@@ -725,8 +903,8 @@ final class AudioEngine {
             try tap.activate()
             taps[app.id] = tap
 
-            // Load and apply persisted EQ settings
-            let eqSettings = settingsManager.getEQSettings(for: app.persistenceIdentifier)
+            // Apply effective EQ (app override if present, otherwise device EQ)
+            let eqSettings = effectiveEQSettings(for: app, deviceUID: deviceUIDs.first)
             tap.updateEQSettings(eqSettings)
             applyAutoEQToTap(tap)
 
@@ -738,6 +916,7 @@ final class AudioEngine {
 
     func applyPersistedSettings() {
         for app in apps {
+            guard !isExcluded(app) else { continue }
             guard !appliedPIDs.contains(app.id) else { continue }
 
             // Load saved device selection mode (single vs multi)
@@ -828,6 +1007,7 @@ final class AudioEngine {
     }
 
     private func ensureTapExists(for app: AudioApp, deviceUID: String) {
+        guard !isExcluded(app) else { return }
         guard taps[app.id] == nil else { return }
 
         let tap = ProcessTapController(app: app, targetDeviceUID: deviceUID, deviceMonitor: deviceMonitor)
@@ -843,8 +1023,8 @@ final class AudioEngine {
             try tap.activate()
             taps[app.id] = tap
 
-            // Load and apply persisted EQ settings
-            let eqSettings = settingsManager.getEQSettings(for: app.persistenceIdentifier)
+            // Apply effective EQ (app override if present, otherwise device EQ)
+            let eqSettings = effectiveEQSettings(for: app, deviceUID: deviceUID)
             tap.updateEQSettings(eqSettings)
             applyAutoEQToTap(tap)
 
@@ -920,7 +1100,7 @@ final class AudioEngine {
                         try await tap.switchDevice(to: fallbackUID)
                         tap.volume = self.volumeState.getVolume(for: tap.app.id)
                         tap.isMuted = self.volumeState.getMute(for: tap.app.id)
-                        self.applyAutoEQToTap(tap)
+                        tap.updateEQSettings(self.effectiveEQSettings(for: tap.app, deviceUID: fallbackUID))
                     } catch {
                         self.logger.error("Failed to switch \(tap.app.name) to fallback: \(error.localizedDescription)")
                     }
@@ -932,6 +1112,7 @@ final class AudioEngine {
                         try await tap.updateDevices(to: remainingUIDs)
                         tap.volume = self.volumeState.getVolume(for: tap.app.id)
                         tap.isMuted = self.volumeState.getMute(for: tap.app.id)
+                        tap.updateEQSettings(self.effectiveEQSettings(for: tap.app, deviceUID: remainingUIDs.first))
                         self.logger.debug("Removed \(deviceName) from \(tap.app.name) multi-device output")
                     } catch {
                         self.logger.error("Failed to update \(tap.app.name) devices: \(error.localizedDescription)")
@@ -999,7 +1180,7 @@ final class AudioEngine {
                             tap.currentDeviceVolume = self.deviceVolumeMonitor.volumes[device.id] ?? 1.0
                             tap.isDeviceMuted = self.deviceVolumeMonitor.muteStates[device.id] ?? false
                         }
-                        self.applyAutoEQToTap(tap)
+                        tap.updateEQSettings(self.effectiveEQSettings(for: tap.app, deviceUID: deviceUID))
                     } catch {
                         self.logger.error("Failed to switch \(tap.app.name) back to \(deviceName): \(error.localizedDescription)")
                     }
@@ -1105,7 +1286,7 @@ final class AudioEngine {
                             tap.currentDeviceVolume = self.deviceVolumeMonitor.volumes[device.id] ?? 1.0
                             tap.isDeviceMuted = self.deviceVolumeMonitor.muteStates[device.id] ?? false
                         }
-                        self.applyAutoEQToTap(tap)
+                        tap.updateEQSettings(self.effectiveEQSettings(for: app, deviceUID: newDefaultUID))
                     } catch {
                         self.logger.error("Failed to switch \(app.name) to new default: \(error.localizedDescription)")
                     }
