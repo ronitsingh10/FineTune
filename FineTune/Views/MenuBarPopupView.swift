@@ -136,7 +136,7 @@ struct MenuBarPopupView: View {
         .onChange(of: localAppSettings) { oldValue, newValue in
             audioEngine.settingsManager.updateAppSettings(newValue)
 
-            if oldValue.showAggregateDevices != newValue.showAggregateDevices {
+            if oldValue.showAllDevices != newValue.showAllDevices {
                 audioEngine.refreshDeviceLists()
                 updateSortedDevices()
                 updateSortedInputDevices()

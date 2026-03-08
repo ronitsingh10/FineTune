@@ -118,13 +118,13 @@ final class AudioDeviceMonitor {
     private func refresh() {
         do {
             let deviceIDs = try AudioObjectID.readDeviceList()
-            let showAggregateDevices = settingsManager.showAggregateDevices
+            let showAllDevices = settingsManager.showAllDevices
             var outputDeviceList: [AudioDevice] = []
             var inputDeviceList: [AudioDevice] = []
 
             for deviceID in deviceIDs {
-                // Respect user preference for showing aggregate devices
-                if deviceID.isAggregateDevice() && !showAggregateDevices { continue }
+                // Respect user preference for showing all devices
+                if deviceID.isAggregateDevice() && !showAllDevices { continue }
 
                 guard let uid = try? deviceID.readDeviceUID(),
                       let name = try? deviceID.readDeviceName() else {
@@ -140,7 +140,7 @@ final class AudioDeviceMonitor {
                 }
 
                 // Output devices - filter virtual devices (avoid clutter from Teams Audio, BlackHole, etc.)
-                if deviceID.hasOutputStreams() && !deviceID.isVirtualDevice() {
+                if deviceID.hasOutputStreams() && (showAllDevices || !deviceID.isVirtualDevice()) {
                     // Try Core Audio icon first (via LRU cache), fall back to SF Symbol
                     let icon = DeviceIconCache.shared.icon(for: uid) {
                         deviceID.readDeviceIcon()

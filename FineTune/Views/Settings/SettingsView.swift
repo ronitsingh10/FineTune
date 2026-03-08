@@ -93,9 +93,9 @@ struct SettingsView: View {
 
             SettingsToggleRow(
                 icon: "square.stack.3d.up",
-                title: "Show Aggregate Devices",
-                description: "Include aggregate (combined) devices in device lists",
-                isOn: $settings.showAggregateDevices
+                title: "Show All Devices",
+                description: "Include all (combined/virtual) devices in device lists",
+                isOn: $settings.showAllDevices
             )
 
             // Sound Effects device selection
