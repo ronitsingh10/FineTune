@@ -29,3 +29,128 @@ struct EQSettings: Codable, Equatable {
     /// Flat EQ preset
     static let flat = EQSettings()
 }
+
+struct HeadphoneEQFilter: Codable, Equatable, Sendable {
+    var frequencyHz: Double
+    var gainDB: Float
+    var q: Double
+
+    init(frequencyHz: Double, gainDB: Float, q: Double) {
+        self.frequencyHz = frequencyHz
+        self.gainDB = gainDB
+        self.q = q
+    }
+}
+
+struct HeadphoneEQSettings: Codable, Equatable, Sendable {
+    var isEnabled: Bool
+    var profileName: String
+    var sourceFileName: String?
+    var filters: [HeadphoneEQFilter]
+
+    init(
+        isEnabled: Bool = false,
+        profileName: String = "",
+        sourceFileName: String? = nil,
+        filters: [HeadphoneEQFilter] = []
+    ) {
+        self.isEnabled = isEnabled
+        self.profileName = profileName
+        self.sourceFileName = sourceFileName
+        self.filters = filters
+    }
+
+    var hasProfile: Bool { !filters.isEmpty }
+
+    static let empty = HeadphoneEQSettings()
+}
+
+enum AutoEQPEQParser {
+    private enum Constants {
+        static let maxSupportedFilters = 24
+        static let peqLinePattern =
+            #"(?i)^\s*filter\s+\d+\s*:\s*on\s+([a-z]+)\s+fc\s+([+-]?(?:\d+\.?\d*|\.\d+))\s*hz\s+gain\s+([+-]?(?:\d+\.?\d*|\.\d+))\s*dB\s+q\s+([+-]?(?:\d+\.?\d*|\.\d+))"#
+    }
+
+    enum ParseError: LocalizedError {
+        case unreadableFile
+        case unsupportedFormat
+
+        var errorDescription: String? {
+            switch self {
+            case .unreadableFile:
+                return "Could not read AutoEQ file."
+            case .unsupportedFormat:
+                return "No supported ParametricEQ filters were found."
+            }
+        }
+    }
+
+    private static let lineRegex = try! NSRegularExpression(pattern: Constants.peqLinePattern)
+
+    static func parseFile(at url: URL) throws -> HeadphoneEQSettings {
+        let didStartSecurityScope = url.startAccessingSecurityScopedResource()
+        defer {
+            if didStartSecurityScope {
+                url.stopAccessingSecurityScopedResource()
+            }
+        }
+
+        let data = try Data(contentsOf: url)
+        guard let text = String(data: data, encoding: .utf8) ?? String(data: data, encoding: .ascii) else {
+            throw ParseError.unreadableFile
+        }
+
+        let fallbackName = url.deletingPathExtension().lastPathComponent
+        return try parseText(text, fallbackProfileName: fallbackName, sourceFileName: url.lastPathComponent)
+    }
+
+    static func parseText(
+        _ text: String,
+        fallbackProfileName: String,
+        sourceFileName: String? = nil
+    ) throws -> HeadphoneEQSettings {
+        var filters: [HeadphoneEQFilter] = []
+        filters.reserveCapacity(10)
+
+        for line in text.components(separatedBy: .newlines) {
+            if filters.count >= Constants.maxSupportedFilters { break }
+
+            let nsLine = line as NSString
+            let range = NSRange(location: 0, length: nsLine.length)
+            guard let match = lineRegex.firstMatch(in: line, options: [], range: range),
+                  match.numberOfRanges == 5 else {
+                continue
+            }
+
+            let type = nsLine.substring(with: match.range(at: 1)).lowercased()
+            guard type == "pk" || type == "peq" || type == "peak" else {
+                continue
+            }
+
+            let freqString = nsLine.substring(with: match.range(at: 2))
+            let gainString = nsLine.substring(with: match.range(at: 3))
+            let qString = nsLine.substring(with: match.range(at: 4))
+
+            guard let frequency = Double(freqString),
+                  let gain = Float(gainString),
+                  let q = Double(qString),
+                  frequency > 0, q > 0 else {
+                continue
+            }
+
+            filters.append(HeadphoneEQFilter(frequencyHz: frequency, gainDB: gain, q: q))
+        }
+
+        guard !filters.isEmpty else {
+            throw ParseError.unsupportedFormat
+        }
+
+        return HeadphoneEQSettings(
+            isEnabled: true,
+            profileName: fallbackProfileName,
+            sourceFileName: sourceFileName,
+            filters: filters
+        )
+    }
+}

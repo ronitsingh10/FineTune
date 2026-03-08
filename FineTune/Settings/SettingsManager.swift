@@ -64,9 +64,10 @@ final class SettingsManager {
     private var saveTask: Task<Void, Never>?
     private let settingsURL: URL
     private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "FineTune", category: "SettingsManager")
+    private static let allowedMaxVolumeBoostValues: [Float] = [1.0, 2.0, 3.0, 4.0]
 
     struct Settings: Codable {
-        var version: Int = 8
+        var version: Int = 9
         var appVolumes: [String: Float] = [:]
         var appDeviceRouting: [String: String] = [:]  // bundleID → deviceUID
         var appMutes: [String: Bool] = [:]  // bundleID → isMuted
@@ -93,6 +94,8 @@ final class SettingsManager {
         var preferredDeviceSampleRates: [String: Double] = [:]
         // Device-wide EQ settings keyed by output device UID
         var deviceEQSettings: [String: EQSettings] = [:]
+        // Device-specific headphone AutoEQ settings keyed by output device UID
+        var deviceHeadphoneEQSettings: [String: HeadphoneEQSettings] = [:]
 
         // Apps excluded from FineTune processing and UI
         var excludedAppIdentifiers: Set<String> = []
@@ -103,6 +106,11 @@ final class SettingsManager {
         self.settingsURL = baseDir.appendingPathComponent("settings.json")
         self.settings = Settings()
         loadFromDisk()
+        let normalized = Self.normalizedMaxVolumeBoost(settings.appSettings.maxVolumeBoost)
+        if abs(settings.appSettings.maxVolumeBoost - normalized) > 0.0001 {
+            settings.appSettings.maxVolumeBoost = normalized
+            scheduleSave()
+        }
     }
 
     func getVolume(for identifier: String) -> Float? {
@@ -162,6 +170,19 @@ final class SettingsManager {
 
     func setDeviceEQSettings(_ eqSettings: EQSettings, for deviceUID: String) {
         settings.deviceEQSettings[deviceUID] = eqSettings
+        scheduleSave()
+    }
+
+    func getDeviceHeadphoneEQSettings(for deviceUID: String) -> HeadphoneEQSettings {
+        settings.deviceHeadphoneEQSettings[deviceUID] ?? .empty
+    }
+
+    func setDeviceHeadphoneEQSettings(_ headphoneSettings: HeadphoneEQSettings, for deviceUID: String) {
+        if headphoneSettings.filters.isEmpty {
+            settings.deviceHeadphoneEQSettings.removeValue(forKey: deviceUID)
+        } else {
+            settings.deviceHeadphoneEQSettings[deviceUID] = headphoneSettings
+        }
         scheduleSave()
     }
 
@@ -361,11 +382,14 @@ final class SettingsManager {
     }
 
     func updateAppSettings(_ newSettings: AppSettings) {
+        var normalizedSettings = newSettings
+        normalizedSettings.maxVolumeBoost = Self.normalizedMaxVolumeBoost(newSettings.maxVolumeBoost)
+
         // Handle launch at login separately via ServiceManagement
-        if newSettings.launchAtLogin != settings.appSettings.launchAtLogin {
-            setLaunchAtLogin(newSettings.launchAtLogin)
+        if normalizedSettings.launchAtLogin != settings.appSettings.launchAtLogin {
+            setLaunchAtLogin(normalizedSettings.launchAtLogin)
         }
-        settings.appSettings = newSettings
+        settings.appSettings = normalizedSettings
         scheduleSave()
     }
 
@@ -409,6 +433,7 @@ final class SettingsManager {
         settings.hiddenInputDeviceUIDs.removeAll()
         settings.preferredDeviceSampleRates.removeAll()
         settings.deviceEQSettings.removeAll()
+        settings.deviceHeadphoneEQSettings.removeAll()
         settings.excludedAppIdentifiers.removeAll()
 
         // Also unregister from launch at login
@@ -479,5 +504,12 @@ final class SettingsManager {
         let directory = url.deletingLastPathComponent()
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         try data.write(to: url, options: .atomic)
+    }
+
+    private static func normalizedMaxVolumeBoost(_ value: Float) -> Float {
+        guard let closest = allowedMaxVolumeBoostValues.min(by: { abs($0 - value) < abs($1 - value) }) else {
+            return 2.0
+        }
+        return closest
     }
 }

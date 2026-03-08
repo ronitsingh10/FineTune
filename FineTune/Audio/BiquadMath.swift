@@ -70,4 +70,36 @@ enum BiquadMath {
 
         return allCoeffs
     }
+
+    /// Compute coefficients for arbitrary parametric filters.
+    /// Returns flattened [b0,b1,b2,a1,a2] per filter section for vDSP_biquad.
+    static func coefficientsForParametricFilters(
+        filters: [HeadphoneEQFilter],
+        sampleRate: Double
+    ) -> [Double] {
+        guard !filters.isEmpty else { return [] }
+
+        var allCoeffs: [Double] = []
+        allCoeffs.reserveCapacity(filters.count * 5)
+
+        for filter in filters {
+            guard filter.frequencyHz > 0, filter.q > 0 else { continue }
+
+            // Filter sections at/above Nyquist are bypassed.
+            if filter.frequencyHz >= sampleRate / 2.0 {
+                allCoeffs.append(contentsOf: [1.0, 0.0, 0.0, 0.0, 0.0])
+                continue
+            }
+
+            let coeffs = peakingEQCoefficients(
+                frequency: filter.frequencyHz,
+                gainDB: filter.gainDB,
+                q: filter.q,
+                sampleRate: sampleRate
+            )
+            allCoeffs.append(contentsOf: coeffs)
+        }
+
+        return allCoeffs
+    }
 }
