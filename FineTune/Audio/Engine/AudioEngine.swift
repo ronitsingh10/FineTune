@@ -24,6 +24,12 @@ final class AudioEngine {
     private var appDeviceRouting: [pid_t: String] = [:]  // pid → deviceUID (always explicit)
     private var followsDefault: Set<pid_t> = []  // Apps that follow system default
     private var pendingCleanup: [pid_t: Task<Void, Never>] = [:]  // Grace period for stale tap cleanup
+    private var pendingStaleCleanupTask: Task<Void, Never>?
+    private var tapHealthMonitorTask: Task<Void, Never>?
+    private var tapHealthMissesByPID: [pid_t: Int] = [:]
+    private var tapRecoveryCooldownUntilByPID: [pid_t: Date] = [:]
+    private var eqSupportByOutputDevice: [AudioDeviceID: Bool] = [:]
+    private var eqUnavailableReasonByOutputDevice: [AudioDeviceID: String] = [:]
     private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "FineTune", category: "AudioEngine")
 
     // MARK: - Input Device Lock State
@@ -39,6 +45,8 @@ final class AudioEngine {
 
     /// Extended grace period for Bluetooth devices (firmware handshake takes longer)
     private let btAutoSwitchGracePeriod: TimeInterval = 5.0
+    private let staleCleanupDebounceNs: UInt64 = 350_000_000
+    private let staleTapPurgeDelayMs: UInt64 = 30_000
 
     /// UIDs of priority-based default overrides pending echo suppression (handles rapid disconnects)
     private var pendingPriorityOverrideUIDs: Set<String> = []
@@ -224,8 +232,11 @@ final class AudioEngine {
             }
 
             processMonitor.onAppsChanged = { [weak self] _ in
-                self?.cleanupStaleTaps()
                 self?.applyPersistedSettings()
+                self?.scheduleStaleCleanupWork()
+            }
+            processMonitor.hasActiveTapForPID = { [weak self] pid in
+                self?.taps[pid] != nil
             }
 
             deviceMonitor.onDeviceDisconnected = { [weak self] deviceUID, deviceName in
@@ -260,6 +271,7 @@ final class AudioEngine {
             }
 
             applyPersistedSettings()
+            startTapHealthMonitorIfNeeded()
             registerNewDevicesInPriority()
             lastKnownDefaultDeviceUID = deviceVolumeMonitor.defaultDeviceUID
             lastKnownDefaultInputDeviceUID = deviceVolumeMonitor.defaultInputDeviceUID
@@ -280,7 +292,9 @@ final class AudioEngine {
     /// Combined list of active apps and pinned inactive apps for UI display.
     /// Pinned apps appear first (sorted alphabetically), then unpinned active apps (sorted alphabetically).
     var displayableApps: [DisplayableApp] {
-        let activeApps = apps
+        // UI visibility should reflect liveness immediately. Tap cleanup is allowed
+        // to lag behind (stale grace), but dead processes should not remain visible.
+        let activeApps = processMonitor.activeApps
         let activeIdentifiers = Set(activeApps.map { $0.persistenceIdentifier })
 
         // Get pinned apps that are not currently active
@@ -425,6 +439,7 @@ final class AudioEngine {
         processMonitor.start()
         deviceMonitor.start()
         applyPersistedSettings()
+        startTapHealthMonitorIfNeeded()
 
         // Restore locked input device if feature is enabled
         if settingsManager.appSettings.lockInputDevice {
@@ -435,6 +450,10 @@ final class AudioEngine {
     }
 
     func stop() {
+        pendingStaleCleanupTask?.cancel()
+        pendingStaleCleanupTask = nil
+        tapHealthMonitorTask?.cancel()
+        tapHealthMonitorTask = nil
         processMonitor.stop()
         deviceMonitor.stop()
         for tap in taps.values {
@@ -453,7 +472,98 @@ final class AudioEngine {
         logger.info("AudioEngine shutdown complete")
     }
 
+    private func scheduleStaleCleanupWork() {
+        pendingStaleCleanupTask?.cancel()
+        pendingStaleCleanupTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            try? await Task.sleep(nanoseconds: staleCleanupDebounceNs)
+            guard !Task.isCancelled else { return }
+            self.cleanupStaleTaps()
+        }
+    }
+
+    private func startTapHealthMonitorIfNeeded() {
+        guard tapHealthMonitorTask == nil else { return }
+        tapHealthMonitorTask = Task { @MainActor [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 2_000_000_000)
+                guard let self, !Task.isCancelled else { return }
+                self.recoverUnhealthyActiveTaps()
+            }
+        }
+    }
+
+    /// Recreates active taps that silently stop receiving callbacks while the app remains active.
+    /// This targets in-playback non-helper dropouts where tap resources can disconnect without PID churn.
+    private func recoverUnhealthyActiveTaps() {
+        let now = Date()
+        let activePIDs = Set(apps.map(\.id))
+        tapHealthMissesByPID = tapHealthMissesByPID.filter { activePIDs.contains($0.key) }
+        tapRecoveryCooldownUntilByPID = tapRecoveryCooldownUntilByPID.filter { activePIDs.contains($0.key) }
+
+        var recreatedAny = false
+
+        for app in apps {
+            guard !isExcluded(app), let tap = taps[app.id] else { continue }
+
+            if shouldRecreateTap(existingTap: tap, for: app) {
+                logger.info("Recreating tap for \(app.name) due to process object identity change")
+                tap.invalidate()
+                taps.removeValue(forKey: app.id)
+                appliedPIDs.remove(app.id)
+                tapHealthMissesByPID[app.id] = 0
+                tapRecoveryCooldownUntilByPID[app.id] = now.addingTimeInterval(20)
+                recreatedAny = true
+                continue
+            }
+
+            // Skip muted apps; no-audio callbacks while muted are not a useful health signal.
+            if volumeState.getMute(for: app.id) {
+                tapHealthMissesByPID[app.id] = 0
+                continue
+            }
+
+            guard tap.isHealthCheckEligible(minActiveSeconds: 8.0) else {
+                tapHealthMissesByPID[app.id] = 0
+                continue
+            }
+
+            if let cooldownUntil = tapRecoveryCooldownUntilByPID[app.id], cooldownUntil > now {
+                tapHealthMissesByPID[app.id] = 0
+                continue
+            }
+
+            if tap.hasRecentAudioCallback(within: 2.5) {
+                tapHealthMissesByPID[app.id] = 0
+                continue
+            }
+
+            let misses = (tapHealthMissesByPID[app.id] ?? 0) + 1
+            tapHealthMissesByPID[app.id] = misses
+
+            // Require multiple consecutive missed heartbeats before touching HAL.
+            if misses >= 3 {
+                logger.warning("Recreating tap for \(app.name) after \(misses) missed callback heartbeats")
+                tap.invalidate()
+                taps.removeValue(forKey: app.id)
+                appliedPIDs.remove(app.id)
+                tapHealthMissesByPID[app.id] = 0
+                tapRecoveryCooldownUntilByPID[app.id] = now.addingTimeInterval(20)
+                recreatedAny = true
+            }
+        }
+
+        // Re-apply persisted settings only if we invalidated at least one tap.
+        if recreatedAny {
+            applyPersistedSettings()
+        }
+    }
+
     func setVolume(for app: AudioApp, to volume: Float) {
+        let currentVolume = volumeState.getVolume(for: app.id)
+        if abs(currentVolume - volume) <= 0.0005 {
+            return
+        }
         volumeState.setVolume(for: app.id, to: volume, identifier: app.persistenceIdentifier)
         if let deviceUID = appDeviceRouting[app.id] {
             ensureTapExists(for: app, deviceUID: deviceUID)
@@ -827,6 +937,20 @@ final class AudioEngine {
         }
     }
 
+    /// CoreAudio can rotate process object IDs while PID remains stable.
+    /// Existing taps bound to stale object IDs may stop processing until recreated.
+    private func shouldRecreateTap(existingTap: ProcessTapController, for app: AudioApp) -> Bool {
+        if existingTap.app.objectID != app.objectID {
+            return true
+        }
+        let currentObjectIDs = existingTap.app.processObjectIDs.sorted()
+        let latestObjectIDs = app.processObjectIDs.sorted()
+        if currentObjectIDs != latestObjectIDs {
+            return true
+        }
+        return false
+    }
+
     private func ensureTapExists(for app: AudioApp, deviceUID: String) {
         guard taps[app.id] == nil else { return }
 
@@ -1172,7 +1296,7 @@ final class AudioEngine {
             guard pendingCleanup[pid] == nil else { continue }  // Already pending
 
             pendingCleanup[pid] = Task { @MainActor in
-                try? await Task.sleep(for: .milliseconds(500))
+                try? await Task.sleep(for: .milliseconds(staleTapPurgeDelayMs))
                 guard !Task.isCancelled else { return }
 
                 // Double-check still stale
