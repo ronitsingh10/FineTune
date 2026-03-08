@@ -7,7 +7,7 @@ enum DeviceSelection: Equatable {
     case device(String)  // deviceUID
 }
 
-/// A styled device picker dropdown with "System Audio" option and single/multi mode support
+/// A styled device picker dropdown with "System" option and single/multi mode support
 struct DevicePicker: View {
     let devices: [AudioDevice]
     let selectedDeviceUID: String  // For single mode
@@ -29,8 +29,8 @@ struct DevicePicker: View {
     @State private var currentSelectedUIDs: Set<String> = []
 
     // Configuration
-    private let triggerWidth: CGFloat = 128
-    private let popoverWidth: CGFloat = 210
+    private let triggerWidth: CGFloat = 94
+    private let popoverWidth: CGFloat = 168
     private let itemHeight: CGFloat = 26
     private let itemSpacing: CGFloat = 2
     private let cornerRadius: CGFloat = 8
@@ -49,7 +49,7 @@ struct DevicePicker: View {
 
         var name: String {
             switch self {
-            case .systemAudio: return "System Audio"
+            case .systemAudio: return "System"
             case .device(let device): return device.name
             }
         }
@@ -84,7 +84,7 @@ struct DevicePicker: View {
     /// Text for single-mode display (also used as fallback for empty multi-mode)
     private var singleModeText: String {
         if isFollowingDefault {
-            return "System Audio"
+            return "System"
         } else if let device = devices.first(where: { $0.uid == selectedDeviceUID }) {
             return device.name
         }
@@ -172,7 +172,7 @@ struct DevicePicker: View {
                     .rotationEffect(.degrees(isExpanded ? -180 : 0))
                     .animation(.easeInOut(duration: 0.25), value: isExpanded)
             }
-            .padding(.horizontal, DesignTokens.Spacing.sm)
+            .padding(.horizontal, DesignTokens.Spacing.xs)
             .padding(.vertical, 4)
             .frame(width: triggerWidth)
             .contentShape(Rectangle())
@@ -407,7 +407,7 @@ private struct DevicePickerRow: View {
         switch item {
         case .systemAudio:
             VStack(alignment: .leading, spacing: 1) {
-                Text("System Audio")
+                Text("System")
                 if isDisabled {
                     Text("Not available in multi mode")
                         .font(DesignTokens.Typography.caption)

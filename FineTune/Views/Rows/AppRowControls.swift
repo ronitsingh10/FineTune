@@ -43,56 +43,59 @@ struct AppRowControls: View {
     }
 
     var body: some View {
-        HStack(spacing: DesignTokens.Spacing.sm) {
-            // Mute button
-            MuteButton(isMuted: showMutedIcon) {
-                if showMutedIcon {
-                    if volume == 0 {
-                        onVolumeChange(1.0)
+        HStack(spacing: 6) {
+            HStack(spacing: 7) {
+                // Mute button
+                MuteButton(isMuted: showMutedIcon, levelFraction: sliderValue) {
+                    if showMutedIcon {
+                        if volume == 0 {
+                            onVolumeChange(1.0)
+                        }
+                        onMuteChange(false)
+                    } else {
+                        onMuteChange(true)
                     }
-                    onMuteChange(false)
-                } else {
-                    onMuteChange(true)
                 }
-            }
 
-            // Volume slider
-            LiquidGlassSlider(
-                value: Binding(
-                    get: { sliderValue },
-                    set: { newValue in
-                        dragOverrideValue = newValue
-                        let gain = VolumeMapping.sliderToGain(newValue, maxBoost: maxVolumeBoost)
-                        onVolumeChange(gain)
-                        if isMuted {
-                            onMuteChange(false)
+                // Volume slider
+                LiquidGlassSlider(
+                    value: Binding(
+                        get: { sliderValue },
+                        set: { newValue in
+                            let snappedValue = snappedToUnityIfNeeded(newValue)
+                            dragOverrideValue = snappedValue
+                            let gain = VolumeMapping.sliderToGain(snappedValue, maxBoost: maxVolumeBoost)
+                            onVolumeChange(gain)
+                            if isMuted {
+                                onMuteChange(false)
+                            }
+                        }
+                    ),
+                    showUnityMarker: shouldShowUnityNotch,
+                    onEditingChanged: { editing in
+                        if !editing {
+                            dragOverrideValue = nil
                         }
                     }
-                ),
-                showUnityMarker: true,
-                onEditingChanged: { editing in
-                    if !editing {
-                        dragOverrideValue = nil
-                    }
-                }
-            )
-            .frame(width: DesignTokens.Dimensions.sliderWidth)
-            .opacity(showMutedIcon ? 0.5 : 1.0)
+                )
+                .frame(width: DesignTokens.Dimensions.sliderWidth)
+                .opacity(showMutedIcon ? 0.5 : 1.0)
 
-            // Editable volume percentage
-            EditablePercentage(
-                percentage: Binding(
-                    get: {
-                        let gain = VolumeMapping.sliderToGain(sliderValue, maxBoost: maxVolumeBoost)
-                        return Int(round(gain * 100))
-                    },
-                    set: { newPercentage in
-                        let gain = Float(newPercentage) / 100.0
-                        onVolumeChange(gain)
-                    }
-                ),
-                range: 0...Int(round(maxVolumeBoost * 100))
-            )
+                // Editable volume percentage
+                EditablePercentage(
+                    percentage: Binding(
+                        get: {
+                            let gain = VolumeMapping.sliderToGain(sliderValue, maxBoost: maxVolumeBoost)
+                            return Int(round(gain * 100))
+                        },
+                        set: { newPercentage in
+                            let gain = Float(newPercentage) / 100.0
+                            onVolumeChange(gain)
+                        }
+                    ),
+                    range: 0...Int(round(maxVolumeBoost * 100))
+                )
+            }
 
             // VU Meter
             VUMeter(level: audioLevel, isMuted: showMutedIcon)
@@ -111,35 +114,8 @@ struct AppRowControls: View {
                 onSelectFollowDefault: onSelectFollowDefault,
                 showModeToggle: true
             )
-
-            // EQ button
-            Button {
-                onEQToggle()
-            } label: {
-                ZStack {
-                    Image(systemName: "slider.vertical.3")
-                        .opacity(isEQExpanded ? 0 : 1)
-                        .rotationEffect(.degrees(isEQExpanded ? 90 : 0))
-
-                    Image(systemName: "xmark")
-                        .opacity(isEQExpanded ? 1 : 0)
-                        .rotationEffect(.degrees(isEQExpanded ? 0 : -90))
-                }
-                .font(.system(size: 12))
-                .symbolRenderingMode(.hierarchical)
-                .foregroundStyle(eqButtonColor)
-                .frame(
-                    minWidth: DesignTokens.Dimensions.minTouchTarget,
-                    minHeight: DesignTokens.Dimensions.minTouchTarget
-                )
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .onHover { isEQButtonHovered = $0 }
-            .help(isEQExpanded ? "Close Equalizer" : "Equalizer")
-            .animation(.spring(response: 0.3, dampingFraction: 0.75), value: isEQExpanded)
-            .animation(DesignTokens.Animation.hover, value: isEQButtonHovered)
+            .padding(.leading, 6)
         }
-        .frame(width: DesignTokens.Dimensions.controlsWidth)
+        .fixedSize(horizontal: true, vertical: false)
     }
 }

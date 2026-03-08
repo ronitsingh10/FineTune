@@ -181,7 +181,7 @@ enum DesignTokens {
         // MARK: Base Configuration
 
         /// Main popup width
-        static let popupWidth: CGFloat = 580
+        static let popupWidth: CGFloat = 520
 
         /// Content padding
         static var contentPadding: CGFloat { Spacing.lg }
@@ -236,7 +236,7 @@ enum DesignTokens {
         // MARK: Component Widths
 
         /// Slider width
-        static let sliderWidth: CGFloat = 140
+        static let sliderWidth: CGFloat = 118
 
         /// Minimum slider width
         static let sliderMinWidth: CGFloat = 120
@@ -246,7 +246,9 @@ enum DesignTokens {
 
         /// Controls section width
         static var controlsWidth: CGFloat {
-            contentWidth - iconSize - Spacing.sm - 100
+            // Sized to actual app controls footprint so rows don't leave excess
+            // trailing space to the right of the device picker.
+            sliderWidth + percentageWidth + vuMeterWidth + 92 + minTouchTarget + (Spacing.sm * 2)
         }
 
         /// Percentage text width (fixed to prevent layout shift)

@@ -271,21 +271,6 @@ struct MenuBarPopupView: View {
         } else {
             appsSection
         }
-
-        Divider()
-            .padding(.vertical, DesignTokens.Spacing.xs)
-
-        // Quit button
-        HStack {
-            Spacer()
-            Button("Quit FineTune") {
-                NSApplication.shared.terminate(nil)
-            }
-            .buttonStyle(.plain)
-            .font(DesignTokens.Typography.caption)
-            .foregroundStyle(DesignTokens.Colors.textSecondary)
-            .glassButtonStyle()
-        }
     }
 
     // MARK: - Default Devices Status

@@ -155,20 +155,19 @@ struct DeviceRow: View {
                     }
                 }
 
-                // Volume slider (Liquid Glass)
-                LiquidGlassSlider(
-                    value: $sliderValue,
-                    onEditingChanged: { editing in
-                        isEditing = editing
-                    }
-                )
-                .opacity(showMutedIcon ? 0.5 : 1.0)
-                .onChange(of: sliderValue) { _, newValue in
-                    onVolumeChange(Float(newValue))
-                    // Auto-unmute when slider moved while muted
-                    if isMuted && newValue > 0 {
-                        onMuteToggle()
-                    }
+                Button {
+                    guard canUseEQ else { return }
+                    onEQToggle()
+                } label: {
+                    Image(systemName: "slider.vertical.3")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(
+                            canUseEQ
+                                ? (isEQExpanded ? DesignTokens.Colors.textPrimary : DesignTokens.Colors.textSecondary)
+                                : DesignTokens.Colors.textTertiary
+                        )
+                        .frame(width: 18, height: 18)
+                        .contentShape(Rectangle())
                 }
 
                 // Editable volume percentage
@@ -180,6 +179,24 @@ struct DeviceRow: View {
                     range: 0...100
                 )
             }
+            .frame(height: DesignTokens.Dimensions.rowContentHeight)
+        } expandedContent: {
+            EQPanelView(
+                settings: $localEQSettings,
+                onPresetSelected: { preset in
+                    var updated = preset.settings
+                    updated.isEnabled = localEQSettings.isEnabled
+                    localEQSettings = updated
+                    onEQChange(localEQSettings)
+                },
+                onSettingsChanged: { updated in
+                    localEQSettings = updated
+                    onEQChange(updated)
+                },
+                isUsingDeviceEQ: true,
+                onUseDeviceEQ: nil
+            )
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
         .frame(height: DesignTokens.Dimensions.rowContentHeight)
         .onChange(of: volume) { _, newValue in

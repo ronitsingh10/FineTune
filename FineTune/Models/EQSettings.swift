@@ -16,7 +16,7 @@ struct EQSettings: Codable, Equatable {
     /// Whether EQ processing is enabled
     var isEnabled: Bool
 
-    init(bandGains: [Float] = Array(repeating: 0, count: 10), isEnabled: Bool = true) {
+    init(bandGains: [Float] = Array(repeating: 0, count: 10), isEnabled: Bool = false) {
         self.bandGains = bandGains
         self.isEnabled = isEnabled
     }
