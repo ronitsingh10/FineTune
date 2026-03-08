@@ -9,8 +9,10 @@ struct DeviceEditRow: View {
     let priorityIndex: Int
     let isDefault: Bool
     let isInputDevice: Bool
+    let isHidden: Bool
     let deviceCount: Int
     let onReorder: (Int) -> Void
+    let onToggleHidden: () -> Void
 
     @State private var copied = false
 
@@ -62,6 +64,32 @@ struct DeviceEditRow: View {
                             .fill(.white.opacity(0.1))
                     )
             }
+
+            if isHidden {
+                Text("HIDDEN")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(DesignTokens.Colors.textSecondary)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(
+                        Capsule()
+                            .fill(.white.opacity(0.08))
+                    )
+            }
+
+            Button(isHidden ? "Show" : "Hide") {
+                onToggleHidden()
+            }
+            .buttonStyle(.plain)
+            .font(.system(size: 11, weight: .semibold))
+            .foregroundStyle(isHidden ? DesignTokens.Colors.interactiveDefault : DesignTokens.Colors.textSecondary)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(
+                Capsule()
+                    .fill(.white.opacity(0.08))
+            )
+            .help(isHidden ? "Show this device in normal view" : "Hide this device from normal view")
 
             // Copy UID button (always at far right)
             Button {

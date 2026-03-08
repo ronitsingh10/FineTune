@@ -70,7 +70,6 @@ final class SettingsManager {
         var appVolumes: [String: Float] = [:]
         var appDeviceRouting: [String: String] = [:]  // bundleID → deviceUID
         var appMutes: [String: Bool] = [:]  // bundleID → isMuted
-        var appEQSettings: [String: EQSettings] = [:]  // bundleID → EQ settings
         var appSettings: AppSettings = AppSettings()  // App-wide settings
         var systemSoundsFollowsDefault: Bool = true  // Whether system sounds follows macOS default
         var appDeviceSelectionMode: [String: DeviceSelectionMode] = [:]  // bundleID → selection mode
@@ -87,35 +86,16 @@ final class SettingsManager {
         // Device priority (ordered device UIDs, highest priority first)
         var outputDevicePriority: [String] = []
         var inputDevicePriority: [String] = []
+        var hiddenOutputDeviceUIDs: Set<String> = []
+        var hiddenInputDeviceUIDs: Set<String> = []
 
-        // Per-device AutoEQ headphone correction
-        var deviceAutoEQ: [String: AutoEQSelection] = [:]  // deviceUID → selection
-        var favoriteAutoEQProfiles: Set<String> = []  // profile IDs
+        // Preferred nominal sample rate per device UID
+        var preferredDeviceSampleRates: [String: Double] = [:]
+        // Device-wide EQ settings keyed by output device UID
+        var deviceEQSettings: [String: EQSettings] = [:]
 
-        init() {}
-
-        init(from decoder: Decoder) throws {
-            let c = try decoder.container(keyedBy: CodingKeys.self)
-            version = try c.decodeIfPresent(Int.self, forKey: .version) ?? 8
-            appVolumes = try c.decodeIfPresent([String: Float].self, forKey: .appVolumes) ?? [:]
-            appDeviceRouting = try c.decodeIfPresent([String: String].self, forKey: .appDeviceRouting) ?? [:]
-            appMutes = try c.decodeIfPresent([String: Bool].self, forKey: .appMutes) ?? [:]
-            appEQSettings = try c.decodeIfPresent([String: EQSettings].self, forKey: .appEQSettings) ?? [:]
-            appSettings = try c.decodeIfPresent(AppSettings.self, forKey: .appSettings) ?? AppSettings()
-            systemSoundsFollowsDefault = try c.decodeIfPresent(Bool.self, forKey: .systemSoundsFollowsDefault) ?? true
-            appDeviceSelectionMode = try c.decodeIfPresent([String: DeviceSelectionMode].self, forKey: .appDeviceSelectionMode) ?? [:]
-            appSelectedDeviceUIDs = try c.decodeIfPresent([String: [String]].self, forKey: .appSelectedDeviceUIDs) ?? [:]
-            lockedInputDeviceUID = try c.decodeIfPresent(String.self, forKey: .lockedInputDeviceUID)
-            pinnedApps = try c.decodeIfPresent(Set<String>.self, forKey: .pinnedApps) ?? []
-            pinnedAppInfo = try c.decodeIfPresent([String: PinnedAppInfo].self, forKey: .pinnedAppInfo) ?? [:]
-            ddcVolumes = try c.decodeIfPresent([String: Int].self, forKey: .ddcVolumes) ?? [:]
-            ddcMuteStates = try c.decodeIfPresent([String: Bool].self, forKey: .ddcMuteStates) ?? [:]
-            ddcSavedVolumes = try c.decodeIfPresent([String: Int].self, forKey: .ddcSavedVolumes) ?? [:]
-            outputDevicePriority = try c.decodeIfPresent([String].self, forKey: .outputDevicePriority) ?? []
-            inputDevicePriority = try c.decodeIfPresent([String].self, forKey: .inputDevicePriority) ?? []
-            deviceAutoEQ = try c.decodeIfPresent([String: AutoEQSelection].self, forKey: .deviceAutoEQ) ?? [:]
-            favoriteAutoEQProfiles = try c.decodeIfPresent(Set<String>.self, forKey: .favoriteAutoEQProfiles) ?? []
-        }
+        // Apps excluded from FineTune processing and UI
+        var excludedAppIdentifiers: Set<String> = []
     }
 
     init(directory: URL? = nil) {
@@ -176,13 +156,21 @@ final class SettingsManager {
         scheduleSave()
     }
 
-    func getEQSettings(for appIdentifier: String) -> EQSettings {
-        return settings.appEQSettings[appIdentifier] ?? EQSettings.flat
+    func getDeviceEQSettings(for deviceUID: String) -> EQSettings {
+        settings.deviceEQSettings[deviceUID] ?? EQSettings.flat
     }
 
-    func setEQSettings(_ eqSettings: EQSettings, for appIdentifier: String) {
-        settings.appEQSettings[appIdentifier] = eqSettings
+    func setDeviceEQSettings(_ eqSettings: EQSettings, for deviceUID: String) {
+        settings.deviceEQSettings[deviceUID] = eqSettings
         scheduleSave()
+    }
+
+    /// Resolves effective EQ for an app using device-level EQ only.
+    func getEffectiveEQSettings(deviceUID: String?) -> EQSettings {
+        if let deviceUID {
+            return settings.deviceEQSettings[deviceUID] ?? EQSettings.flat
+        }
+        return EQSettings.flat
     }
 
     // MARK: - Device Selection Mode
@@ -303,33 +291,67 @@ final class SettingsManager {
         scheduleSave()
     }
 
-    // MARK: - Per-Device AutoEQ
+    // MARK: - Hidden Devices
 
-    func getAutoEQSelection(for deviceUID: String) -> AutoEQSelection? {
-        settings.deviceAutoEQ[deviceUID]
+    func isOutputDeviceHidden(_ uid: String) -> Bool {
+        settings.hiddenOutputDeviceUIDs.contains(uid)
     }
 
-    func setAutoEQSelection(for deviceUID: String, to selection: AutoEQSelection?) {
-        settings.deviceAutoEQ[deviceUID] = selection
+    func isInputDeviceHidden(_ uid: String) -> Bool {
+        settings.hiddenInputDeviceUIDs.contains(uid)
+    }
+
+    func setOutputDeviceHidden(_ uid: String, hidden: Bool) {
+        if hidden {
+            settings.hiddenOutputDeviceUIDs.insert(uid)
+        } else {
+            settings.hiddenOutputDeviceUIDs.remove(uid)
+        }
         scheduleSave()
     }
 
-    func favoriteAutoEQProfile(id: String) {
-        settings.favoriteAutoEQProfiles.insert(id)
+    func setInputDeviceHidden(_ uid: String, hidden: Bool) {
+        if hidden {
+            settings.hiddenInputDeviceUIDs.insert(uid)
+        } else {
+            settings.hiddenInputDeviceUIDs.remove(uid)
+        }
         scheduleSave()
     }
 
-    func unfavoriteAutoEQProfile(id: String) {
-        settings.favoriteAutoEQProfiles.remove(id)
+    // MARK: - Device Sample Rate Preferences
+
+    func getPreferredSampleRate(for deviceUID: String) -> Double? {
+        settings.preferredDeviceSampleRates[deviceUID]
+    }
+
+    func setPreferredSampleRate(for deviceUID: String, to rate: Double?) {
+        if let rate {
+            settings.preferredDeviceSampleRates[deviceUID] = rate
+        } else {
+            settings.preferredDeviceSampleRates.removeValue(forKey: deviceUID)
+        }
         scheduleSave()
     }
 
-    func isAutoEQFavorite(id: String) -> Bool {
-        settings.favoriteAutoEQProfiles.contains(id)
+    // MARK: - Excluded Apps
+
+    func isExcludedApp(_ identifier: String) -> Bool {
+        settings.excludedAppIdentifiers.contains(identifier)
     }
 
-    var favoriteAutoEQProfileIDs: Set<String> {
-        settings.favoriteAutoEQProfiles
+    func excludeApp(_ identifier: String) {
+        settings.excludedAppIdentifiers.insert(identifier)
+        scheduleSave()
+    }
+
+    func includeApp(_ identifier: String) {
+        settings.excludedAppIdentifiers.remove(identifier)
+        scheduleSave()
+    }
+
+    func excludedApps() -> [String] {
+        Array(settings.excludedAppIdentifiers).sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
     }
 
     // MARK: - App-Wide Settings
@@ -373,7 +395,6 @@ final class SettingsManager {
         settings.appVolumes.removeAll()
         settings.appDeviceRouting.removeAll()
         settings.appMutes.removeAll()
-        settings.appEQSettings.removeAll()
         settings.pinnedApps.removeAll()
         settings.pinnedAppInfo.removeAll()
         settings.appSettings = AppSettings()
@@ -384,10 +405,11 @@ final class SettingsManager {
         settings.ddcSavedVolumes.removeAll()
         settings.outputDevicePriority.removeAll()
         settings.inputDevicePriority.removeAll()
-        settings.deviceAutoEQ.removeAll()
-        settings.favoriteAutoEQProfiles.removeAll()
-        settings.appDeviceSelectionMode.removeAll()
-        settings.appSelectedDeviceUIDs.removeAll()
+        settings.hiddenOutputDeviceUIDs.removeAll()
+        settings.hiddenInputDeviceUIDs.removeAll()
+        settings.preferredDeviceSampleRates.removeAll()
+        settings.deviceEQSettings.removeAll()
+        settings.excludedAppIdentifiers.removeAll()
 
         // Also unregister from launch at login
         try? SMAppService.mainApp.unregister()
@@ -402,7 +424,7 @@ final class SettingsManager {
         do {
             let data = try Data(contentsOf: settingsURL)
             settings = try JSONDecoder().decode(Settings.self, from: data)
-            logger.debug("Loaded settings with \(self.settings.appVolumes.count) volumes, \(self.settings.appDeviceRouting.count) device routings, \(self.settings.appMutes.count) mutes, \(self.settings.appEQSettings.count) EQ settings")
+            logger.debug("Loaded settings with \(self.settings.appVolumes.count) volumes, \(self.settings.appDeviceRouting.count) device routings, \(self.settings.appMutes.count) mutes")
         } catch {
             logger.error("Failed to load settings: \(error.localizedDescription)")
             // Backup corrupted file before resetting
