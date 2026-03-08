@@ -132,16 +132,12 @@ final class DDCController {
         // Cancel pending debounced DDC writes — services will be replaced by re-probe
         for (_, item) in debounceTimers { item.cancel() }
         debounceTimers.removeAll()
+        let logger = self.logger
 
-        // TODO(Swift 6): This closure captures @MainActor self and runs on ddcQueue.
-        // Currently safe because accessed properties are nonisolated or dispatched
-        // to @MainActor via Task { @MainActor in }.
-        ddcQueue.async { [weak self] in
-            guard let self else { return }
-
+        ddcQueue.async { [logger] in
             // 1. Discover all DCPAVServiceProxy entries and create DDC services
             let discovered = DDCService.discoverServices()
-            self.logger.info("DDC probe: found \(discovered.count) DCPAVServiceProxy entries")
+            logger.info("DDC probe: found \(discovered.count) DCPAVServiceProxy entries")
             guard !discovered.isEmpty else {
                 Task { @MainActor [weak self] in
                     self?.ddcBackedDevices = []
@@ -156,18 +152,18 @@ final class DDCController {
             var audioCapable: [(entry: io_service_t, service: DDCService, displayName: String)] = []
             for (index, (entry, service)) in discovered.enumerated() {
                 let name = Self.getDisplayName(for: entry)
-                self.logger.info("DDC probe: checking display \(index + 1) '\(name)' for VCP 0x62...")
+                logger.info("DDC probe: checking display \(index + 1) '\(name)' for VCP 0x62...")
                 if service.supportsAudioVolume() {
                     audioCapable.append((entry: entry, service: service, displayName: name))
-                    self.logger.info("DDC audio-capable display: '\(name)'")
+                    logger.info("DDC audio-capable display: '\(name)'")
                 } else {
-                    self.logger.info("DDC probe: '\(name)' does not support VCP 0x62")
+                    logger.info("DDC probe: '\(name)' does not support VCP 0x62")
                     IOObjectRelease(entry)
                 }
             }
 
             guard !audioCapable.isEmpty else {
-                self.logger.info("DDC probe: no audio-capable displays found")
+                logger.info("DDC probe: no audio-capable displays found")
                 // Entries that failed supportsAudioVolume() were already released above
                 Task { @MainActor [weak self] in
                     self?.ddcBackedDevices = []
@@ -179,9 +175,9 @@ final class DDCController {
             }
 
             // 3. Get all CoreAudio output devices (candidates for DDC matching)
-            let coreAudioDevices = self.getCoreAudioOutputDevices()
+            let coreAudioDevices = Self.getCoreAudioOutputDevices()
             for ca in coreAudioDevices {
-                self.logger.info("DDC probe: CoreAudio candidate: '\(ca.name)' (uid: \(ca.uid))")
+                logger.info("DDC probe: CoreAudio candidate: '\(ca.name)' (uid: \(ca.uid))")
             }
 
             // 4. Match DDC displays to CoreAudio devices
@@ -202,7 +198,7 @@ final class DDCController {
                             volumes[caDevice.id] = vol.current
                         }
 
-                        self.logger.info("Matched CoreAudio '\(caDevice.name)' → DDC '\(ddcDisplay.displayName)' (by name)")
+                        logger.info("Matched CoreAudio '\(caDevice.name)' → DDC '\(ddcDisplay.displayName)' (by name)")
                         break
                     }
                 }
@@ -226,7 +222,7 @@ final class DDCController {
                         volumes[caDevice.id] = vol.current
                     }
 
-                    self.logger.info("Matched CoreAudio '\(caDevice.name)' → DDC '\(ddcDisplay.displayName)' (by transport: \(caDevice.transport))")
+                    logger.info("Matched CoreAudio '\(caDevice.name)' → DDC '\(ddcDisplay.displayName)' (by transport: \(Self.transportTypeName(for: caDevice.transportType)))")
                     break
                 }
             }
@@ -276,8 +272,8 @@ final class DDCController {
     /// Gets all CoreAudio output devices as candidates for DDC matching.
     /// Includes devices both with and without CoreAudio volume control,
     /// since some monitors report having volume control that doesn't actually work.
-    private nonisolated func getCoreAudioOutputDevices() -> [CoreAudioDeviceInfo] {
-        guard let deviceIDs = try? AudioObjectID.readDeviceList() else { return [] }
+    private nonisolated static func getCoreAudioOutputDevices() -> [CoreAudioDeviceInfo] {
+        guard let deviceIDs = Self.readDeviceListRaw() else { return [] }
 
         var results: [CoreAudioDeviceInfo] = []
         for deviceID in deviceIDs {
