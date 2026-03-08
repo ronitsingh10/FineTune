@@ -68,13 +68,13 @@ struct SettingsUpdateRow: View {
         SettingsUpdateRow(
             automaticallyChecks: .constant(true),
             lastCheckDate: Date().addingTimeInterval(-120),
-            onCheckNow: { print("Check now") }
+            onCheckNow: {}
         )
 
         SettingsUpdateRow(
             automaticallyChecks: .constant(false),
             lastCheckDate: nil,
-            onCheckNow: { print("Check now") }
+            onCheckNow: {}
         )
     }
     .padding(DesignTokens.Spacing.lg)

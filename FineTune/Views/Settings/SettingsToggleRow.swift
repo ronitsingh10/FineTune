@@ -4,12 +4,27 @@ import SwiftUI
 /// Settings row with a toggle switch control
 struct SettingsToggleRow: View {
     let icon: String
+    let titleOffsetX: CGFloat
     let title: String
     let description: String?
     @Binding var isOn: Bool
 
+    init(
+        icon: String,
+        titleOffsetX: CGFloat = 0,
+        title: String,
+        description: String?,
+        isOn: Binding<Bool>
+    ) {
+        self.icon = icon
+        self.titleOffsetX = titleOffsetX
+        self.title = title
+        self.description = description
+        self._isOn = isOn
+    }
+
     var body: some View {
-        SettingsRowView(icon: icon, title: title, description: description) {
+        SettingsRowView(icon: icon, titleOffsetX: titleOffsetX, title: title, description: description) {
             Toggle("", isOn: $isOn)
                 .toggleStyle(.switch)
                 .scaleEffect(0.8)

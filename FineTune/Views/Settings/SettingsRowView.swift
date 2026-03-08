@@ -4,9 +4,24 @@ import SwiftUI
 /// Base component for settings rows with icon, title, description, and control slot
 struct SettingsRowView<Control: View>: View {
     let icon: String
+    let titleOffsetX: CGFloat
     let title: String
     let description: String?
     @ViewBuilder let control: () -> Control
+
+    init(
+        icon: String,
+        titleOffsetX: CGFloat = 0,
+        title: String,
+        description: String?,
+        @ViewBuilder control: @escaping () -> Control
+    ) {
+        self.icon = icon
+        self.titleOffsetX = titleOffsetX
+        self.title = title
+        self.description = description
+        self.control = control
+    }
 
     var body: some View {
         HStack(spacing: DesignTokens.Spacing.md) {
@@ -30,6 +45,7 @@ struct SettingsRowView<Control: View>: View {
                         .lineLimit(2)
                 }
             }
+            .offset(x: titleOffsetX)
 
             Spacer(minLength: DesignTokens.Spacing.sm)
 
