@@ -47,12 +47,6 @@ struct AppSettings: Codable, Equatable {
     // Audio
     var defaultNewAppVolume: Float = 1.0      // 100% (unity gain)
     var maxVolumeBoost: Float = 2.0           // 200% max
-
-    // Input Device Lock
-    var lockInputDevice: Bool = true          // Prevent auto-switching input device
-
-    // Notifications
-    var showDeviceDisconnectAlerts: Bool = true
 }
 
 // MARK: - Settings Manager
@@ -75,7 +69,6 @@ final class SettingsManager {
         var systemSoundsFollowsDefault: Bool = true  // Whether system sounds follows macOS default
         var appDeviceSelectionMode: [String: DeviceSelectionMode] = [:]  // bundleID → selection mode
         var appSelectedDeviceUIDs: [String: [String]] = [:]  // bundleID → array of device UIDs for multi mode
-        var lockedInputDeviceUID: String? = nil  // User's preferred input device (for input lock feature)
         var pinnedApps: Set<String> = []  // Persistence identifiers of pinned apps
         var pinnedAppInfo: [String: PinnedAppInfo] = [:]  // Persistence identifier → app metadata
 
@@ -205,17 +198,6 @@ final class SettingsManager {
 
     func setSelectedDeviceUIDs(for identifier: String, to uids: Set<String>) {
         settings.appSelectedDeviceUIDs[identifier] = Array(uids)
-        scheduleSave()
-    }
-
-    // MARK: - Input Device Lock
-
-    var lockedInputDeviceUID: String? {
-        settings.lockedInputDeviceUID
-    }
-
-    func setLockedInputDeviceUID(_ uid: String?) {
-        settings.lockedInputDeviceUID = uid
         scheduleSave()
     }
 
@@ -378,7 +360,6 @@ final class SettingsManager {
         settings.pinnedAppInfo.removeAll()
         settings.appSettings = AppSettings()
         settings.systemSoundsFollowsDefault = true
-        settings.lockedInputDeviceUID = nil
         settings.ddcVolumes.removeAll()
         settings.ddcMuteStates.removeAll()
         settings.ddcSavedVolumes.removeAll()

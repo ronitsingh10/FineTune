@@ -20,7 +20,7 @@ struct SettingsView: View {
             VStack(alignment: .leading, spacing: DesignTokens.Spacing.lg) {
                 generalSection
                 audioSection
-                notificationsSection
+                excludedAppsSection
                 dataSection
 
                 aboutFooter
@@ -84,13 +84,6 @@ struct SettingsView: View {
                 range: 1.0...4.0
             )
 
-            SettingsToggleRow(
-                icon: "mic",
-                title: "Lock Input Device",
-                description: "Prevent auto-switching when devices connect",
-                isOn: $settings.lockInputDevice
-            )
-
             // Sound Effects device selection
             SoundEffectsDeviceRow(
                 devices: outputDevices,
@@ -109,19 +102,73 @@ struct SettingsView: View {
         }
     }
 
-    // MARK: - Notifications Section
+    private var maxVolumeBoostRow: some View {
+        let presets: [Float] = [1, 2, 3, 4]
 
-    private var notificationsSection: some View {
+        return SettingsRowView(
+            icon: "speaker.wave.3",
+            title: "Max Volume Boost",
+            description: "Safety limit for volume slider"
+        ) {
+            HStack(spacing: 6) {
+                ForEach(presets, id: \.self) { preset in
+                    let isSelected = abs(settings.maxVolumeBoost - preset) < 0.001
+                    Button {
+                        settings.maxVolumeBoost = preset
+                    } label: {
+                        Text("\(Int(preset))x")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(isSelected ? DesignTokens.Colors.textPrimary : DesignTokens.Colors.textSecondary)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                            .background(
+                                Capsule()
+                                    .fill(isSelected ? DesignTokens.Colors.interactiveDefault.opacity(0.2) : .white.opacity(0.08))
+                            )
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        }
+    }
+
+    // MARK: - Excluded Apps Section
+
+    private var excludedAppsSection: some View {
         VStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {
-            SectionHeader(title: "Notifications")
+            SectionHeader(title: "Excluded Apps")
                 .padding(.bottom, DesignTokens.Spacing.xs)
 
-            SettingsToggleRow(
-                icon: "bell",
-                title: "Device Disconnect Alerts",
-                description: "Show notification when device disconnects",
-                isOn: $settings.showDeviceDisconnectAlerts
-            )
+            if settingsManager.excludedApps().isEmpty {
+                HStack(spacing: DesignTokens.Spacing.sm) {
+                    Image(systemName: "nosign")
+                        .font(.system(size: DesignTokens.Dimensions.iconSizeSmall))
+                        .symbolRenderingMode(.hierarchical)
+                        .foregroundStyle(DesignTokens.Colors.textTertiary)
+                        .frame(width: DesignTokens.Dimensions.settingsIconWidth, alignment: .center)
+
+                    Text("No excluded apps")
+                        .font(DesignTokens.Typography.caption)
+                        .foregroundStyle(DesignTokens.Colors.textTertiary)
+                }
+                .hoverableRow()
+            } else {
+                ForEach(settingsManager.excludedApps(), id: \.self) { identifier in
+                    SettingsRowView(
+                        icon: "nosign",
+                        title: identifier,
+                        description: nil
+                    ) {
+                        Button("Include") {
+                            onIncludeExcludedApp(identifier)
+                        }
+                        .buttonStyle(.plain)
+                        .font(DesignTokens.Typography.caption)
+                        .foregroundStyle(DesignTokens.Colors.interactiveDefault)
+                        .glassButtonStyle()
+                    }
+                }
+            }
         }
     }
 

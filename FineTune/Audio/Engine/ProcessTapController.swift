@@ -55,6 +55,10 @@ final class ProcessTapController {
     private nonisolated(unsafe) var _peakLevel: Float = 0.0
     /// Separate peak level for secondary tap during crossfade (avoids torn RMW from concurrent callbacks)
     private nonisolated(unsafe) var _secondaryPeakLevel: Float = 0.0
+    /// Active callback role mapping IDs (0 = none). Allows promoted callbacks to switch roles
+    /// without rebuilding HAL resources.
+    private nonisolated(unsafe) var _activePrimaryCallbackID: UInt64 = 0
+    private nonisolated(unsafe) var _activeSecondaryCallbackID: UInt64 = 0
     private nonisolated(unsafe) var _currentDeviceVolume: Float = 1.0
     private nonisolated(unsafe) var _isDeviceMuted: Bool = false
 
@@ -97,6 +101,8 @@ final class ProcessTapController {
     private var isSwitching = false
     /// Cancellable crossfade task — cancelled when a new switch starts
     private var crossfadeTask: Task<Void, Error>?
+    private var didLogEQBypassForMultichannel = false
+    private var nextCallbackID: UInt64 = 1
 
     // MARK: - Public Properties
 
@@ -147,6 +153,13 @@ final class ProcessTapController {
 
     func updateAutoEQProfile(_ profile: AutoEQProfile?) {
         autoEQProcessor?.updateProfile(profile)
+    }
+
+    private func allocateCallbackID() -> UInt64 {
+        let callbackID = max(nextCallbackID, 1)
+        nextCallbackID &+= 1
+        if nextCallbackID == 0 { nextCallbackID = 1 }
+        return callbackID
     }
 
     // MARK: - Multi-Device Aggregate Configuration
@@ -253,6 +266,7 @@ final class ProcessTapController {
         autoEQProcessor = AutoEQProcessor(sampleRate: sampleRate)
 
         // Create IO proc with gain processing
+        let primaryCallbackID = allocateCallbackID()
         err = AudioDeviceCreateIOProcIDWithBlock(&primaryResources.deviceProcID, primaryResources.aggregateDeviceID, queue) { [weak self] _, inInputData, _, outOutputData, _ in
             guard let self else {
                 // Zero output to prevent garbage audio if controller is deallocated
@@ -262,15 +276,18 @@ final class ProcessTapController {
                 }
                 return
             }
-            self.processAudio(inInputData, to: outOutputData)
+            self.processAudioForCallback(primaryCallbackID, inputBufferList: inInputData, to: outOutputData)
         }
         guard err == noErr else {
+            _activePrimaryCallbackID = 0
             cleanupPartialActivation()
             throw NSError(domain: NSOSStatusErrorDomain, code: Int(err), userInfo: [NSLocalizedDescriptionKey: "Failed to create IO proc: \(err)"])
         }
 
+        _activePrimaryCallbackID = primaryCallbackID
         err = AudioDeviceStart(primaryResources.aggregateDeviceID, primaryResources.deviceProcID)
         guard err == noErr else {
+            _activePrimaryCallbackID = 0
             cleanupPartialActivation()
             throw NSError(domain: NSOSStatusErrorDomain, code: Int(err), userInfo: [NSLocalizedDescriptionKey: "Failed to start device: \(err)"])
         }
@@ -341,7 +358,11 @@ final class ProcessTapController {
         _invalidating = true
         defer { _invalidating = false }
         activated = false
-
+        _activationHostTime = 0
+        _lastRenderHostTime = 0
+        _hasRenderedAudio = false
+        _activePrimaryCallbackID = 0
+        _activeSecondaryCallbackID = 0
         // Cancel any in-flight crossfade task
         crossfadeTask?.cancel()
         crossfadeTask = nil
@@ -506,6 +527,7 @@ final class ProcessTapController {
 
         _secondaryCurrentVolume = _primaryCurrentVolume
 
+        let secondaryCallbackID = allocateCallbackID()
         err = AudioDeviceCreateIOProcIDWithBlock(&secondaryResources.deviceProcID, secondaryResources.aggregateDeviceID, queue) { [weak self] _, inInputData, _, outOutputData, _ in
             guard let self else {
                 // Zero output to prevent garbage audio if controller is deallocated
@@ -515,15 +537,18 @@ final class ProcessTapController {
                 }
                 return
             }
-            self.processAudioSecondary(inInputData, to: outOutputData)
+            self.processAudioForCallback(secondaryCallbackID, inputBufferList: inInputData, to: outOutputData)
         }
         guard err == noErr else {
+            _activeSecondaryCallbackID = 0
             secondaryResources.destroy()
             throw CrossfadeError.tapCreationFailed(err)
         }
 
+        _activeSecondaryCallbackID = secondaryCallbackID
         err = AudioDeviceStart(secondaryResources.aggregateDeviceID, secondaryResources.deviceProcID)
         guard err == noErr else {
+            _activeSecondaryCallbackID = 0
             secondaryResources.destroy()
             throw CrossfadeError.tapCreationFailed(err)
         }
@@ -537,6 +562,7 @@ final class ProcessTapController {
 
     /// Tears down any in-progress secondary tap (used by re-entrant crossfade guard).
     private func cleanupSecondaryTap() {
+        _activeSecondaryCallbackID = 0
         guard secondaryResources.isActive else { return }
         secondaryResources.destroy()
     }
@@ -544,6 +570,8 @@ final class ProcessTapController {
     private func promoteSecondaryToPrimary() {
         primaryResources = secondaryResources
         secondaryResources = TapResources()
+        _activePrimaryCallbackID = _activeSecondaryCallbackID
+        _activeSecondaryCallbackID = 0
 
         if let deviceSampleRate = try? primaryResources.aggregateDeviceID.readNominalSampleRate() {
             let rampTimeSeconds: Float = 0.030
@@ -625,6 +653,7 @@ final class ProcessTapController {
             throw CrossfadeError.deviceNotReady
         }
 
+        let primaryCallbackID = allocateCallbackID()
         err = AudioDeviceCreateIOProcIDWithBlock(&newResources.deviceProcID, newResources.aggregateDeviceID, queue) { [weak self] _, inInputData, _, outOutputData, _ in
             guard let self else {
                 // Zero output to prevent garbage audio if controller is deallocated
@@ -634,15 +663,18 @@ final class ProcessTapController {
                 }
                 return
             }
-            self.processAudio(inInputData, to: outOutputData)
+            self.processAudioForCallback(primaryCallbackID, inputBufferList: inInputData, to: outOutputData)
         }
         guard err == noErr else {
+            _activePrimaryCallbackID = 0
             newResources.destroy()
             throw CrossfadeError.tapCreationFailed(err)
         }
 
+        _activePrimaryCallbackID = primaryCallbackID
         err = AudioDeviceStart(newResources.aggregateDeviceID, newResources.deviceProcID)
         guard err == noErr else {
+            _activePrimaryCallbackID = 0
             newResources.destroy()
             throw CrossfadeError.tapCreationFailed(err)
         }
@@ -650,6 +682,7 @@ final class ProcessTapController {
         // Destroy old resources, adopt new
         primaryResources.destroy()
         primaryResources = newResources
+        _activeSecondaryCallbackID = 0
         targetDeviceUIDs = outputUIDs
         currentDeviceUIDs = outputUIDs
 
@@ -661,36 +694,48 @@ final class ProcessTapController {
     }
 
     private func cleanupPartialActivation() {
+        _activePrimaryCallbackID = 0
+        _activeSecondaryCallbackID = 0
         primaryResources.destroy()
     }
 
-    // MARK: - RT-Safe Audio Callbacks (DO NOT MODIFY WITHOUT RT-SAFETY REVIEW)
-    // These callbacks run on CoreAudio's real-time HAL I/O thread.
-    // See .claude/rules/rt-safety.md for constraints.
-
-    /// Audio processing callback for PRIMARY tap.
-    /// **RT SAFETY CONSTRAINTS - DO NOT:**
-    /// - Allocate memory (malloc, Array append, String operations)
-    /// - Acquire locks/mutexes
-    /// - Use Objective-C messaging
-    /// - Call print/logging functions
-    /// - Perform file/network I/O
-    private func processAudio(_ inputBufferList: UnsafePointer<AudioBufferList>, to outputBufferList: UnsafeMutablePointer<AudioBufferList>) {
+    @inline(__always)
+    private func zeroOutput(_ outputBufferList: UnsafeMutablePointer<AudioBufferList>) {
         let outputBuffers = UnsafeMutableAudioBufferListPointer(outputBufferList)
-        // SAFETY: Mutable cast required by UnsafeMutableAudioBufferListPointer API,
-        // but we only read through this pointer. Input buffer data is owned by CoreAudio
-        // and valid for callback duration.
-        let inputBuffers = UnsafeMutableAudioBufferListPointer(UnsafeMutablePointer(mutating: inputBufferList))
+        for outputBuffer in outputBuffers {
+            guard let outputData = outputBuffer.mData else { continue }
+            memset(outputData, 0, Int(outputBuffer.mDataByteSize))
+        }
+    }
 
-        if _forceSilence {
-            for outputBuffer in outputBuffers {
-                guard let outputData = outputBuffer.mData else { continue }
-                memset(outputData, 0, Int(outputBuffer.mDataByteSize))
-            }
+    @inline(__always)
+    private func processAudioForCallback(
+        _ callbackID: UInt64,
+        inputBufferList: UnsafePointer<AudioBufferList>,
+        to outputBufferList: UnsafeMutablePointer<AudioBufferList>
+    ) {
+        if callbackID == _activePrimaryCallbackID {
+            processAudio(inputBufferList, to: outputBufferList)
             return
         }
+        if callbackID != 0, callbackID == _activeSecondaryCallbackID {
+            processAudioSecondary(inputBufferList, to: outputBufferList)
+            return
+        }
+        zeroOutput(outputBufferList)
+    }
 
-        // Track peak level for VU meter
+    @inline(__always)
+    private func processMappedBuffers(
+        inputBuffers: UnsafeMutableAudioBufferListPointer,
+        outputBuffers: UnsafeMutableAudioBufferListPointer,
+        targetVol: Float,
+        crossfadeMultiplier: Float,
+        rampCoefficient: Float,
+        preferredStereoLeft: Int,
+        preferredStereoRight: Int,
+        currentVol: inout Float
+    ) -> Float {
         var maxPeak: Float = 0.0
         for inputBuffer in inputBuffers {
             guard let inputData = inputBuffer.mData else { continue }
