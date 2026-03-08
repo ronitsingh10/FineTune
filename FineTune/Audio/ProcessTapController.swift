@@ -1,5 +1,6 @@
 // FineTune/Audio/ProcessTapController.swift
 import AudioToolbox
+import Darwin
 import Foundation
 import os
 
@@ -64,6 +65,13 @@ final class ProcessTapController {
     private nonisolated(unsafe) var _primaryPreferredStereoRightChannel: Int = 1
     private nonisolated(unsafe) var _secondaryPreferredStereoLeftChannel: Int = 0
     private nonisolated(unsafe) var _secondaryPreferredStereoRightChannel: Int = 1
+    /// Monotonic host tick of the last audio callback execution.
+    /// Used by main-thread health checks to detect disconnected taps.
+    private nonisolated(unsafe) var _lastRenderHostTime: UInt64 = 0
+    /// Monotonic host tick of successful activation.
+    private nonisolated(unsafe) var _activationHostTime: UInt64 = 0
+    /// Set once any audio callback has rendered at least one buffer.
+    private nonisolated(unsafe) var _hasRenderedAudio: Bool = false
 
     /// Crossfade state machine (RT-safe).
     /// During device switch, we run two taps simultaneously with complementary gain curves:
@@ -109,6 +117,13 @@ final class ProcessTapController {
 
     var audioLevel: Float { crossfadeState.isActive ? max(_peakLevel, _secondaryPeakLevel) : _peakLevel }
 
+    private static let hostTimeNanosScale: Double = {
+        var info = mach_timebase_info_data_t()
+        mach_timebase_info(&info)
+        guard info.denom != 0 else { return 1.0 }
+        return Double(info.numer) / Double(info.denom)
+    }()
+
     var currentDeviceVolume: Float {
         get { _currentDeviceVolume }
         set { _currentDeviceVolume = newValue }
@@ -127,6 +142,28 @@ final class ProcessTapController {
     var isMuted: Bool {
         get { _isMuted }
         set { _isMuted = newValue }
+    }
+
+    /// Returns true when the audio callback has run within the requested interval.
+    /// This is used for tap-liveness recovery on the main actor.
+    func hasRecentAudioCallback(within seconds: Double) -> Bool {
+        let last = _lastRenderHostTime
+        guard last != 0 else { return false }
+        let now = mach_absolute_time()
+        let deltaTicks = now &- last
+        let deltaNanos = Double(deltaTicks) * Self.hostTimeNanosScale
+        return deltaNanos <= (seconds * 1_000_000_000.0)
+    }
+
+    /// Health checks should only run after activation has settled and at least one callback occurred.
+    func isHealthCheckEligible(minActiveSeconds: Double) -> Bool {
+        guard _hasRenderedAudio else { return false }
+        let started = _activationHostTime
+        guard started != 0 else { return false }
+        let now = mach_absolute_time()
+        let deltaTicks = now &- started
+        let deltaNanos = Double(deltaTicks) * Self.hostTimeNanosScale
+        return deltaNanos >= (minActiveSeconds * 1_000_000_000.0)
     }
 
     // MARK: - Initialization
@@ -381,6 +418,9 @@ final class ProcessTapController {
         currentDeviceUIDs = targetDeviceUIDs
 
         activated = true
+        _activationHostTime = mach_absolute_time()
+        _lastRenderHostTime = 0
+        _hasRenderedAudio = false
         logger.info("Tap activated for \(self.app.name) on \(self.targetDeviceUIDs.count) device(s)")
     }
 
@@ -442,6 +482,9 @@ final class ProcessTapController {
         _invalidating = true
         defer { _invalidating = false }
         activated = false
+        _activationHostTime = 0
+        _lastRenderHostTime = 0
+        _hasRenderedAudio = false
         // Cancel any in-flight crossfade task
         crossfadeTask?.cancel()
         crossfadeTask = nil
@@ -768,7 +811,8 @@ final class ProcessTapController {
         preferredStereoLeft: Int,
         preferredStereoRight: Int,
         currentVol: inout Float
-    ) {
+    ) -> Float {
+        var maxPeak: Float = 0.0
         let inputBufferCount = inputBuffers.count
         let outputBufferCount = outputBuffers.count
 
@@ -822,6 +866,8 @@ final class ProcessTapController {
                     currentVol += (targetVol - currentVol) * rampCoefficient
                     let gain = currentVol * crossfadeMultiplier * preamp
                     let base = frame * inputChannels
+                    let probe = abs(inputSamples[base])
+                    if probe > maxPeak { maxPeak = probe }
                     for ch in 0..<inputChannels {
                         outputSamples[base + ch] = inputSamples[base + ch] * gain
                     }
@@ -837,6 +883,8 @@ final class ProcessTapController {
                     let outBase = frame * outputChannels
                     let left = inputSamples[inBase] * gain
                     let right = inputSamples[inBase + 1] * gain
+                    let probe = abs(inputSamples[inBase])
+                    if probe > maxPeak { maxPeak = probe }
 
                     for ch in 0..<outputChannels {
                         outputSamples[outBase + ch] = 0
@@ -854,6 +902,8 @@ final class ProcessTapController {
                     let gain = currentVol * crossfadeMultiplier * preamp
                     let sample = inputSamples[frame] * gain
                     let outBase = frame * outputChannels
+                    let probe = abs(inputSamples[frame])
+                    if probe > maxPeak { maxPeak = probe }
 
                     for ch in 0..<outputChannels {
                         outputSamples[outBase + ch] = 0
@@ -872,6 +922,8 @@ final class ProcessTapController {
                     let inBase = frame * inputChannels
                     let outBase = frame * outputChannels
                     let copiedChannels = min(inputChannels, outputChannels)
+                    let probe = abs(inputSamples[inBase])
+                    if probe > maxPeak { maxPeak = probe }
                     for ch in 0..<copiedChannels {
                         outputSamples[outBase + ch] = inputSamples[inBase + ch] * gain
                     }
@@ -894,6 +946,7 @@ final class ProcessTapController {
             let writtenSampleCount = frameCount * outputChannels
             SoftLimiter.processBuffer(outputSamples, sampleCount: writtenSampleCount)
         }
+        return maxPeak
     }
 
     // MARK: - RT-Safe Audio Callbacks (DO NOT MODIFY WITHOUT RT-SAFETY REVIEW)
@@ -908,6 +961,8 @@ final class ProcessTapController {
     /// - Call print/logging functions
     /// - Perform file/network I/O
     private func processAudio(_ inputBufferList: UnsafePointer<AudioBufferList>, to outputBufferList: UnsafeMutablePointer<AudioBufferList>) {
+        _lastRenderHostTime = mach_absolute_time()
+        _hasRenderedAudio = true
         let outputBuffers = UnsafeMutableAudioBufferListPointer(outputBufferList)
         // SAFETY: Mutable cast required by UnsafeMutableAudioBufferListPointer API,
         // but we only read through this pointer. Input buffer data is owned by CoreAudio
@@ -922,24 +977,8 @@ final class ProcessTapController {
             return
         }
 
-        // Track peak level for VU meter
-        var maxPeak: Float = 0.0
-        for inputBuffer in inputBuffers {
-            guard let inputData = inputBuffer.mData else { continue }
-            let inputSamples = inputData.assumingMemoryBound(to: Float.self)
-            let channels = max(1, Int(inputBuffer.mNumberChannels))
-            let sampleCount = Int(inputBuffer.mDataByteSize) / MemoryLayout<Float>.size
-            for i in stride(from: 0, to: sampleCount, by: channels) {
-                let absSample = abs(inputSamples[i])
-                if absSample > maxPeak {
-                    maxPeak = absSample
-                }
-            }
-        }
-        let rawPeak = min(maxPeak, 1.0)
-        _peakLevel = _peakLevel + levelSmoothingFactor * (rawPeak - _peakLevel)
-
         if _isMuted {
+            _peakLevel = _peakLevel + levelSmoothingFactor * (0 - _peakLevel)
             for outputBuffer in outputBuffers {
                 guard let outputData = outputBuffer.mData else { continue }
                 memset(outputData, 0, Int(outputBuffer.mDataByteSize))
@@ -956,7 +995,8 @@ final class ProcessTapController {
         // guard (returns 0.0 when progress >= 1.0 in idle phase after crossfade completes).
         let crossfadeMultiplier = crossfadeState.primaryMultiplier
 
-        processMappedBuffers(
+        let rawPeak = min(
+            processMappedBuffers(
             inputBuffers: inputBuffers,
             outputBuffers: outputBuffers,
             targetVol: targetVol,
@@ -965,43 +1005,39 @@ final class ProcessTapController {
             preferredStereoLeft: _primaryPreferredStereoLeftChannel,
             preferredStereoRight: _primaryPreferredStereoRightChannel,
             currentVol: &currentVol
+            ),
+            1.0
         )
+        _peakLevel = _peakLevel + levelSmoothingFactor * (rawPeak - _peakLevel)
 
         _primaryCurrentVolume = currentVol
     }
 
     /// Audio processing callback for SECONDARY tap during crossfade.
     private func processAudioSecondary(_ inputBufferList: UnsafePointer<AudioBufferList>, to outputBufferList: UnsafeMutablePointer<AudioBufferList>) {
+        _lastRenderHostTime = mach_absolute_time()
+        _hasRenderedAudio = true
         let outputBuffers = UnsafeMutableAudioBufferListPointer(outputBufferList)
         // SAFETY: Mutable cast required by UnsafeMutableAudioBufferListPointer API,
         // but we only read through this pointer. Input buffer data is owned by CoreAudio
         // and valid for callback duration.
         let inputBuffers = UnsafeMutableAudioBufferListPointer(UnsafeMutablePointer(mutating: inputBufferList))
 
-        var maxPeak: Float = 0.0
         var totalSamplesThisBuffer: Int = 0
         for inputBuffer in inputBuffers {
-            guard let inputData = inputBuffer.mData else { continue }
-            let inputSamples = inputData.assumingMemoryBound(to: Float.self)
+            guard inputBuffer.mData != nil else { continue }
             let channels = max(1, Int(inputBuffer.mNumberChannels))
             let sampleCount = Int(inputBuffer.mDataByteSize) / MemoryLayout<Float>.size
             if totalSamplesThisBuffer == 0 {
                 totalSamplesThisBuffer = sampleCount / channels
             }
-            for i in stride(from: 0, to: sampleCount, by: channels) {
-                let absSample = abs(inputSamples[i])
-                if absSample > maxPeak {
-                    maxPeak = absSample
-                }
-            }
         }
-        let rawPeak = min(maxPeak, 1.0)
-        _secondaryPeakLevel = _secondaryPeakLevel + levelSmoothingFactor * (rawPeak - _secondaryPeakLevel)
 
         // Update crossfade progress via state machine (handles sample counting + phase logic)
         _ = crossfadeState.updateProgress(samples: totalSamplesThisBuffer)
 
         if _isMuted {
+            _secondaryPeakLevel = _secondaryPeakLevel + levelSmoothingFactor * (0 - _secondaryPeakLevel)
             for outputBuffer in outputBuffers {
                 guard let outputData = outputBuffer.mData else { continue }
                 memset(outputData, 0, Int(outputBuffer.mDataByteSize))
@@ -1016,7 +1052,8 @@ final class ProcessTapController {
         // .warmingUp → 0.0 (muted), .crossfading → sin(progress*π/2), .idle → 1.0
         let crossfadeMultiplier = crossfadeState.secondaryMultiplier
 
-        processMappedBuffers(
+        let rawPeak = min(
+            processMappedBuffers(
             inputBuffers: inputBuffers,
             outputBuffers: outputBuffers,
             targetVol: targetVol,
@@ -1025,7 +1062,10 @@ final class ProcessTapController {
             preferredStereoLeft: _secondaryPreferredStereoLeftChannel,
             preferredStereoRight: _secondaryPreferredStereoRightChannel,
             currentVol: &currentVol
+            ),
+            1.0
         )
+        _secondaryPeakLevel = _secondaryPeakLevel + levelSmoothingFactor * (rawPeak - _secondaryPeakLevel)
 
         _secondaryCurrentVolume = currentVol
     }

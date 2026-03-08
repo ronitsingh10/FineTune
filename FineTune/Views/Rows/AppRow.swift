@@ -138,6 +138,7 @@ struct AppRow: View {
                 .buttonStyle(.plain)
                 .opacity((isRowHovered || isActionsMenuPresented) ? 1.0 : 0.0)
                 .allowsHitTesting(isRowHovered || isActionsMenuPresented)
+                .padding(.trailing, -4)
                 .background(
                     PopoverHost(isPresented: $isActionsMenuPresented) {
                         VStack(spacing: 2) {

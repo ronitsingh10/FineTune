@@ -114,8 +114,10 @@ struct EditablePercentage: View {
                                .trimmingCharacters(in: .whitespaces)
 
         if let value = Int(cleaned), range.contains(value) {
-            percentage = value
-            onCommit?(value)
+            if value != percentage {
+                percentage = value
+                onCommit?(value)
+            }
         }
         isEditing = false
     }

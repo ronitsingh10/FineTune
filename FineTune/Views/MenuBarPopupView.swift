@@ -33,7 +33,7 @@ struct MenuBarPopupView: View {
     /// Debounce settings toggle to prevent rapid clicks during animation
     @State private var isSettingsAnimating = false
 
-    /// Defers state reset until next popup open so dismiss is visually silent.
+    /// Defers state reset until next popup open so dismiss remains visually silent.
     @State private var shouldResetOnNextOpen = false
 
     /// Local copy of app settings for binding
@@ -103,20 +103,14 @@ struct MenuBarPopupView: View {
                     deviceVolumeMonitor: deviceVolumeMonitor,
                     outputDevices: sortedDevices
                 )
-                .transition(.asymmetric(
-                    insertion: .move(edge: .trailing).combined(with: .opacity),
-                    removal: .move(edge: .trailing).combined(with: .opacity)
-                ))
+                .transition(.opacity)
             } else {
                 mainContent
-                    .transition(.asymmetric(
-                        insertion: .move(edge: .leading).combined(with: .opacity),
-                        removal: .move(edge: .leading).combined(with: .opacity)
-                    ))
+                    .transition(.opacity)
             }
         }
         .padding(DesignTokens.Spacing.lg)
-        .frame(width: DesignTokens.Dimensions.popupWidth)
+        .frame(width: DesignTokens.Dimensions.popupWidth, alignment: .leading)
         .darkGlassBackground()
         .environment(\.colorScheme, .dark)
         .onAppear {
@@ -393,6 +387,7 @@ struct MenuBarPopupView: View {
                 devicesContent
             }
             .scrollIndicators(.never)
+            .frame(maxWidth: .infinity, alignment: .leading)
             .frame(height: deviceScrollHeight)
         } else {
             devicesContent
@@ -400,7 +395,7 @@ struct MenuBarPopupView: View {
     }
 
     private var devicesContent: some View {
-        VStack(spacing: DesignTokens.Spacing.xs) {
+        VStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {
             if isEditingDevicePriority {
                 // Edit mode: drag-and-drop reordering (works for both output and input)
                 let defaultDeviceID = showingInputDevices
@@ -518,6 +513,7 @@ struct MenuBarPopupView: View {
                 }
             }
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     @ViewBuilder

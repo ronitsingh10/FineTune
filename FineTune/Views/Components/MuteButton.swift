@@ -77,10 +77,9 @@ private struct BaseMuteButton: View {
                 .foregroundStyle(buttonColor)
                 .contentTransition(.symbolEffect(.replace))
                 .scaleEffect(isPulsing ? 1.1 : 1.0)
-                .frame(
-                    minWidth: DesignTokens.Dimensions.minTouchTarget,
-                    minHeight: DesignTokens.Dimensions.minTouchTarget
-                )
+                .frame(width: 16, alignment: .leading)
+                .padding(.horizontal, 4)
+                .frame(minHeight: DesignTokens.Dimensions.minTouchTarget, alignment: .leading)
                 .contentShape(Rectangle())
         }
         .buttonStyle(MuteButtonPressStyle())
