@@ -187,6 +187,93 @@ final class ProcessTapController {
         ]
     }
 
+    private func preferredStereoChannels(for deviceUID: String?) -> (left: Int, right: Int) {
+        guard let deviceUID, let deviceID = audioDeviceID(for: deviceUID) else {
+            return (0, 1)
+        }
+        return deviceID.preferredStereoChannelIndices()
+    }
+
+    private func outputStreamIndex(for deviceUID: String?) -> UInt? {
+        guard let deviceUID, let deviceID = audioDeviceID(for: deviceUID) else {
+            return nil
+        }
+        return try? deviceID.firstOutputStreamIndex()
+    }
+
+    private func audioDeviceID(for deviceUID: String) -> AudioDeviceID? {
+        if let monitored = deviceMonitor?.device(for: deviceUID)?.id {
+            return monitored
+        }
+
+        guard let deviceIDs = try? AudioObjectID.readDeviceList() else { return nil }
+        for id in deviceIDs {
+            if (try? id.readDeviceUID()) == deviceUID {
+                return id
+            }
+        }
+        return nil
+    }
+
+    private func maybeLogEQBypass(for tapID: AudioObjectID) {
+        guard !didLogEQBypassForMultichannel else { return }
+        guard let asbd = try? tapID.readAudioTapStreamBasicDescription() else { return }
+        guard asbd.mChannelsPerFrame != 2 else { return }
+
+        didLogEQBypassForMultichannel = true
+        logger.info("EQ processing is stereo-only and will be bypassed for tap format with \(asbd.mChannelsPerFrame) channels.")
+    }
+
+    /// Creates a process tap, preferring a device-stream tap to preserve multichannel routing.
+    /// Falls back to stereo mixdown if stream-specific tap creation fails.
+    private func createProcessTap(preferredDeviceUID: String?) throws -> (description: CATapDescription, tapID: AudioObjectID) {
+        var lastError: OSStatus = noErr
+        let processObjectIDs = app.processObjectIDs.isEmpty ? [app.objectID] : app.processObjectIDs
+
+        if let deviceUID = preferredDeviceUID {
+            if let outputStream = outputStreamIndex(for: deviceUID) {
+                let streamTap = CATapDescription(processes: processObjectIDs, deviceUID: deviceUID, stream: outputStream)
+                streamTap.uuid = UUID()
+                streamTap.muteBehavior = .mutedWhenTapped
+
+                var tapID: AudioObjectID = .unknown
+                let err = AudioHardwareCreateProcessTap(streamTap, &tapID)
+                if err == noErr {
+                    logger.info("Created stream-specific tap for device \(deviceUID, privacy: .public) (stream \(outputStream))")
+                    maybeLogEQBypass(for: tapID)
+                    return (streamTap, tapID)
+                }
+
+                lastError = err
+                logger.warning("Stream-specific tap creation failed for device \(deviceUID, privacy: .public) stream \(outputStream): \(err). Falling back to stereo mixdown.")
+            } else {
+                logger.warning("Could not resolve an output stream index for device \(deviceUID, privacy: .public). Falling back to stereo mixdown.")
+            }
+        }
+
+        let mixdownTap = CATapDescription(stereoMixdownOfProcesses: processObjectIDs)
+        mixdownTap.uuid = UUID()
+        mixdownTap.muteBehavior = .mutedWhenTapped
+
+        var mixdownTapID: AudioObjectID = .unknown
+        let mixdownErr = AudioHardwareCreateProcessTap(mixdownTap, &mixdownTapID)
+        guard mixdownErr == noErr else {
+            throw NSError(
+                domain: NSOSStatusErrorDomain,
+                code: Int(mixdownErr),
+                userInfo: [
+                    NSLocalizedDescriptionKey: "Failed to create process tap (stream-specific err: \(lastError), mixdown err: \(mixdownErr))"
+                ]
+            )
+        }
+
+        if preferredDeviceUID != nil {
+            logger.info("Using stereo mixdown tap fallback")
+        }
+        maybeLogEQBypass(for: mixdownTapID)
+        return (mixdownTap, mixdownTapID)
+    }
+
     func activate() throws {
         guard !activated else { return }
 
@@ -341,7 +428,6 @@ final class ProcessTapController {
         _invalidating = true
         defer { _invalidating = false }
         activated = false
-
         // Cancel any in-flight crossfade task
         crossfadeTask?.cancel()
         crossfadeTask = nil
