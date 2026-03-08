@@ -24,7 +24,10 @@ struct AppRowControls: View {
     let onEQToggle: () -> Void
 
     @State private var dragOverrideValue: Double?
-    @State private var isEQButtonHovered = false
+    private let unityNotchValue: Double = 0.5
+    private let unitySnapThreshold: Double = 0.025
+    private let volumeEpsilon: Float = 0.0005
+    private var shouldShowUnityNotch: Bool { maxVolumeBoost > 1.0 }
 
     private var sliderValue: Double {
         dragOverrideValue ?? VolumeMapping.gainToSlider(volume, maxBoost: maxVolumeBoost)
@@ -79,20 +82,49 @@ struct AppRowControls: View {
             .frame(width: DesignTokens.Dimensions.sliderWidth)
             .opacity(showMutedIcon ? 0.5 : 1.0)
 
-            // Editable volume percentage
-            EditablePercentage(
-                percentage: Binding(
-                    get: {
-                        let gain = VolumeMapping.sliderToGain(sliderValue, maxBoost: maxVolumeBoost)
-                        return Int(round(gain * 100))
-                    },
-                    set: { newPercentage in
-                        let gain = Float(newPercentage) / 100.0
-                        onVolumeChange(gain)
+                // Volume slider
+                LiquidGlassSlider(
+                    value: Binding(
+                        get: { sliderValue },
+                        set: { newValue in
+                            let snappedValue = snappedToUnityIfNeeded(newValue)
+                            dragOverrideValue = snappedValue
+                            let gain = VolumeMapping.sliderToGain(snappedValue, maxBoost: maxVolumeBoost)
+                            if abs(gain - volume) > volumeEpsilon {
+                                onVolumeChange(gain)
+                            }
+                            if isMuted {
+                                onMuteChange(false)
+                            }
+                        }
+                    ),
+                    showUnityMarker: shouldShowUnityNotch,
+                    onEditingChanged: { editing in
+                        if !editing {
+                            dragOverrideValue = nil
+                        }
                     }
-                ),
-                range: 0...Int(round(maxVolumeBoost * 100))
-            )
+                )
+                .frame(width: DesignTokens.Dimensions.sliderWidth)
+                .opacity(showMutedIcon ? 0.5 : 1.0)
+
+                // Editable volume percentage
+                EditablePercentage(
+                    percentage: Binding(
+                        get: {
+                            let gain = VolumeMapping.sliderToGain(sliderValue, maxBoost: maxVolumeBoost)
+                            return Int(round(gain * 100))
+                        },
+                        set: { newPercentage in
+                            let gain = Float(newPercentage) / 100.0
+                            if abs(gain - volume) > volumeEpsilon {
+                                onVolumeChange(gain)
+                            }
+                        }
+                    ),
+                    range: 0...Int(round(maxVolumeBoost * 100))
+                )
+            }
 
             // VU Meter
             VUMeter(level: audioLevel, isMuted: showMutedIcon)

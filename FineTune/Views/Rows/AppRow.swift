@@ -150,7 +150,80 @@ struct AppRow: View {
                     .font(DesignTokens.Typography.rowName)
                     .lineLimit(1)
                     .help(app.name)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .frame(maxWidth: 180, alignment: .leading)
+
+                Button {
+                    isActionsMenuPresented.toggle()
+                } label: {
+                    Image(systemName: "ellipsis.circle")
+                        .font(.system(size: 12, weight: .medium))
+                        .symbolRenderingMode(.hierarchical)
+                        .foregroundStyle(DesignTokens.Colors.textSecondary)
+                        .frame(width: 16, height: 16)
+                }
+                .help("App actions")
+                .buttonStyle(.plain)
+                .opacity((isRowHovered || isActionsMenuPresented) ? 1.0 : 0.0)
+                .allowsHitTesting(isRowHovered || isActionsMenuPresented)
+                .padding(.trailing, -4)
+                .background(
+                    PopoverHost(isPresented: $isActionsMenuPresented) {
+                        VStack(spacing: 2) {
+                            Button(isPinned ? "Unpin App" : "Pin App") {
+                                guard !isExcluded else { return }
+                                isActionsMenuPresented = false
+                                DispatchQueue.main.async {
+                                    onPinToggle()
+                                }
+                            }
+                            .buttonStyle(.plain)
+                            .disabled(isExcluded)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 6)
+                            .background(
+                                RoundedRectangle(cornerRadius: 6)
+                                    .fill(isPinActionHovered ? DesignTokens.Colors.interactiveDefault.opacity(0.18) : Color.clear)
+                            )
+                            .whenHovered { hovering in
+                                isPinActionHovered = hovering
+                            }
+
+                            Button(isExcluded ? "Include in FineTune" : "Exclude from FineTune") {
+                                isActionsMenuPresented = false
+                                DispatchQueue.main.async {
+                                    if isExcluded {
+                                        onInclude()
+                                    } else {
+                                        onExclude()
+                                    }
+                                }
+                            }
+                            .buttonStyle(.plain)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 6)
+                            .background(
+                                RoundedRectangle(cornerRadius: 6)
+                                    .fill(isExcludeActionHovered ? DesignTokens.Colors.interactiveDefault.opacity(0.18) : Color.clear)
+                            )
+                            .whenHovered { hovering in
+                                isExcludeActionHovered = hovering
+                            }
+                        }
+                        .font(.system(size: 11, weight: .medium))
+                        .frame(width: 160)
+                        .padding(4)
+                        .background {
+                            RoundedRectangle(cornerRadius: 8)
+                                .fill(.ultraThinMaterial)
+                        }
+                        .overlay {
+                            RoundedRectangle(cornerRadius: 8)
+                                .strokeBorder(DesignTokens.Colors.glassBorder, lineWidth: 0.5)
+                        }
+                    }
+                )
 
                 // Shared controls section
                 AppRowControls(

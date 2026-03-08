@@ -32,6 +32,7 @@ struct EQPanelView: View {
                         .font(DesignTokens.Typography.pickerText)
                         .foregroundColor(.primary)
                 }
+                .offset(x: -8)
 
                 Spacer()
 
