@@ -33,9 +33,6 @@ struct MenuBarPopupView: View {
     /// Debounce settings toggle to prevent rapid clicks during animation
     @State private var isSettingsAnimating = false
 
-    /// Defers state reset until next popup open so dismiss remains visually silent.
-    @State private var shouldResetOnNextOpen = false
-
     /// Local copy of app settings for binding
     @State private var localAppSettings: AppSettings = AppSettings()
 
@@ -120,7 +117,6 @@ struct MenuBarPopupView: View {
         .environment(\.colorScheme, .dark)
         .onAppear {
             isPopupVisible = true
-            applyPendingDismissResetIfNeeded()
             updateSortedDevices()
             updateSortedInputDevices()
             localAppSettings = audioEngine.settingsManager.appSettings
@@ -128,7 +124,6 @@ struct MenuBarPopupView: View {
         .onDisappear {
             isPopupVisible = false
             exitEditModeSaving()
-            shouldResetOnNextOpen = true
         }
         .onChange(of: audioEngine.outputDevices) { _, _ in
             updateSortedDevices()
@@ -225,25 +220,6 @@ struct MenuBarPopupView: View {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
             isSettingsAnimating = false
         }
-    }
-
-    /// Resets UI state that should not persist across popup closes.
-    /// Keeps next open on the main page instead of Settings.
-    private func resetTransientViewStateForDismiss() {
-        isSettingsOpen = false
-        isSettingsAnimating = false
-        expandedDeviceEQUID = nil
-        isDeviceEQAnimating = false
-    }
-
-    private func applyPendingDismissResetIfNeeded() {
-        guard shouldResetOnNextOpen else { return }
-        var transaction = Transaction()
-        transaction.disablesAnimations = true
-        withTransaction(transaction) {
-            resetTransientViewStateForDismiss()
-        }
-        shouldResetOnNextOpen = false
     }
 
     // MARK: - Main Content
@@ -455,7 +431,7 @@ struct MenuBarPopupView: View {
                         canSetSampleRate: audioEngine.canSetSampleRate(for: device.id),
                         canDisconnectBluetooth: audioEngine.canDisconnectBluetooth(for: device),
                         onSetDefault: {
-                            audioEngine.setLockedInputDevice(device)
+                            audioEngine.setDefaultInputDevice(device)
                         },
                         onVolumeChange: { volume in
                             deviceVolumeMonitor.setInputVolume(for: device.id, to: volume)
@@ -732,6 +708,7 @@ struct MenuBarPopupView: View {
         audioEngine.settingsManager.setDevicePriorityOrder(editableOutputDeviceOrder.map(\.uid))
         audioEngine.settingsManager.setInputDevicePriorityOrder(editableInputDeviceOrder.map(\.uid))
         audioEngine.enforceOutputPriorityDefaultPolicy()
+        audioEngine.enforceInputPriorityDefaultPolicy()
     }
 
     private func exitEditModeSaving() {

@@ -36,6 +36,7 @@ final class AudioProcessMonitor {
         "com.apple.NotificationCenter",
         "com.apple.UserNotifications",
         "com.apple.usernotifications",
+        "com.apple.powerchime",
     ]
 
     /// Process names for system daemons (fallback when bundle ID is nil or different format)
@@ -46,6 +47,7 @@ final class AudioProcessMonitor {
         "audiomxd",
         "corespeech",
         "corespeechd",
+        "powerchime",
     ]
 
     /// Returns true if the bundle ID or process name indicates a system daemon that should be filtered
