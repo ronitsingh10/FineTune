@@ -10,7 +10,9 @@ struct SettingsView: View {
 
     // System sounds control
     @Bindable var deviceVolumeMonitor: DeviceVolumeMonitor
+    @Bindable var settingsManager: SettingsManager
     let outputDevices: [AudioDevice]
+    let onIncludeExcludedApp: (String) -> Void
 
     @State private var showResetConfirmation = false
 
@@ -21,6 +23,7 @@ struct SettingsView: View {
                 generalSection
                 audioSection
                 notificationsSection
+                excludedAppsSection
                 dataSection
 
                 aboutFooter
@@ -76,13 +79,7 @@ struct SettingsView: View {
                 range: 0.1...1.0
             )
 
-            SettingsSliderRow(
-                icon: "speaker.wave.3",
-                title: "Max Volume Boost",
-                description: "Safety limit for volume slider",
-                value: $settings.maxVolumeBoost,
-                range: 1.0...4.0
-            )
+            maxVolumeBoostRow
 
             SettingsToggleRow(
                 icon: "mic",
@@ -109,6 +106,36 @@ struct SettingsView: View {
         }
     }
 
+    private var maxVolumeBoostRow: some View {
+        let presets: [Float] = [1, 2, 3, 4]
+
+        return SettingsRowView(
+            icon: "speaker.wave.3",
+            title: "Max Volume Boost",
+            description: "Safety limit for volume slider"
+        ) {
+            HStack(spacing: 6) {
+                ForEach(presets, id: \.self) { preset in
+                    let isSelected = abs(settings.maxVolumeBoost - preset) < 0.001
+                    Button {
+                        settings.maxVolumeBoost = preset
+                    } label: {
+                        Text("\(Int(preset))x")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(isSelected ? DesignTokens.Colors.textPrimary : DesignTokens.Colors.textSecondary)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                            .background(
+                                Capsule()
+                                    .fill(isSelected ? DesignTokens.Colors.interactiveDefault.opacity(0.2) : .white.opacity(0.08))
+                            )
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        }
+    }
+
     // MARK: - Notifications Section
 
     private var notificationsSection: some View {
@@ -122,6 +149,46 @@ struct SettingsView: View {
                 description: "Show notification when device disconnects",
                 isOn: $settings.showDeviceDisconnectAlerts
             )
+        }
+    }
+
+    // MARK: - Excluded Apps Section
+
+    private var excludedAppsSection: some View {
+        VStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {
+            SectionHeader(title: "Excluded Apps")
+                .padding(.bottom, DesignTokens.Spacing.xs)
+
+            if settingsManager.excludedApps().isEmpty {
+                HStack(spacing: DesignTokens.Spacing.sm) {
+                    Image(systemName: "nosign")
+                        .font(.system(size: DesignTokens.Dimensions.iconSizeSmall))
+                        .symbolRenderingMode(.hierarchical)
+                        .foregroundStyle(DesignTokens.Colors.textTertiary)
+                        .frame(width: DesignTokens.Dimensions.settingsIconWidth, alignment: .center)
+
+                    Text("No excluded apps")
+                        .font(DesignTokens.Typography.caption)
+                        .foregroundStyle(DesignTokens.Colors.textTertiary)
+                }
+                .hoverableRow()
+            } else {
+                ForEach(settingsManager.excludedApps(), id: \.self) { identifier in
+                    SettingsRowView(
+                        icon: "nosign",
+                        title: identifier,
+                        description: nil
+                    ) {
+                        Button("Include") {
+                            onIncludeExcludedApp(identifier)
+                        }
+                        .buttonStyle(.plain)
+                        .font(DesignTokens.Typography.caption)
+                        .foregroundStyle(DesignTokens.Colors.interactiveDefault)
+                        .glassButtonStyle()
+                    }
+                }
+            }
         }
     }
 

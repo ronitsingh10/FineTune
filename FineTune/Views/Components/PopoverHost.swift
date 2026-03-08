@@ -108,6 +108,9 @@ struct PopoverHost<Content: View>: NSViewRepresentable {
             // Local monitor: clicks within our app (outside panel AND outside trigger)
             localEventMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] event in
                 guard let self = self, let panel = self.panel else { return event }
+                if NSApp.modalWindow != nil {
+                    return event
+                }
                 let mouseLocation = NSEvent.mouseLocation
                 let isInPanel = panel.frame.contains(mouseLocation)
                 let isInTrigger = triggerFrame.contains(mouseLocation)
@@ -121,7 +124,10 @@ struct PopoverHost<Content: View>: NSViewRepresentable {
 
             // Global monitor: clicks in OTHER apps (dismisses panel + parent)
             globalEventMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] _ in
-                self?.dismissPanel(reKeyParent: false)
+                if NSApp.modalWindow != nil {
+                    return
+                }
+                self?.dismissPanel()
             }
 
             // Dismiss when app loses focus (Command-Tab, click other app, quit, etc.)
