@@ -23,12 +23,130 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 }
 
+@MainActor
+final class MenuBarSpeakerIconUpdater {
+    private weak var audioEngine: AudioEngine?
+    private var timer: Timer?
+    private var lastSymbolName: String?
+    private let statusItemTitle = "FineTune"
+    private weak var statusItemButton: NSStatusBarButton?
+
+    func start(audioEngine: AudioEngine) {
+        self.audioEngine = audioEngine
+        timer?.invalidate()
+        timer = Timer.scheduledTimer(withTimeInterval: 0.12, repeats: true) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.tick()
+            }
+        }
+        tick()
+    }
+
+    func stop() {
+        timer?.invalidate()
+        timer = nil
+    }
+
+    private func tick() {
+        guard let audioEngine else { return }
+        let monitor = audioEngine.deviceVolumeMonitor
+        let defaultDeviceID = monitor.defaultDeviceID
+        let volume = monitor.volumes[defaultDeviceID] ?? 1.0
+        let isMuted = monitor.muteStates[defaultDeviceID] ?? false
+        let level = max(0.0, min(1.0, Double(volume)))
+
+        let symbol: String
+        if isMuted || level <= 0.0001 {
+            symbol = "speaker.slash.fill"
+        } else if level <= 1.0 / 3.0 {
+            symbol = "speaker.wave.1.fill"
+        } else if level <= 2.0 / 3.0 {
+            symbol = "speaker.wave.2.fill"
+        } else {
+            symbol = "speaker.wave.3.fill"
+        }
+
+        guard symbol != lastSymbolName else { return }
+        if updateStatusButtonImage(symbolName: symbol) {
+            lastSymbolName = symbol
+        }
+    }
+
+    @discardableResult
+    private func updateStatusButtonImage(symbolName: String) -> Bool {
+        let button: NSStatusBarButton
+        if let cached = statusItemButton {
+            button = cached
+        } else {
+            guard let discovered = findFineTuneStatusButton() else { return false }
+            statusItemButton = discovered
+            button = discovered
+        }
+        guard let image = NSImage(systemSymbolName: symbolName, accessibilityDescription: statusItemTitle) else { return false }
+        image.isTemplate = true
+        // Avoid re-entrant layout warnings by applying image update on next runloop tick.
+        DispatchQueue.main.async {
+            button.image = image
+        }
+        return true
+    }
+
+    private func findFineTuneStatusButton() -> NSStatusBarButton? {
+        // Primary path: query NSStatusBar's status item list.
+        if let statusItems = NSStatusBar.system.value(forKey: "_statusItems") as? [NSStatusItem] {
+            for item in statusItems {
+                guard let button = item.button else { continue }
+                if isFineTuneStatusButton(button) {
+                    return button
+                }
+            }
+        }
+
+        // Fallback path: walk view hierarchy for OS/package variations where _statusItems isn't available.
+        let app = NSApplication.shared
+        for window in app.windows {
+            guard let root = window.contentView else { continue }
+            if let found = findStatusButton(in: root) {
+                return found
+            }
+        }
+
+        return nil
+    }
+
+    private func isFineTuneStatusButton(_ button: NSStatusBarButton) -> Bool {
+        if button.accessibilityTitle() == statusItemTitle {
+            return true
+        }
+        if button.toolTip == statusItemTitle {
+            return true
+        }
+        if button.title == statusItemTitle {
+            return true
+        }
+        return false
+    }
+
+    private func findStatusButton(in view: NSView) -> NSStatusBarButton? {
+        if let button = view as? NSStatusBarButton, isFineTuneStatusButton(button) {
+            return button
+        }
+        for subview in view.subviews {
+            if let found = findStatusButton(in: subview) {
+                return found
+            }
+        }
+        return nil
+    }
+}
+
 @main
 struct FineTuneApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @State private var audioEngine: AudioEngine
     @StateObject private var updateManager = UpdateManager()
     @State private var showMenuBarExtra = true
+    private let menuBarSpeakerIconUpdater: MenuBarSpeakerIconUpdater?
 
     /// Icon style captured at launch (doesn't change during runtime)
     private let launchIconStyle: MenuBarIconStyle
@@ -40,8 +158,8 @@ struct FineTuneApp: App {
     private let launchAssetImageName: String?
 
     var body: some Scene {
-        // Use dual scenes with captured icon names - only one is visible based on icon type
-        FluidMenuBarExtra("FineTune", systemImage: launchSystemImageName ?? "speaker.wave.2", isInserted: systemIconBinding) {
+        // Single status item scene; for speaker style, icon image is updated in-place by updater.
+        FluidMenuBarExtra("FineTune", systemImage: launchSystemImageName ?? "speaker.wave.2", isInserted: staticSystemIconBinding) {
             menuBarContent
         }
 
@@ -53,8 +171,7 @@ struct FineTuneApp: App {
         }
     }
 
-    /// Show SF Symbol menu bar when launch style is a system symbol
-    private var systemIconBinding: Binding<Bool> {
+    private var staticSystemIconBinding: Binding<Bool> {
         Binding(
             get: { showMenuBarExtra && launchIconStyle.isSystemSymbol },
             set: { showMenuBarExtra = $0 }
@@ -123,7 +240,17 @@ struct FineTuneApp: App {
             object: nil,
             queue: .main
         ) { [settings] _ in
-            settings.flushSync()
+            Task { @MainActor in
+                settings.flushSync()
+            }
+        }
+
+        if iconStyle == .speaker {
+            let updater = MenuBarSpeakerIconUpdater()
+            updater.start(audioEngine: engine)
+            menuBarSpeakerIconUpdater = updater
+        } else {
+            menuBarSpeakerIconUpdater = nil
         }
     }
 }
