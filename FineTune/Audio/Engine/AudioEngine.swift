@@ -334,6 +334,68 @@ final class AudioEngine {
         settingsManager.isPinned(identifier)
     }
 
+    func excludeApp(identifier: String) {
+        guard !settingsManager.isExcludedApp(identifier) else { return }
+        settingsManager.excludeApp(identifier)
+        settingsManager.unpinApp(identifier)
+
+        var removedCount = 0
+        let matchingPIDs = taps.compactMap { pid, tap in
+            tap.app.persistenceIdentifier == identifier ? pid : nil
+        }
+
+        for pid in matchingPIDs {
+            if let tap = taps.removeValue(forKey: pid) {
+                tap.invalidate()
+                removedCount += 1
+            }
+            appliedPIDs.remove(pid)
+            followsDefault.remove(pid)
+            appDeviceRouting.removeValue(forKey: pid)
+            pendingCleanup[pid]?.cancel()
+            pendingCleanup.removeValue(forKey: pid)
+            volumeState.removeVolume(for: pid)
+        }
+
+        logger.info("Excluded app \(identifier, privacy: .public); removed \(removedCount) active tap(s)")
+    }
+
+    func includeApp(identifier: String) {
+        guard settingsManager.isExcludedApp(identifier) else { return }
+        settingsManager.includeApp(identifier)
+        logger.info("Included app \(identifier, privacy: .public)")
+        applyPersistedSettings()
+    }
+
+    func isExcluded(_ app: AudioApp) -> Bool {
+        settingsManager.isExcludedApp(app.persistenceIdentifier)
+    }
+
+    private func effectiveEQSettings(for app: AudioApp, deviceUID: String? = nil) -> EQSettings {
+        let resolvedDeviceUID = deviceUID
+            ?? appDeviceRouting[app.id]
+            ?? deviceVolumeMonitor.defaultDeviceUID
+        return settingsManager.getEffectiveEQSettings(deviceUID: resolvedDeviceUID)
+    }
+
+    private func perDeviceEQSettings(for deviceUIDs: [String]) -> [String: EQSettings] {
+        var result: [String: EQSettings] = [:]
+        result.reserveCapacity(deviceUIDs.count)
+        for uid in deviceUIDs {
+            result[uid] = settingsManager.getDeviceEQSettings(for: uid)
+        }
+        return result
+    }
+
+    private func perDeviceHeadphoneEQSettings(for deviceUIDs: [String]) -> [String: HeadphoneEQSettings] {
+        var result: [String: HeadphoneEQSettings] = [:]
+        result.reserveCapacity(deviceUIDs.count)
+        for uid in deviceUIDs {
+            result[uid] = settingsManager.getDeviceHeadphoneEQSettings(for: uid)
+        }
+        return result
+    }
+
     // MARK: - Inactive App Settings (by persistence identifier)
 
     /// Get volume for an inactive app by persistence identifier.
@@ -373,9 +435,12 @@ final class AudioEngine {
 
     /// Set device routing for an inactive app by persistence identifier.
     func setDeviceRoutingForInactive(identifier: String, deviceUID: String?) {
+        settingsManager.setDeviceSelectionMode(for: identifier, to: .single)
         if let deviceUID = deviceUID {
+            settingsManager.setSelectedDeviceUIDs(for: identifier, to: [deviceUID])
             settingsManager.setDeviceRouting(for: identifier, deviceUID: deviceUID)
         } else {
+            settingsManager.setSelectedDeviceUIDs(for: identifier, to: [])
             settingsManager.setFollowDefault(for: identifier)
         }
     }
@@ -516,8 +581,8 @@ final class AudioEngine {
     /// Apply AutoEQ profile to all taps currently routed to the given device.
     private func applyAutoEQToTaps(for deviceUID: String) {
         for tap in taps.values {
-            guard tap.currentDeviceUID == deviceUID else { continue }
-            applyAutoEQToTap(tap)
+            guard tap.currentDeviceUIDs.contains(deviceUID) else { continue }
+            tap.updateEQSettings(for: deviceUID, settings: settings)
         }
     }
 
@@ -527,11 +592,12 @@ final class AudioEngine {
     private func applyAutoEQToTap(_ tap: ProcessTapController) {
         guard let deviceUID = tap.currentDeviceUID else { return }
 
-        // Skip AutoEQ for non-headphone devices (or if device not found in monitor)
-        guard let device = deviceMonitor.device(for: deviceUID) else { return }
-        guard device.supportsAutoEQ else {
-            tap.updateAutoEQProfile(nil)
-            return
+    func setDeviceHeadphoneEQSettings(for deviceUID: String, to settings: HeadphoneEQSettings) {
+        settingsManager.setDeviceHeadphoneEQSettings(settings, for: deviceUID)
+
+        for tap in taps.values {
+            guard tap.currentDeviceUIDs.contains(deviceUID) else { continue }
+            tap.updateHeadphoneEQSettings(for: deviceUID, settings: settings)
         }
 
         guard let selection = settingsManager.getAutoEQSelection(for: deviceUID),
@@ -540,11 +606,10 @@ final class AudioEngine {
             return
         }
 
-        // Try in-memory first (instant)
-        if let profile = autoEQProfileManager.profile(for: selection.profileID) {
-            tap.updateAutoEQProfile(profile)
-            return
-        }
+            for tap in taps.values {
+                guard tap.currentDeviceUIDs.contains(deviceUID) else { continue }
+                tap.updateHeadphoneEQSettings(for: deviceUID, settings: imported)
+            }
 
         // Profile not loaded yet — fetch asynchronously
         tap.updateAutoEQProfile(nil)
@@ -564,12 +629,15 @@ final class AudioEngine {
         if let deviceUID = deviceUID {
             // Explicit device selection - stop following default
             followsDefault.remove(app.id)
-            guard appDeviceRouting[app.id] != deviceUID else { return }
+            normalizeSingleSelectionState(for: app, selectedUID: deviceUID)
+            let previousUID = appDeviceRouting[app.id]
             appDeviceRouting[app.id] = deviceUID
             settingsManager.setDeviceRouting(for: app.persistenceIdentifier, deviceUID: deviceUID)
+            guard previousUID != deviceUID else { return }
         } else {
             // "System Audio" selected - follow default
             followsDefault.insert(app.id)
+            normalizeSingleSelectionState(for: app, selectedUID: nil)
             settingsManager.setFollowDefault(for: app.persistenceIdentifier)
 
             // Route to current default (if available)
@@ -579,8 +647,9 @@ final class AudioEngine {
                 logger.warning("No default device available for \(app.name), will route when available")
                 return
             }
-            guard appDeviceRouting[app.id] != defaultUID else { return }
+            let previousUID = appDeviceRouting[app.id]
             appDeviceRouting[app.id] = defaultUID
+            guard previousUID != defaultUID else { return }
         }
 
         // Switch tap if needed
@@ -605,6 +674,25 @@ final class AudioEngine {
             }
         } else {
             ensureTapExists(for: app, deviceUID: targetUID)
+        }
+    }
+
+    private func normalizeSingleSelectionState(for app: AudioApp, selectedUID: String?) {
+        volumeState.setDeviceSelectionMode(for: app.id, to: .single, identifier: app.persistenceIdentifier)
+        if let selectedUID, !selectedUID.isEmpty {
+            volumeState.setSelectedDeviceUIDs(
+                for: app.id,
+                to: [selectedUID],
+                orderedUIDs: [selectedUID],
+                identifier: app.persistenceIdentifier
+            )
+        } else {
+            volumeState.setSelectedDeviceUIDs(
+                for: app.id,
+                to: [],
+                orderedUIDs: [],
+                identifier: app.persistenceIdentifier
+            )
         }
     }
 
@@ -646,7 +734,35 @@ final class AudioEngine {
     /// Triggers tap reconfiguration when in multi mode.
     func setSelectedDeviceUIDs(for app: AudioApp, to uids: Set<String>) {
         let previousUIDs = volumeState.getSelectedDeviceUIDs(for: app.id)
-        volumeState.setSelectedDeviceUIDs(for: app.id, to: uids, identifier: app.persistenceIdentifier)
+        let previousOrder = volumeState.getSelectedDeviceUIDOrder(for: app.id)
+        var orderedUIDs = previousOrder.filter { uids.contains($0) }
+
+        if orderedUIDs.isEmpty, let persistedOrder = settingsManager.getSelectedDeviceUIDOrder(for: app.persistenceIdentifier) {
+            orderedUIDs = persistedOrder.filter { uids.contains($0) }
+        }
+
+        let addedUIDs = uids.subtracting(previousUIDs)
+        let priorityRankByUID = Dictionary(
+            uniqueKeysWithValues: prioritySortedOutputDevices.enumerated().map { ($1.uid, $0) }
+        )
+        let orderedAdded = addedUIDs.sorted {
+            let left = (priorityRankByUID[$0] ?? Int.max, $0)
+            let right = (priorityRankByUID[$1] ?? Int.max, $1)
+            return left < right
+        }
+        for uid in orderedAdded where !orderedUIDs.contains(uid) {
+            orderedUIDs.append(uid)
+        }
+
+        let missingUIDs = uids.filter { !orderedUIDs.contains($0) }.sorted()
+        orderedUIDs.append(contentsOf: missingUIDs)
+
+        volumeState.setSelectedDeviceUIDs(
+            for: app.id,
+            to: uids,
+            orderedUIDs: orderedUIDs,
+            identifier: app.persistenceIdentifier
+        )
 
         guard previousUIDs != uids,
               getDeviceSelectionMode(for: app) == .multi else { return }
@@ -675,7 +791,11 @@ final class AudioEngine {
             }
 
         case .multi:
-            let selectedUIDs = getSelectedDeviceUIDs(for: app).sorted()
+            let selectedUIDSet = getSelectedDeviceUIDs(for: app)
+            var selectedUIDs = volumeState.getSelectedDeviceUIDOrder(for: app.id)
+                .filter { selectedUIDSet.contains($0) }
+            let missingUIDs = selectedUIDSet.filter { !selectedUIDs.contains($0) }.sorted()
+            selectedUIDs.append(contentsOf: missingUIDs)
             if selectedUIDs.isEmpty {
                 return
             }
@@ -695,6 +815,13 @@ final class AudioEngine {
                        let device = deviceMonitor.device(for: primaryUID) {
                         tap.currentDeviceVolume = deviceVolumeMonitor.volumes[device.id] ?? 1.0
                         tap.isDeviceMuted = deviceVolumeMonitor.muteStates[device.id] ?? false
+                    }
+                    if deviceUIDs.count > 1 {
+                        tap.updateEQSettingsByDevice(perDeviceEQSettings(for: deviceUIDs))
+                        tap.updateHeadphoneEQSettingsByDevice(perDeviceHeadphoneEQSettings(for: deviceUIDs))
+                    } else if let primaryUID = deviceUIDs.first {
+                        tap.updateEQSettings(effectiveEQSettings(for: app, deviceUID: primaryUID))
+                        tap.updateHeadphoneEQSettings(settingsManager.getDeviceHeadphoneEQSettings(for: primaryUID))
                     }
                     logger.debug("Updated \(app.name) to \(deviceUIDs.count) device(s)")
                 } catch {
@@ -725,10 +852,17 @@ final class AudioEngine {
             try tap.activate()
             taps[app.id] = tap
 
-            // Load and apply persisted EQ settings
-            let eqSettings = settingsManager.getEQSettings(for: app.persistenceIdentifier)
-            tap.updateEQSettings(eqSettings)
-            applyAutoEQToTap(tap)
+            // Apply effective EQ (app override if present, otherwise device EQ)
+            if deviceUIDs.count > 1 {
+                tap.updateEQSettingsByDevice(perDeviceEQSettings(for: deviceUIDs))
+                tap.updateHeadphoneEQSettingsByDevice(perDeviceHeadphoneEQSettings(for: deviceUIDs))
+            } else {
+                let eqSettings = effectiveEQSettings(for: app, deviceUID: deviceUIDs.first)
+                tap.updateEQSettings(eqSettings)
+                if let primaryUID = deviceUIDs.first {
+                    tap.updateHeadphoneEQSettings(settingsManager.getDeviceHeadphoneEQSettings(for: primaryUID))
+                }
+            }
 
             logger.debug("Created tap for \(app.name) on \(deviceUIDs.count) device(s)")
         } catch {
@@ -750,12 +884,17 @@ final class AudioEngine {
 
             // Handle multi-device mode
             if mode == .multi {
-                if let savedUIDs = volumeState.loadSavedSelectedDeviceUIDs(for: app.id, identifier: app.persistenceIdentifier),
-                   !savedUIDs.isEmpty {
-                    // Filter to currently available devices, maintaining deterministic order
-                    let availableUIDs = savedUIDs.filter { deviceMonitor.device(for: $0) != nil }
-                        .sorted()  // Deterministic ordering
+                if let savedUIDOrder = volumeState.loadSavedSelectedDeviceUIDOrder(for: app.id, identifier: app.persistenceIdentifier),
+                   !savedUIDOrder.isEmpty {
+                    // Filter to currently available devices while preserving saved order.
+                    let availableUIDs = savedUIDOrder.filter { deviceMonitor.device(for: $0) != nil }
                     if !availableUIDs.isEmpty {
+                        volumeState.setSelectedDeviceUIDs(
+                            for: app.id,
+                            to: Set(availableUIDs),
+                            orderedUIDs: availableUIDs,
+                            identifier: app.persistenceIdentifier
+                        )
                         logger.debug("Restoring multi-device mode for \(app.name) with \(availableUIDs.count) device(s)")
                         ensureTapWithDevices(for: app, deviceUIDs: availableUIDs)
 
@@ -887,13 +1026,16 @@ final class AudioEngine {
 
             if mode == .multi && tap.currentDeviceUIDs.count > 1 {
                 // Multi-device mode: remove disconnected device, keep others
-                let remainingUIDs = tap.currentDeviceUIDs.filter { $0 != deviceUID }.sorted()
+                let remainingUIDs = tap.currentDeviceUIDs.filter { $0 != deviceUID }
                 if !remainingUIDs.isEmpty {
                     multiModeTapsToUpdate.append((tap: tap, remainingUIDs: remainingUIDs))
                     // Update in-memory selection to remove disconnected device (don't persist)
-                    var currentSelection = volumeState.getSelectedDeviceUIDs(for: app.id)
-                    currentSelection.remove(deviceUID)
-                    volumeState.setSelectedDeviceUIDs(for: app.id, to: currentSelection, identifier: nil)
+                    volumeState.setSelectedDeviceUIDs(
+                        for: app.id,
+                        to: Set(remainingUIDs),
+                        orderedUIDs: remainingUIDs,
+                        identifier: nil
+                    )
                     continue
                 }
                 // All devices gone in multi-mode, fall through to single-device fallback
@@ -932,6 +1074,15 @@ final class AudioEngine {
                         try await tap.updateDevices(to: remainingUIDs)
                         tap.volume = self.volumeState.getVolume(for: tap.app.id)
                         tap.isMuted = self.volumeState.getMute(for: tap.app.id)
+                        if remainingUIDs.count > 1 {
+                            tap.updateEQSettingsByDevice(self.perDeviceEQSettings(for: remainingUIDs))
+                            tap.updateHeadphoneEQSettingsByDevice(self.perDeviceHeadphoneEQSettings(for: remainingUIDs))
+                        } else {
+                            tap.updateEQSettings(self.effectiveEQSettings(for: tap.app, deviceUID: remainingUIDs.first))
+                            if let primaryUID = remainingUIDs.first {
+                                tap.updateHeadphoneEQSettings(self.settingsManager.getDeviceHeadphoneEQSettings(for: primaryUID))
+                            }
+                        }
                         self.logger.debug("Removed \(deviceName) from \(tap.app.name) multi-device output")
                     } catch {
                         self.logger.error("Failed to update \(tap.app.name) devices: \(error.localizedDescription)")

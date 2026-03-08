@@ -616,61 +616,58 @@ struct MenuBarPopupView: View {
 
     /// Row for an active app (currently producing audio)
     @ViewBuilder
-    private func activeAppRow(app: AudioApp, displayableApp: DisplayableApp, scrollProxy: ScrollViewProxy) -> some View {
-        if let deviceUID = audioEngine.getDeviceUID(for: app) {
-            AppRowWithLevelPolling(
-                app: app,
-                volume: audioEngine.getVolume(for: app),
-                isMuted: audioEngine.getMute(for: app),
-                devices: sortedDevices,
-                selectedDeviceUID: deviceUID,
-                selectedDeviceUIDs: audioEngine.getSelectedDeviceUIDs(for: app),
-                isFollowingDefault: audioEngine.isFollowingDefault(for: app),
-                defaultDeviceUID: deviceVolumeMonitor.defaultDeviceUID,
-                deviceSelectionMode: audioEngine.getDeviceSelectionMode(for: app),
-                maxVolumeBoost: audioEngine.settingsManager.appSettings.maxVolumeBoost,
-                isPinned: audioEngine.isPinned(app),
-                getAudioLevel: { audioEngine.getAudioLevel(for: app) },
-                isPopupVisible: isPopupVisible,
-                onVolumeChange: { volume in
-                    audioEngine.setVolume(for: app, to: volume)
-                },
-                onMuteChange: { muted in
-                    audioEngine.setMute(for: app, to: muted)
-                },
-                onDeviceSelected: { newDeviceUID in
-                    audioEngine.setDevice(for: app, deviceUID: newDeviceUID)
-                },
-                onDevicesSelected: { uids in
-                    audioEngine.setSelectedDeviceUIDs(for: app, to: uids)
-                },
-                onDeviceModeChange: { mode in
-                    audioEngine.setDeviceSelectionMode(for: app, to: mode)
-                },
-                onSelectFollowDefault: {
-                    audioEngine.setDevice(for: app, deviceUID: nil)
-                },
-                onAppActivate: {
-                    activateApp(pid: app.id, bundleID: app.bundleID)
-                },
-                onPinToggle: {
-                    if audioEngine.isPinned(app) {
-                        audioEngine.unpinApp(app.persistenceIdentifier)
-                    } else {
-                        audioEngine.pinApp(app)
-                    }
-                },
-                eqSettings: audioEngine.getEQSettings(for: app),
-                onEQChange: { settings in
-                    audioEngine.setEQSettings(settings, for: app)
-                },
-                isEQExpanded: expandedRowID == displayableApp.id,
-                onEQToggle: {
-                    toggleEQ(for: displayableApp.id, scrollProxy: scrollProxy)
+    private func activeAppRow(app: AudioApp) -> some View {
+        let deviceUID = audioEngine.getDeviceUID(for: app)
+            ?? deviceVolumeMonitor.defaultDeviceUID
+            ?? sortedDevices.first?.uid
+            ?? ""
+
+        AppRowWithLevelPolling(
+            app: app,
+            volume: audioEngine.getVolume(for: app),
+            isMuted: audioEngine.getMute(for: app),
+            devices: sortedDevices,
+            selectedDeviceUID: deviceUID,
+            selectedDeviceUIDs: audioEngine.getSelectedDeviceUIDs(for: app),
+            isFollowingDefault: audioEngine.isFollowingDefault(for: app),
+            defaultDeviceUID: deviceVolumeMonitor.defaultDeviceUID,
+            deviceSelectionMode: audioEngine.getDeviceSelectionMode(for: app),
+            maxVolumeBoost: audioEngine.settingsManager.appSettings.maxVolumeBoost,
+            isPinned: audioEngine.isPinned(app),
+            getAudioLevel: { audioEngine.getAudioLevel(for: app) },
+            isPopupVisible: isPopupVisible,
+            onVolumeChange: { volume in
+                audioEngine.setVolume(for: app, to: volume)
+            },
+            onMuteChange: { muted in
+                audioEngine.setMute(for: app, to: muted)
+            },
+            onDeviceSelected: { newDeviceUID in
+                audioEngine.setDevice(for: app, deviceUID: newDeviceUID)
+            },
+            onDevicesSelected: { uids in
+                audioEngine.setSelectedDeviceUIDs(for: app, to: uids)
+            },
+            onDeviceModeChange: { mode in
+                audioEngine.setDeviceSelectionMode(for: app, to: mode)
+            },
+            onSelectFollowDefault: {
+                audioEngine.setDevice(for: app, deviceUID: nil)
+            },
+            onAppActivate: {
+                activateApp(pid: app.id, bundleID: app.bundleID)
+            },
+            onPinToggle: {
+                if audioEngine.isPinned(app) {
+                    audioEngine.unpinApp(app.persistenceIdentifier)
+                } else {
+                    audioEngine.pinApp(app)
                 }
-            )
-            .id(displayableApp.id)
-        }
+            },
+            onExclude: {
+                audioEngine.excludeApp(identifier: app.persistenceIdentifier)
+            }
+        )
     }
 
     /// Row for a pinned inactive app (not currently producing audio)

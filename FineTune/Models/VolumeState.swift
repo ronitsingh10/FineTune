@@ -14,6 +14,7 @@ struct AppAudioState {
     var persistenceIdentifier: String
     var deviceSelectionMode: DeviceSelectionMode = .single
     var selectedDeviceUIDs: Set<String> = []  // Used in multi mode
+    var selectedDeviceUIDOrder: [String] = []  // Preserves user order for multi mode
 }
 
 @Observable
@@ -126,28 +127,59 @@ final class VolumeState {
         states[pid]?.selectedDeviceUIDs ?? []
     }
 
-    func setSelectedDeviceUIDs(for pid: pid_t, to uids: Set<String>, identifier: String? = nil) {
+    func getSelectedDeviceUIDOrder(for pid: pid_t) -> [String] {
+        guard let state = states[pid] else { return [] }
+        return Self.normalizedUIDOrder(state.selectedDeviceUIDOrder, selectedUIDs: state.selectedDeviceUIDs)
+    }
+
+    func setSelectedDeviceUIDs(
+        for pid: pid_t,
+        to uids: Set<String>,
+        orderedUIDs: [String]? = nil,
+        identifier: String? = nil
+    ) {
         if var state = states[pid] {
             state.selectedDeviceUIDs = uids
+            state.selectedDeviceUIDOrder = Self.normalizedUIDOrder(
+                orderedUIDs ?? state.selectedDeviceUIDOrder,
+                selectedUIDs: uids
+            )
             if let identifier = identifier {
                 state.persistenceIdentifier = identifier
             }
             states[pid] = state
-            settingsManager?.setSelectedDeviceUIDs(for: state.persistenceIdentifier, to: uids)
+            settingsManager?.setSelectedDeviceUIDOrder(
+                for: state.persistenceIdentifier,
+                to: state.selectedDeviceUIDOrder
+            )
         } else if let identifier = identifier {
             let defaultVolume = settingsManager?.appSettings.defaultNewAppVolume ?? 1.0
             var newState = AppAudioState(volume: defaultVolume, muted: false, persistenceIdentifier: identifier)
             newState.selectedDeviceUIDs = uids
+            newState.selectedDeviceUIDOrder = Self.normalizedUIDOrder(orderedUIDs ?? [], selectedUIDs: uids)
             states[pid] = newState
-            settingsManager?.setSelectedDeviceUIDs(for: identifier, to: uids)
+            settingsManager?.setSelectedDeviceUIDOrder(for: identifier, to: newState.selectedDeviceUIDOrder)
         }
     }
 
     func loadSavedSelectedDeviceUIDs(for pid: pid_t, identifier: String) -> Set<String>? {
         ensureState(for: pid, identifier: identifier)
-        if let saved = settingsManager?.getSelectedDeviceUIDs(for: identifier) {
-            states[pid]?.selectedDeviceUIDs = saved
-            return saved
+        if let savedOrder = settingsManager?.getSelectedDeviceUIDOrder(for: identifier) {
+            let savedSet = Set(savedOrder)
+            states[pid]?.selectedDeviceUIDs = savedSet
+            states[pid]?.selectedDeviceUIDOrder = savedOrder
+            return savedSet
+        }
+        return nil
+    }
+
+    func loadSavedSelectedDeviceUIDOrder(for pid: pid_t, identifier: String) -> [String]? {
+        ensureState(for: pid, identifier: identifier)
+        if let savedOrder = settingsManager?.getSelectedDeviceUIDOrder(for: identifier) {
+            let savedSet = Set(savedOrder)
+            states[pid]?.selectedDeviceUIDs = savedSet
+            states[pid]?.selectedDeviceUIDOrder = savedOrder
+            return savedOrder
         }
         return nil
     }
@@ -171,5 +203,23 @@ final class VolumeState {
         } else if states[pid]?.persistenceIdentifier != identifier {
             states[pid]?.persistenceIdentifier = identifier
         }
+    }
+
+    private static func normalizedUIDOrder(_ preferredOrder: [String], selectedUIDs: Set<String>) -> [String] {
+        guard !selectedUIDs.isEmpty else { return [] }
+
+        var seen: Set<String> = []
+        var ordered: [String] = []
+        ordered.reserveCapacity(selectedUIDs.count)
+
+        for uid in preferredOrder where selectedUIDs.contains(uid) && !uid.isEmpty {
+            if seen.insert(uid).inserted {
+                ordered.append(uid)
+            }
+        }
+
+        let missing = selectedUIDs.filter { !seen.contains($0) }.sorted()
+        ordered.append(contentsOf: missing)
+        return ordered
     }
 }

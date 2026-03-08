@@ -1,4 +1,5 @@
 // FineTune/Views/Components/DevicePicker.swift
+import AppKit
 import SwiftUI
 
 /// Selection state for device picker - either following system default or explicit device
@@ -23,17 +24,27 @@ struct DevicePicker: View {
 
     @State private var isExpanded = false
     @State private var isButtonHovered = false
+    @State private var commandKeyPressed = false
+    @State private var modifierMonitor: Any?
 
     // Local state mirrors props for popover reactivity
     @State private var currentMode: DeviceSelectionMode = .single
     @State private var currentSelectedUIDs: Set<String> = []
 
     // Configuration
-    private let triggerWidth: CGFloat = 128
-    private let popoverWidth: CGFloat = 210
+    private let triggerWidth: CGFloat = 94
+    private let popoverWidth: CGFloat = 192
     private let itemHeight: CGFloat = 26
     private let itemSpacing: CGFloat = 2
     private let cornerRadius: CGFloat = 8
+
+    private var isCommandSelectionActive: Bool {
+        showModeToggle && isExpanded && commandKeyPressed
+    }
+
+    private var hasCommittedMultiSelection: Bool {
+        selectedDeviceUIDs.count > 1
+    }
 
     /// Menu item representation for unified dropdown
     enum MenuItem: Identifiable, Equatable {
@@ -68,6 +79,11 @@ struct DevicePicker: View {
 
     /// Display text for trigger button
     private var triggerText: String {
+        if selectedDeviceUIDs.count > 1 {
+            let count = selectedDeviceUIDs.count
+            return "\(count) device\(count == 1 ? "" : "s")"
+        }
+
         switch mode {
         case .single:
             return singleModeText
@@ -94,16 +110,21 @@ struct DevicePicker: View {
     /// Icon for trigger button
     @ViewBuilder
     private var triggerIcon: some View {
-        switch mode {
-        case .single:
-            singleModeIcon
-        case .multi:
-            if selectedDeviceUIDs.isEmpty {
-                // No multi selections - show single-mode icon
+        if selectedDeviceUIDs.count > 1 {
+            Image(systemName: "speaker.wave.2.fill")
+                .font(.system(size: 13))
+        } else {
+            switch mode {
+            case .single:
                 singleModeIcon
-            } else {
-                Image(systemName: "speaker.wave.2.fill")
-                    .font(.system(size: 13))
+            case .multi:
+                if selectedDeviceUIDs.isEmpty {
+                    // No multi selections - show single-mode icon
+                    singleModeIcon
+                } else {
+                    Image(systemName: "speaker.wave.2.fill")
+                        .font(.system(size: 13))
+                }
             }
         }
     }
@@ -145,6 +166,20 @@ struct DevicePicker: View {
                 // Initialize local state from props
                 currentMode = mode
                 currentSelectedUIDs = selectedDeviceUIDs
+            }
+            .onChange(of: isExpanded) { _, expanded in
+                if expanded {
+                    startModifierMonitoring()
+                    seedSelectionFromCurrentRouteIfNeeded()
+                } else {
+                    stopModifierMonitoring()
+                }
+            }
+            .onChange(of: commandKeyPressed) { _, _ in
+                seedSelectionFromCurrentRouteIfNeeded()
+            }
+            .onDisappear {
+                stopModifierMonitoring()
             }
     }
 
@@ -197,17 +232,25 @@ struct DevicePicker: View {
 
     private var dropdownContent: some View {
         VStack(spacing: 0) {
-            // Mode toggle header (hidden for single-mode-only contexts like Settings)
+            // Multi-select hint (shown where multi-select is supported)
             if showModeToggle {
-                ModeToggle(mode: Binding(
-                    get: { currentMode },
-                    set: { newMode in
-                        currentMode = newMode  // Update local state immediately
-                        onModeChange(newMode)  // Notify parent
-                        // States are independent - no copying between modes
-                    }
-                ))
-                .padding(.horizontal, DesignTokens.Spacing.xs + 2)
+                HStack(spacing: 6) {
+                    Image(systemName: "questionmark.circle")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(DesignTokens.Colors.textTertiary)
+                    Text("Hold")
+                        .font(DesignTokens.Typography.caption)
+                        .foregroundStyle(DesignTokens.Colors.textTertiary)
+                    Image(systemName: "command")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(DesignTokens.Colors.textTertiary)
+                    Text("for multi-output")
+                        .font(DesignTokens.Typography.caption)
+                        .foregroundStyle(DesignTokens.Colors.textTertiary)
+                    Spacer(minLength: 0)
+                }
+                .padding(.leading, DesignTokens.Spacing.md + 2)
+                .padding(.trailing, DesignTokens.Spacing.sm)
                 .padding(.top, DesignTokens.Spacing.xs + 2)
                 .padding(.bottom, DesignTokens.Spacing.xs)
 
@@ -243,20 +286,14 @@ struct DevicePicker: View {
     @ViewBuilder
     private func deviceRow(for item: MenuItem) -> some View {
         let isSystemAudio = item.id == "__system_audio__"
-        let isDisabled = currentMode == .multi && isSystemAudio
+        let isDisabled = isCommandSelectionActive && isSystemAudio
         let isSelected = isItemSelected(item)
 
         DevicePickerRow(
             item: item,
             isSelected: isSelected,
             isDisabled: isDisabled,
-            isMultiMode: currentMode == .multi,
-            isDefaultDevice: {
-                if case .device(let device) = item {
-                    return device.uid == defaultDeviceUID
-                }
-                return false
-            }(),
+            isMultiMode: isCommandSelectionActive,
             onTap: {
                 handleItemTap(item)
             }
@@ -264,47 +301,107 @@ struct DevicePicker: View {
     }
 
     private func isItemSelected(_ item: MenuItem) -> Bool {
-        switch currentMode {
-        case .single:
-            if case .systemAudio = item {
-                return isFollowingDefault
-            } else if case .device(let device) = item {
-                return !isFollowingDefault && device.uid == selectedDeviceUID
-            }
-            return false
-        case .multi:
+        if isCommandSelectionActive {
             if case .device(let device) = item {
                 return currentSelectedUIDs.contains(device.uid)
             }
-            return false  // System Audio not selectable in multi mode
+            return false  // System audio is disabled in command multi-select mode.
         }
+
+        if hasCommittedMultiSelection {
+            if case .device(let device) = item {
+                return selectedDeviceUIDs.contains(device.uid)
+            }
+            return false
+        }
+
+        if case .systemAudio = item {
+            return isFollowingDefault
+        } else if case .device(let device) = item {
+            if !isFollowingDefault && !selectedDeviceUID.isEmpty {
+                return device.uid == selectedDeviceUID
+            }
+        }
+        return false
     }
 
     private func handleItemTap(_ item: MenuItem) {
-        switch currentMode {
-        case .single:
-            switch item {
-            case .systemAudio:
-                onSelectFollowDefault()
-            case .device(let device):
-                onDeviceSelected(device.uid)
-            }
-            withAnimation(.easeOut(duration: 0.15)) {
-                isExpanded = false
-            }
-
-        case .multi:
+        if isCommandSelectionActive {
             guard case .device(let device) = item else { return }
             var newSelection = currentSelectedUIDs
             if newSelection.contains(device.uid) {
+                guard newSelection.count > 1 else { return }
                 newSelection.remove(device.uid)
             } else {
                 newSelection.insert(device.uid)
             }
             currentSelectedUIDs = newSelection  // Update local state immediately
-            onDevicesSelected(newSelection)  // Notify parent
-            // Stay open in multi mode
+            if newSelection.count > 1 {
+                currentMode = .multi
+                onModeChange(.multi)
+                onDevicesSelected(newSelection)
+            } else if let remaining = newSelection.first {
+                currentMode = .single
+                onModeChange(.single)
+                onDeviceSelected(remaining)
+            }
+            return
         }
+
+        switch item {
+        case .systemAudio:
+            currentMode = .single
+            currentSelectedUIDs = []
+            onModeChange(.single)
+            onSelectFollowDefault()
+        case .device(let device):
+            currentMode = .single
+            currentSelectedUIDs = [device.uid]
+            onModeChange(.single)
+            onDeviceSelected(device.uid)
+        }
+
+        withAnimation(.easeOut(duration: 0.15)) {
+            isExpanded = false
+        }
+    }
+
+    private func seedSelectionFromCurrentRouteIfNeeded() {
+        guard isCommandSelectionActive else { return }
+        guard currentSelectedUIDs.isEmpty else { return }
+
+        if !selectedDeviceUID.isEmpty,
+           devices.contains(where: { $0.uid == selectedDeviceUID }) {
+            currentSelectedUIDs = [selectedDeviceUID]
+            return
+        }
+
+        if let defaultDeviceUID,
+           devices.contains(where: { $0.uid == defaultDeviceUID }) {
+            currentSelectedUIDs = [defaultDeviceUID]
+            return
+        }
+
+        if let fallback = devices.first?.uid {
+            currentSelectedUIDs = [fallback]
+        }
+    }
+
+    private func startModifierMonitoring() {
+        stopModifierMonitoring()
+        commandKeyPressed = NSEvent.modifierFlags.contains(.command)
+        modifierMonitor = NSEvent.addLocalMonitorForEvents(matching: [.flagsChanged]) { event in
+            commandKeyPressed = event.modifierFlags.contains(.command)
+            return event
+        }
+    }
+
+    private func stopModifierMonitoring() {
+        if let modifierMonitor {
+            NSEvent.removeMonitor(modifierMonitor)
+            self.modifierMonitor = nil
+        }
+        commandKeyPressed = false
     }
 }
 
@@ -315,7 +412,6 @@ private struct DevicePickerRow: View {
     let isSelected: Bool
     let isDisabled: Bool
     let isMultiMode: Bool
-    let isDefaultDevice: Bool
     let onTap: () -> Void
 
     @State private var isHovered = false
@@ -333,13 +429,6 @@ private struct DevicePickerRow: View {
                 itemText
 
                 Spacer()
-
-                // Default device star
-                if isDefaultDevice {
-                    Image(systemName: "star.fill")
-                        .font(.system(size: 9))
-                        .foregroundStyle(DesignTokens.Colors.textTertiary)
-                }
             }
             .font(.system(size: 11))
             .foregroundColor(isDisabled ? DesignTokens.Colors.textQuaternary : .primary)
@@ -409,7 +498,7 @@ private struct DevicePickerRow: View {
             VStack(alignment: .leading, spacing: 1) {
                 Text("System Audio")
                 if isDisabled {
-                    Text("Not available in multi mode")
+                    Text("Not available")
                         .font(DesignTokens.Typography.caption)
                         .foregroundStyle(DesignTokens.Colors.textQuaternary)
                 } else {

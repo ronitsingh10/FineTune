@@ -199,12 +199,40 @@ final class SettingsManager {
     // MARK: - Selected Device UIDs (Multi Mode)
 
     func getSelectedDeviceUIDs(for identifier: String) -> Set<String>? {
-        guard let uids = settings.appSelectedDeviceUIDs[identifier] else { return nil }
-        return Set(uids)
+        guard let orderedUIDs = getSelectedDeviceUIDOrder(for: identifier) else { return nil }
+        return Set(orderedUIDs)
     }
 
     func setSelectedDeviceUIDs(for identifier: String, to uids: Set<String>) {
-        settings.appSelectedDeviceUIDs[identifier] = Array(uids)
+        var ordered = (getSelectedDeviceUIDOrder(for: identifier) ?? []).filter { uids.contains($0) }
+        let missing = uids.filter { !ordered.contains($0) }.sorted()
+        ordered.append(contentsOf: missing)
+        setSelectedDeviceUIDOrder(for: identifier, to: ordered)
+    }
+
+    func getSelectedDeviceUIDOrder(for identifier: String) -> [String]? {
+        guard let raw = settings.appSelectedDeviceUIDs[identifier], !raw.isEmpty else { return nil }
+        var seen: Set<String> = []
+        var ordered: [String] = []
+        ordered.reserveCapacity(raw.count)
+        for uid in raw where !uid.isEmpty {
+            if seen.insert(uid).inserted {
+                ordered.append(uid)
+            }
+        }
+        return ordered.isEmpty ? nil : ordered
+    }
+
+    func setSelectedDeviceUIDOrder(for identifier: String, to orderedUIDs: [String]) {
+        var seen: Set<String> = []
+        var sanitized: [String] = []
+        sanitized.reserveCapacity(orderedUIDs.count)
+        for uid in orderedUIDs where !uid.isEmpty {
+            if seen.insert(uid).inserted {
+                sanitized.append(uid)
+            }
+        }
+        settings.appSelectedDeviceUIDs[identifier] = sanitized
         scheduleSave()
     }
 
