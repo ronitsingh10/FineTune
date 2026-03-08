@@ -155,7 +155,7 @@ struct DeviceRow: View {
                     guard canUseEQ else { return }
                     onEQToggle()
                 } label: {
-                    Image(systemName: "slider.horizontal.3")
+                    Image(systemName: "slider.vertical.3")
                         .font(.system(size: 12, weight: .medium))
                         .foregroundStyle(
                             canUseEQ
@@ -182,7 +182,9 @@ struct DeviceRow: View {
             EQPanelView(
                 settings: $localEQSettings,
                 onPresetSelected: { preset in
-                    localEQSettings = preset.settings
+                    var updated = preset.settings
+                    updated.isEnabled = localEQSettings.isEnabled
+                    localEQSettings = updated
                     onEQChange(localEQSettings)
                 },
                 onSettingsChanged: { updated in
@@ -192,6 +194,7 @@ struct DeviceRow: View {
                 isUsingDeviceEQ: true,
                 onUseDeviceEQ: nil
             )
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
         .onChange(of: volume) { _, newValue in
             // Only sync from external changes when user is NOT dragging
