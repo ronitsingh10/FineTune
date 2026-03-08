@@ -246,7 +246,9 @@ enum DesignTokens {
 
         /// Controls section width
         static var controlsWidth: CGFloat {
-            contentWidth - iconSize - Spacing.sm - 100
+            // Sized to actual app controls footprint so rows don't leave excess
+            // trailing space to the right of the device picker.
+            sliderWidth + percentageWidth + vuMeterWidth + 128 + minTouchTarget + (Spacing.sm * 4)
         }
 
         /// Percentage text width (fixed to prevent layout shift)
