@@ -26,13 +26,8 @@ struct InactiveAppRow: View {
     let onDeviceModeChange: (DeviceSelectionMode) -> Void
     let onSelectFollowDefault: () -> Void
     let onUnpin: () -> Void  // Inactive apps can only be unpinned
-    let eqSettings: EQSettings
-    let onEQChange: (EQSettings) -> Void
-    let isEQExpanded: Bool
-    let onEQToggle: () -> Void
 
     @State private var isPinButtonHovered = false
-    @State private var localEQSettings: EQSettings
 
     /// Pin button color - always visible for inactive (pinned) apps
     private var pinButtonColor: Color {
@@ -61,11 +56,7 @@ struct InactiveAppRow: View {
         onDevicesSelected: @escaping (Set<String>) -> Void = { _ in },
         onDeviceModeChange: @escaping (DeviceSelectionMode) -> Void = { _ in },
         onSelectFollowDefault: @escaping () -> Void = {},
-        onUnpin: @escaping () -> Void,
-        eqSettings: EQSettings = EQSettings(),
-        onEQChange: @escaping (EQSettings) -> Void = { _ in },
-        isEQExpanded: Bool = false,
-        onEQToggle: @escaping () -> Void = {}
+        onUnpin: @escaping () -> Void
     ) {
         self.appInfo = appInfo
         self.icon = icon
@@ -85,15 +76,10 @@ struct InactiveAppRow: View {
         self.onDeviceModeChange = onDeviceModeChange
         self.onSelectFollowDefault = onSelectFollowDefault
         self.onUnpin = onUnpin
-        self.eqSettings = eqSettings
-        self.onEQChange = onEQChange
-        self.isEQExpanded = isEQExpanded
-        self.onEQToggle = onEQToggle
-        self._localEQSettings = State(initialValue: eqSettings)
     }
 
     var body: some View {
-        ExpandableGlassRow(isExpanded: isEQExpanded) {
+        ExpandableGlassRow(isExpanded: false) {
             // Header: Main row content (always visible)
             HStack(spacing: DesignTokens.Spacing.sm) {
                 // Unpin star button - left of app icon
@@ -129,6 +115,7 @@ struct InactiveAppRow: View {
                     .font(DesignTokens.Typography.rowName)
                     .lineLimit(1)
                     .help(appInfo.displayName)
+                    .layoutPriority(1)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .foregroundStyle(DesignTokens.Colors.textSecondary)  // Dimmed text
 
@@ -144,33 +131,17 @@ struct InactiveAppRow: View {
                     defaultDeviceUID: defaultDeviceUID,
                     deviceSelectionMode: deviceSelectionMode,
                     maxVolumeBoost: maxVolumeBoost,
-                    isEQExpanded: isEQExpanded,
                     onVolumeChange: onVolumeChange,
                     onMuteChange: onMuteChange,
                     onDeviceSelected: onDeviceSelected,
                     onDevicesSelected: onDevicesSelected,
                     onDeviceModeChange: onDeviceModeChange,
-                    onSelectFollowDefault: onSelectFollowDefault,
-                    onEQToggle: onEQToggle
+                    onSelectFollowDefault: onSelectFollowDefault
                 )
             }
             .frame(height: DesignTokens.Dimensions.rowContentHeight)
         } expandedContent: {
-            // EQ panel
-            EQPanelView(
-                settings: $localEQSettings,
-                onPresetSelected: { preset in
-                    localEQSettings = preset.settings
-                    onEQChange(preset.settings)
-                },
-                onSettingsChanged: { settings in
-                    onEQChange(settings)
-                }
-            )
-            .padding(.top, DesignTokens.Spacing.sm)
-        }
-        .onChange(of: eqSettings) { _, newValue in
-            localEQSettings = newValue
+            EmptyView()
         }
     }
 }

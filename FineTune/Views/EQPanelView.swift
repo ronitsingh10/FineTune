@@ -5,6 +5,8 @@ struct EQPanelView: View {
     @Binding var settings: EQSettings
     let onPresetSelected: (EQPreset) -> Void
     let onSettingsChanged: (EQSettings) -> Void
+    let isUsingDeviceEQ: Bool
+    let onUseDeviceEQ: (() -> Void)?
 
     private let frequencyLabels = ["32", "64", "125", "250", "500", "1k", "2k", "4k", "8k", "16k"]
 
@@ -37,6 +39,17 @@ struct EQPanelView: View {
 
                 // Preset picker on right
                 HStack(spacing: DesignTokens.Spacing.sm) {
+                    if let onUseDeviceEQ {
+                        Button(isUsingDeviceEQ ? "Using Device EQ" : "Use Device EQ") {
+                            if !isUsingDeviceEQ {
+                                onUseDeviceEQ()
+                            }
+                        }
+                        .buttonStyle(.plain)
+                        .font(DesignTokens.Typography.caption)
+                        .foregroundStyle(isUsingDeviceEQ ? DesignTokens.Colors.textTertiary : DesignTokens.Colors.interactiveDefault)
+                    }
+
                     Text("Preset")
                         .font(DesignTokens.Typography.pickerText)
                         .foregroundColor(DesignTokens.Colors.textSecondary)
@@ -84,7 +97,9 @@ struct EQPanelView: View {
         EQPanelView(
             settings: .constant(EQSettings()),
             onPresetSelected: { _ in },
-            onSettingsChanged: { _ in }
+            onSettingsChanged: { _ in },
+            isUsingDeviceEQ: false,
+            onUseDeviceEQ: {}
         )
     }
     .padding(.horizontal, DesignTokens.Spacing.sm)

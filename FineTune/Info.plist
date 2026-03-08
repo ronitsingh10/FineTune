@@ -2,26 +2,28 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-	<key>LSUIElement</key>
-	<true/>
-	<key>NSAudioCaptureUsageDescription</key>
-	<string>FineTune needs access to control volume levels for individual applications.</string>
-	<key>SUFeedURL</key>
-	<string>https://raw.githubusercontent.com/ronitsingh10/FineTune/main/appcast.xml</string>
-	<key>SUPublicEDKey</key>
-	<string>xExSoQmCLDCez0KyhZ9EM9PdOZFZgyX/+VF+OVrpIlo=</string>
-	<key>SUEnableInstallerLauncherService</key>
-	<true/>
 	<key>CFBundleURLTypes</key>
 	<array>
 		<dict>
+			<key>CFBundleURLName</key>
+			<string>com.finetuneapp.FineTune</string>
 			<key>CFBundleURLSchemes</key>
 			<array>
 				<string>finetune</string>
 			</array>
-			<key>CFBundleURLName</key>
-			<string>com.finetuneapp.FineTune</string>
 		</dict>
 	</array>
+	<key>LSUIElement</key>
+	<true/>
+	<key>NSAudioCaptureUsageDescription</key>
+	<string>FineTune needs access to control volume levels for individual applications.</string>
+	<key>NSBluetoothAlwaysUsageDescription</key>
+	<string>FineTune needs Bluetooth access to disconnect selected Bluetooth audio devices from the sample rate menu.</string>
+	<key>SUEnableInstallerLauncherService</key>
+	<true/>
+	<key>SUFeedURL</key>
+	<string>https://raw.githubusercontent.com/ronitsingh10/FineTune/main/appcast.xml</string>
+	<key>SUPublicEDKey</key>
+	<string>xExSoQmCLDCez0KyhZ9EM9PdOZFZgyX/+VF+OVrpIlo=</string>
 </dict>
 </plist>

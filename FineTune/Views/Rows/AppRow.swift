@@ -25,15 +25,14 @@ struct AppRow: View {
     let onSelectFollowDefault: () -> Void
     let onAppActivate: () -> Void
     let onPinToggle: () -> Void  // Toggle pin state
-    let eqSettings: EQSettings
-    let onEQChange: (EQSettings) -> Void
-    let isEQExpanded: Bool
-    let onEQToggle: () -> Void
+    let onExclude: () -> Void
+    let onInclude: () -> Void
+    let isExcluded: Bool
 
     @State private var isRowHovered = false
     @State private var isIconHovered = false
     @State private var isPinButtonHovered = false
-    @State private var localEQSettings: EQSettings
+    @State private var isExcludeButtonHovered = false
 
     /// Pin button color - visible when pinned or row is hovered
     private var pinButtonColor: Color {
@@ -69,10 +68,9 @@ struct AppRow: View {
         onSelectFollowDefault: @escaping () -> Void = {},
         onAppActivate: @escaping () -> Void = {},
         onPinToggle: @escaping () -> Void = {},
-        eqSettings: EQSettings = EQSettings(),
-        onEQChange: @escaping (EQSettings) -> Void = { _ in },
-        isEQExpanded: Bool = false,
-        onEQToggle: @escaping () -> Void = {}
+        onExclude: @escaping () -> Void = {},
+        onInclude: @escaping () -> Void = {},
+        isExcluded: Bool = false
     ) {
         self.app = app
         self.volume = volume
@@ -94,20 +92,18 @@ struct AppRow: View {
         self.onSelectFollowDefault = onSelectFollowDefault
         self.onAppActivate = onAppActivate
         self.onPinToggle = onPinToggle
-        self.eqSettings = eqSettings
-        self.onEQChange = onEQChange
-        self.isEQExpanded = isEQExpanded
-        self.onEQToggle = onEQToggle
-        // Initialize local EQ state for reactive UI updates
-        self._localEQSettings = State(initialValue: eqSettings)
+        self.onExclude = onExclude
+        self.onInclude = onInclude
+        self.isExcluded = isExcluded
     }
 
     var body: some View {
-        ExpandableGlassRow(isExpanded: isEQExpanded) {
+        ExpandableGlassRow(isExpanded: false) {
             // Header: Main row content (always visible)
             HStack(spacing: DesignTokens.Spacing.sm) {
                 // Pin/unpin star button - left of app icon
                 Button {
+                    guard !isExcluded else { return }
                     onPinToggle()
                 } label: {
                     Image(systemName: isPinned ? "star.fill" : "star")
@@ -124,8 +120,37 @@ struct AppRow: View {
                 .buttonStyle(.plain)
                 .onHover { isPinButtonHovered = $0 }
                 .help(isPinned ? "Unpin app" : "Pin app to top")
+                .opacity(isExcluded ? 0.45 : 1.0)
                 .animation(DesignTokens.Animation.hover, value: pinButtonColor)
                 .animation(DesignTokens.Animation.quick, value: isPinButtonHovered)
+
+                Button {
+                    if isExcluded {
+                        onInclude()
+                    } else {
+                        onExclude()
+                    }
+                } label: {
+                    Image(systemName: isExcluded ? "plus.circle.fill" : "slash.circle")
+                        .font(.system(size: 11))
+                        .symbolRenderingMode(.hierarchical)
+                        .foregroundStyle(
+                            isExcluded
+                                ? .green
+                                : (isExcludeButtonHovered
+                                    ? DesignTokens.Colors.mutedIndicator
+                                    : DesignTokens.Colors.interactiveDefault)
+                        )
+                        .frame(
+                            minWidth: DesignTokens.Dimensions.minTouchTarget,
+                            minHeight: DesignTokens.Dimensions.minTouchTarget
+                        )
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .onHover { isExcludeButtonHovered = $0 }
+                .help(isExcluded ? "Include in FineTune" : "Exclude from FineTune")
+                .animation(DesignTokens.Animation.hover, value: isExcludeButtonHovered)
 
                 // App icon - clickable to activate app
                 Image(nsImage: app.icon)
@@ -142,6 +167,7 @@ struct AppRow: View {
                         }
                     }
                     .onTapGesture {
+                        guard !isExcluded else { return }
                         onAppActivate()
                     }
 
@@ -150,6 +176,7 @@ struct AppRow: View {
                     .font(DesignTokens.Typography.rowName)
                     .lineLimit(1)
                     .help(app.name)
+                    .layoutPriority(1)
                     .frame(maxWidth: .infinity, alignment: .leading)
 
                 // Shared controls section
@@ -164,36 +191,21 @@ struct AppRow: View {
                     defaultDeviceUID: defaultDeviceUID,
                     deviceSelectionMode: deviceSelectionMode,
                     maxVolumeBoost: maxVolumeBoost,
-                    isEQExpanded: isEQExpanded,
                     onVolumeChange: onVolumeChange,
                     onMuteChange: onMuteChange,
                     onDeviceSelected: onDeviceSelected,
                     onDevicesSelected: onDevicesSelected,
                     onDeviceModeChange: onDeviceModeChange,
-                    onSelectFollowDefault: onSelectFollowDefault,
-                    onEQToggle: onEQToggle
+                    onSelectFollowDefault: onSelectFollowDefault
                 )
+                .allowsHitTesting(!isExcluded)
+                .opacity(isExcluded ? 0.45 : 1.0)
             }
             .frame(height: DesignTokens.Dimensions.rowContentHeight)
             .onHover { isRowHovered = $0 }
+            .opacity(isExcluded ? 0.62 : 1.0)
         } expandedContent: {
-            // EQ panel - shown when expanded
-            // SwiftUI calculates natural height via conditional rendering
-            EQPanelView(
-                settings: $localEQSettings,
-                onPresetSelected: { preset in
-                    localEQSettings = preset.settings
-                    onEQChange(preset.settings)
-                },
-                onSettingsChanged: { settings in
-                    onEQChange(settings)
-                }
-            )
-            .padding(.top, DesignTokens.Spacing.sm)
-        }
-        .onChange(of: eqSettings) { _, newValue in
-            // Sync from parent when external EQ settings change
-            localEQSettings = newValue
+            EmptyView()
         }
     }
 }
@@ -223,10 +235,9 @@ struct AppRowWithLevelPolling: View {
     let onSelectFollowDefault: () -> Void
     let onAppActivate: () -> Void
     let onPinToggle: () -> Void  // Toggle pin state
-    let eqSettings: EQSettings
-    let onEQChange: (EQSettings) -> Void
-    let isEQExpanded: Bool
-    let onEQToggle: () -> Void
+    let onExclude: () -> Void
+    let onInclude: () -> Void
+    let isExcluded: Bool
 
     @State private var displayLevel: Float = 0
     @State private var levelTimer: Timer?
@@ -253,10 +264,9 @@ struct AppRowWithLevelPolling: View {
         onSelectFollowDefault: @escaping () -> Void = {},
         onAppActivate: @escaping () -> Void = {},
         onPinToggle: @escaping () -> Void = {},
-        eqSettings: EQSettings = EQSettings(),
-        onEQChange: @escaping (EQSettings) -> Void = { _ in },
-        isEQExpanded: Bool = false,
-        onEQToggle: @escaping () -> Void = {}
+        onExclude: @escaping () -> Void = {},
+        onInclude: @escaping () -> Void = {},
+        isExcluded: Bool = false
     ) {
         self.app = app
         self.volume = volume
@@ -279,10 +289,9 @@ struct AppRowWithLevelPolling: View {
         self.onSelectFollowDefault = onSelectFollowDefault
         self.onAppActivate = onAppActivate
         self.onPinToggle = onPinToggle
-        self.eqSettings = eqSettings
-        self.onEQChange = onEQChange
-        self.isEQExpanded = isEQExpanded
-        self.onEQToggle = onEQToggle
+        self.onExclude = onExclude
+        self.onInclude = onInclude
+        self.isExcluded = isExcluded
     }
 
     var body: some View {
@@ -307,10 +316,9 @@ struct AppRowWithLevelPolling: View {
             onSelectFollowDefault: onSelectFollowDefault,
             onAppActivate: onAppActivate,
             onPinToggle: onPinToggle,
-            eqSettings: eqSettings,
-            onEQChange: onEQChange,
-            isEQExpanded: isEQExpanded,
-            onEQToggle: onEQToggle
+            onExclude: onExclude,
+            onInclude: onInclude,
+            isExcluded: isExcluded
         )
         .onAppear {
             if isPopupVisible {

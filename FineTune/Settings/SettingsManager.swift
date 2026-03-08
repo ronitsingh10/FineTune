@@ -66,11 +66,10 @@ final class SettingsManager {
     private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "FineTune", category: "SettingsManager")
 
     struct Settings: Codable {
-        var version: Int = 7
+        var version: Int = 8
         var appVolumes: [String: Float] = [:]
         var appDeviceRouting: [String: String] = [:]  // bundleID → deviceUID
         var appMutes: [String: Bool] = [:]  // bundleID → isMuted
-        var appEQSettings: [String: EQSettings] = [:]  // bundleID → EQ settings
         var appSettings: AppSettings = AppSettings()  // App-wide settings
         var systemSoundsFollowsDefault: Bool = true  // Whether system sounds follows macOS default
         var appDeviceSelectionMode: [String: DeviceSelectionMode] = [:]  // bundleID → selection mode
@@ -87,6 +86,16 @@ final class SettingsManager {
         // Device priority (ordered device UIDs, highest priority first)
         var outputDevicePriority: [String] = []
         var inputDevicePriority: [String] = []
+        var hiddenOutputDeviceUIDs: Set<String> = []
+        var hiddenInputDeviceUIDs: Set<String> = []
+
+        // Preferred nominal sample rate per device UID
+        var preferredDeviceSampleRates: [String: Double] = [:]
+        // Device-wide EQ settings keyed by output device UID
+        var deviceEQSettings: [String: EQSettings] = [:]
+
+        // Apps excluded from FineTune processing and UI
+        var excludedAppIdentifiers: Set<String> = []
     }
 
     init(directory: URL? = nil) {
@@ -147,13 +156,21 @@ final class SettingsManager {
         scheduleSave()
     }
 
-    func getEQSettings(for appIdentifier: String) -> EQSettings {
-        return settings.appEQSettings[appIdentifier] ?? EQSettings.flat
+    func getDeviceEQSettings(for deviceUID: String) -> EQSettings {
+        settings.deviceEQSettings[deviceUID] ?? EQSettings.flat
     }
 
-    func setEQSettings(_ eqSettings: EQSettings, for appIdentifier: String) {
-        settings.appEQSettings[appIdentifier] = eqSettings
+    func setDeviceEQSettings(_ eqSettings: EQSettings, for deviceUID: String) {
+        settings.deviceEQSettings[deviceUID] = eqSettings
         scheduleSave()
+    }
+
+    /// Resolves effective EQ for an app using device-level EQ only.
+    func getEffectiveEQSettings(deviceUID: String?) -> EQSettings {
+        if let deviceUID {
+            return settings.deviceEQSettings[deviceUID] ?? EQSettings.flat
+        }
+        return EQSettings.flat
     }
 
     // MARK: - Device Selection Mode
@@ -274,6 +291,69 @@ final class SettingsManager {
         scheduleSave()
     }
 
+    // MARK: - Hidden Devices
+
+    func isOutputDeviceHidden(_ uid: String) -> Bool {
+        settings.hiddenOutputDeviceUIDs.contains(uid)
+    }
+
+    func isInputDeviceHidden(_ uid: String) -> Bool {
+        settings.hiddenInputDeviceUIDs.contains(uid)
+    }
+
+    func setOutputDeviceHidden(_ uid: String, hidden: Bool) {
+        if hidden {
+            settings.hiddenOutputDeviceUIDs.insert(uid)
+        } else {
+            settings.hiddenOutputDeviceUIDs.remove(uid)
+        }
+        scheduleSave()
+    }
+
+    func setInputDeviceHidden(_ uid: String, hidden: Bool) {
+        if hidden {
+            settings.hiddenInputDeviceUIDs.insert(uid)
+        } else {
+            settings.hiddenInputDeviceUIDs.remove(uid)
+        }
+        scheduleSave()
+    }
+
+    // MARK: - Device Sample Rate Preferences
+
+    func getPreferredSampleRate(for deviceUID: String) -> Double? {
+        settings.preferredDeviceSampleRates[deviceUID]
+    }
+
+    func setPreferredSampleRate(for deviceUID: String, to rate: Double?) {
+        if let rate {
+            settings.preferredDeviceSampleRates[deviceUID] = rate
+        } else {
+            settings.preferredDeviceSampleRates.removeValue(forKey: deviceUID)
+        }
+        scheduleSave()
+    }
+
+    // MARK: - Excluded Apps
+
+    func isExcludedApp(_ identifier: String) -> Bool {
+        settings.excludedAppIdentifiers.contains(identifier)
+    }
+
+    func excludeApp(_ identifier: String) {
+        settings.excludedAppIdentifiers.insert(identifier)
+        scheduleSave()
+    }
+
+    func includeApp(_ identifier: String) {
+        settings.excludedAppIdentifiers.remove(identifier)
+        scheduleSave()
+    }
+
+    func excludedApps() -> [String] {
+        Array(settings.excludedAppIdentifiers).sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
+    }
+
     // MARK: - App-Wide Settings
 
     var appSettings: AppSettings {
@@ -315,7 +395,6 @@ final class SettingsManager {
         settings.appVolumes.removeAll()
         settings.appDeviceRouting.removeAll()
         settings.appMutes.removeAll()
-        settings.appEQSettings.removeAll()
         settings.pinnedApps.removeAll()
         settings.pinnedAppInfo.removeAll()
         settings.appSettings = AppSettings()
@@ -326,6 +405,11 @@ final class SettingsManager {
         settings.ddcSavedVolumes.removeAll()
         settings.outputDevicePriority.removeAll()
         settings.inputDevicePriority.removeAll()
+        settings.hiddenOutputDeviceUIDs.removeAll()
+        settings.hiddenInputDeviceUIDs.removeAll()
+        settings.preferredDeviceSampleRates.removeAll()
+        settings.deviceEQSettings.removeAll()
+        settings.excludedAppIdentifiers.removeAll()
 
         // Also unregister from launch at login
         try? SMAppService.mainApp.unregister()
@@ -340,7 +424,7 @@ final class SettingsManager {
         do {
             let data = try Data(contentsOf: settingsURL)
             settings = try JSONDecoder().decode(Settings.self, from: data)
-            logger.debug("Loaded settings with \(self.settings.appVolumes.count) volumes, \(self.settings.appDeviceRouting.count) device routings, \(self.settings.appMutes.count) mutes, \(self.settings.appEQSettings.count) EQ settings")
+            logger.debug("Loaded settings with \(self.settings.appVolumes.count) volumes, \(self.settings.appDeviceRouting.count) device routings, \(self.settings.appMutes.count) mutes")
         } catch {
             logger.error("Failed to load settings: \(error.localizedDescription)")
             // Backup corrupted file before resetting
