@@ -3,13 +3,15 @@ import AudioToolbox
 
 // MARK: - Volume Control Detection
 
+private let virtualMainVolumeSelector = kAudioHardwareServiceDeviceProperty_VirtualMainVolume
+
 extension AudioDeviceID {
     /// Returns true if this device supports CoreAudio volume control.
     /// Monitors connected via HDMI/DisplayPort often return false here.
     func hasOutputVolumeControl() -> Bool {
         var address = AudioObjectPropertyAddress(
-            mSelector: kAudioHardwareServiceDeviceProperty_VirtualMainVolume,
-            mScope: kAudioObjectPropertyScopeOutput,
+            mSelector: virtualMainVolumeSelector,
+            mScope: kAudioDevicePropertyScopeOutput,
             mElement: kAudioObjectPropertyElementMain
         )
         guard AudioObjectHasProperty(self, &address) else { return false }
@@ -24,15 +26,15 @@ extension AudioDeviceID {
 extension AudioDeviceID {
     /// Reads the scalar volume (0.0 to 1.0) for the device.
     /// Tries multiple strategies to find the most representative volume:
-    /// 1. Virtual main volume via VirtualMainVolume (matches system volume slider)
+    /// 1. Virtual main volume (matches system volume slider)
     /// 2. Master volume scalar (element 0)
     /// 3. Left channel volume (element 1)
     /// Returns 1.0 for devices without volume control.
     func readOutputVolumeScalar() -> Float {
         // Strategy 1: Try virtual main volume (preferred - matches system slider)
         var address = AudioObjectPropertyAddress(
-            mSelector: kAudioHardwareServiceDeviceProperty_VirtualMainVolume,
-            mScope: kAudioObjectPropertyScopeOutput,
+            mSelector: virtualMainVolumeSelector,
+            mScope: kAudioDevicePropertyScopeOutput,
             mElement: kAudioObjectPropertyElementMain
         )
 
@@ -77,7 +79,7 @@ extension AudioDeviceID {
     }
 
     /// Sets the scalar volume (0.0 to 1.0) for the device.
-    /// Uses VirtualMainVolume via VirtualMainVolume to match system volume slider behavior.
+    /// Uses VirtualMainVolume to match system volume slider behavior.
     /// Returns true if successful, false otherwise.
     func setOutputVolumeScalar(_ volume: Float) -> Bool {
         let clampedVolume = Swift.max(0.0, Swift.min(1.0, volume))
@@ -146,15 +148,15 @@ extension AudioDeviceID {
 extension AudioDeviceID {
     /// Reads the scalar volume (0.0 to 1.0) for the input device (microphone).
     /// Tries multiple strategies to find the most representative volume:
-    /// 1. Virtual main volume via VirtualMainVolume (matches system input slider)
+    /// 1. Virtual main volume (matches system input slider)
     /// 2. Master volume scalar (element 0)
     /// 3. Left channel volume (element 1)
     /// Returns 1.0 for devices without volume control.
     func readInputVolumeScalar() -> Float {
         // Strategy 1: Try virtual main volume (preferred - matches system slider)
         var address = AudioObjectPropertyAddress(
-            mSelector: kAudioHardwareServiceDeviceProperty_VirtualMainVolume,
-            mScope: kAudioObjectPropertyScopeInput,
+            mSelector: virtualMainVolumeSelector,
+            mScope: kAudioDevicePropertyScopeInput,
             mElement: kAudioObjectPropertyElementMain
         )
 
@@ -199,14 +201,14 @@ extension AudioDeviceID {
     }
 
     /// Sets the scalar volume (0.0 to 1.0) for the input device (microphone).
-    /// Uses VirtualMainVolume via VirtualMainVolume to match system input slider behavior.
+    /// Uses VirtualMainVolume to match system input slider behavior.
     /// Returns true if successful, false otherwise.
     func setInputVolumeScalar(_ volume: Float) -> Bool {
         let clampedVolume = Swift.max(0.0, Swift.min(1.0, volume))
 
         var address = AudioObjectPropertyAddress(
-            mSelector: kAudioHardwareServiceDeviceProperty_VirtualMainVolume,
-            mScope: kAudioObjectPropertyScopeInput,
+            mSelector: virtualMainVolumeSelector,
+            mScope: kAudioDevicePropertyScopeInput,
             mElement: kAudioObjectPropertyElementMain
         )
 
