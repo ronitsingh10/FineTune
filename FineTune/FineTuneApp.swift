@@ -40,12 +40,12 @@ struct FineTuneApp: App {
     private let launchAssetImageName: String?
 
     var body: some Scene {
-        // Use dual scenes with captured icon names - only one is visible based on icon type
-        FluidMenuBarExtra("FineTune", systemImage: launchSystemImageName ?? "speaker.wave.2", isInserted: systemIconBinding) {
+        // Single status item scene; for speaker style, icon image is updated in-place by updater.
+        FluidMenuBarExtra("FineTune", systemImage: launchSystemImageName ?? "speaker.wave.2", isInserted: staticSystemIconBinding, alignment: .centre) {
             menuBarContent
         }
 
-        FluidMenuBarExtra("FineTune", image: launchAssetImageName ?? "MenuBarIcon", isInserted: assetIconBinding) {
+        FluidMenuBarExtra("FineTune", image: launchAssetImageName ?? "MenuBarIcon", isInserted: assetIconBinding, alignment: .centre) {
             menuBarContent
         }
         .commands {

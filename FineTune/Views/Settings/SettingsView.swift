@@ -170,15 +170,26 @@ struct SettingsView: View {
                 .hoverableRow()
                 .transition(.opacity.combined(with: .scale(scale: 0.95)))
             } else {
-                SettingsButtonRow(
-                    icon: "arrow.counterclockwise",
-                    title: "Reset All Settings",
-                    description: "Clear all volumes, EQ, and device routings",
-                    buttonLabel: "Reset",
-                    isDestructive: true
-                ) {
-                    withAnimation(.easeInOut(duration: 0.2)) {
-                        showResetConfirmation = true
+                VStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {
+                    SettingsButtonRow(
+                        icon: "arrow.counterclockwise",
+                        title: "Reset All Settings",
+                        description: "Clear all volumes, EQ, and device routings",
+                        buttonLabel: "Reset",
+                        isDestructive: true
+                    ) {
+                        withAnimation(.easeInOut(duration: 0.2)) {
+                            showResetConfirmation = true
+                        }
+                    }
+
+                    SettingsButtonRow(
+                        icon: "power",
+                        title: "Quit FineTune",
+                        description: "Close FineTune immediately",
+                        buttonLabel: "Quit"
+                    ) {
+                        NSApplication.shared.terminate(nil)
                     }
                 }
                 .transition(.opacity.combined(with: .scale(scale: 0.95)))

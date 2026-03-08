@@ -32,6 +32,7 @@ struct EQPanelView: View {
                         .font(DesignTokens.Typography.pickerText)
                         .foregroundColor(.primary)
                 }
+                .padding(.leading, -8)
 
                 Spacer()
 
@@ -46,6 +47,8 @@ struct EQPanelView: View {
                         onPresetSelected: onPresetSelected
                     )
                 }
+                .opacity(settings.isEnabled ? 1.0 : 0.45)
+                .allowsHitTesting(settings.isEnabled)
             }
             .zIndex(1)  // Ensure dropdown renders above sliders
 
@@ -65,15 +68,19 @@ struct EQPanelView: View {
                     .frame(width: 26, height: 100)
                 }
             }
+            .opacity(settings.isEnabled ? 1.0 : 0.45)
+            .allowsHitTesting(settings.isEnabled)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 8)
         .background {
             RoundedRectangle(cornerRadius: 10)
                 .fill(DesignTokens.Colors.recessedBackground)
         }
-        .padding(.horizontal, 2)
-        .padding(.vertical, 4)
+        .padding(.horizontal, 0)
+        .padding(.vertical, 2)
         // No outer background - parent ExpandableGlassRow provides the glass container
     }
 }

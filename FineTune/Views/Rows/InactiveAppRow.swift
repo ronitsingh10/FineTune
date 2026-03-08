@@ -128,8 +128,9 @@ struct InactiveAppRow: View {
                 Text(appInfo.displayName)
                     .font(DesignTokens.Typography.rowName)
                     .lineLimit(1)
+                    .truncationMode(.tail)
                     .help(appInfo.displayName)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .frame(maxWidth: 180, alignment: .leading)
                     .foregroundStyle(DesignTokens.Colors.textSecondary)  // Dimmed text
 
                 // Shared controls section (VU meter always 0 for inactive apps)
@@ -153,6 +154,7 @@ struct InactiveAppRow: View {
                     onSelectFollowDefault: onSelectFollowDefault,
                     onEQToggle: onEQToggle
                 )
+                .layoutPriority(1)
             }
             .frame(height: DesignTokens.Dimensions.rowContentHeight)
         } expandedContent: {
