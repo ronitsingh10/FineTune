@@ -78,6 +78,21 @@ enum MockData {
         )
     ]
 
+    // MARK: - Sample Paired Bluetooth Devices
+
+    static let samplePairedDevices: [PairedBluetoothDevice] = [
+        PairedBluetoothDevice(
+            id: "AA:BB:CC:DD:EE:FF",
+            name: "Sony WH-1000XM5",
+            icon: NSImage(systemSymbolName: "headphones", accessibilityDescription: nil)
+        ),
+        PairedBluetoothDevice(
+            id: "11:22:33:44:55:66",
+            name: "AirPods Pro",
+            icon: NSImage(systemSymbolName: "airpodspro", accessibilityDescription: nil)
+        ),
+    ]
+
     // MARK: - Default Device
 
     static var defaultDevice: AudioDevice {
