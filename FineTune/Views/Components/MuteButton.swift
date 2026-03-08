@@ -5,17 +5,35 @@ import SwiftUI
 /// Shows speaker.wave when unmuted, speaker.slash when muted
 struct MuteButton: View {
     let isMuted: Bool
+    let levelFraction: Double
     let action: () -> Void
+
+    init(isMuted: Bool, levelFraction: Double = 1.0, action: @escaping () -> Void) {
+        self.isMuted = isMuted
+        self.levelFraction = levelFraction
+        self.action = action
+    }
 
     var body: some View {
         BaseMuteButton(
             isMuted: isMuted,
             mutedIcon: "speaker.slash.fill",
-            unmutedIcon: "speaker.wave.2.fill",
+            unmutedIcon: Self.iconName(for: levelFraction),
             mutedHelp: "Unmute",
             unmutedHelp: "Mute",
             action: action
         )
+    }
+
+    private static func iconName(for levelFraction: Double) -> String {
+        let level = max(0.0, min(1.0, levelFraction))
+        if level <= 1.0 / 3.0 {
+            return "speaker.wave.1.fill"
+        } else if level <= 2.0 / 3.0 {
+            return "speaker.wave.2.fill"
+        } else {
+            return "speaker.wave.3.fill"
+        }
     }
 }
 
@@ -53,10 +71,11 @@ private struct BaseMuteButton: View {
 
     var body: some View {
         Button(action: action) {
-            Image(systemName: isMuted ? mutedIcon : unmutedIcon)
+            Image(systemName: currentIcon)
                 .font(.system(size: 14))
                 .symbolRenderingMode(.hierarchical)
                 .foregroundStyle(buttonColor)
+                .contentTransition(.symbolEffect(.replace))
                 .scaleEffect(isPulsing ? 1.1 : 1.0)
                 .frame(
                     minWidth: DesignTokens.Dimensions.minTouchTarget,
@@ -71,12 +90,17 @@ private struct BaseMuteButton: View {
         .help(isMuted ? mutedHelp : unmutedHelp)
         .animation(.spring(response: 0.25, dampingFraction: 0.5), value: isPulsing)
         .animation(DesignTokens.Animation.hover, value: isHovered)
+        .animation(.easeInOut(duration: 0.18), value: currentIcon)
         .onChange(of: isMuted) { _, _ in
             isPulsing = true
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
                 isPulsing = false
             }
         }
+    }
+
+    private var currentIcon: String {
+        isMuted ? mutedIcon : unmutedIcon
     }
 
     private var buttonColor: Color {
