@@ -1,12 +1,6 @@
 // FineTune/Views/Components/DevicePicker.swift
 import SwiftUI
 
-/// Selection state for device picker - either following system default or explicit device
-enum DeviceSelection: Equatable {
-    case systemAudio
-    case device(String)  // deviceUID
-}
-
 /// A styled device picker dropdown with "System" option and single/multi mode support
 struct DevicePicker: View {
     let devices: [AudioDevice]
