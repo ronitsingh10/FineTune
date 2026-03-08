@@ -130,11 +130,16 @@ struct MenuBarPopupView: View {
         .darkGlassBackground()
         .environment(\.colorScheme, .dark)
         .onAppear {
+            isPopupVisible = true
             updateSortedDevices()
             updateSortedInputDevices()
             pairedDevices = audioEngine.bluetoothDeviceMonitor.pairedDevices
             isBluetoothOn = audioEngine.bluetoothDeviceMonitor.isBluetoothOn
             localAppSettings = audioEngine.settingsManager.appSettings
+        }
+        .onDisappear {
+            isPopupVisible = false
+            exitEditModeSaving()
         }
         .onChange(of: audioEngine.outputDevices) { _, _ in
             if isEditingDevicePriority && !wasEditingInputDevices {
@@ -499,7 +504,7 @@ struct MenuBarPopupView: View {
                         volume: deviceVolumeMonitor.inputVolumes[device.id] ?? 1.0,
                         isMuted: deviceVolumeMonitor.inputMuteStates[device.id] ?? false,
                         onSetDefault: {
-                            audioEngine.setLockedInputDevice(device)
+                            audioEngine.setDefaultInputDevice(device)
                         },
                         onVolumeChange: { volume in
                             deviceVolumeMonitor.setInputVolume(for: device.id, to: volume)
@@ -772,6 +777,23 @@ struct MenuBarPopupView: View {
         } else {
             audioEngine.settingsManager.setDevicePriorityOrder(uids)
         }
+
+        editableDeviceOrder = newValue ? editableInputDeviceOrder : editableOutputDeviceOrder
+    }
+
+    private func persistEditingDrafts() {
+        guard isEditingDevicePriority else { return }
+
+        if showingInputDevices {
+            editableInputDeviceOrder = editableDeviceOrder
+        } else {
+            editableOutputDeviceOrder = editableDeviceOrder
+        }
+
+        audioEngine.settingsManager.setDevicePriorityOrder(editableOutputDeviceOrder.map(\.uid))
+        audioEngine.settingsManager.setInputDevicePriorityOrder(editableInputDeviceOrder.map(\.uid))
+        audioEngine.enforceOutputPriorityDefaultPolicy()
+        audioEngine.enforceInputPriorityDefaultPolicy()
     }
 
     /// Exits edit mode, saving the current order. Called on edge cases like device changes.
