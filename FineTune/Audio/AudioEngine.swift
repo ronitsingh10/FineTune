@@ -1,4 +1,4 @@
-// FineTune/Audio/Engine/AudioEngine.swift
+// FineTune/Audio/AudioEngine.swift
 import AudioToolbox
 import Foundation
 import os
@@ -9,15 +9,19 @@ import UserNotifications
 final class AudioEngine {
     let processMonitor = AudioProcessMonitor()
     let deviceMonitor = AudioDeviceMonitor()
-    let bluetoothDeviceMonitor = BluetoothDeviceMonitor()
     let deviceVolumeMonitor: DeviceVolumeMonitor
     let volumeState: VolumeState
     let settingsManager: SettingsManager
-    let autoEQProfileManager: AutoEQProfileManager
+
+    // Global FX settings — stored property so @Observable tracks changes
+    var fxSettings: FXSettings = FXSettings()
 
     #if !APP_STORE
     let ddcController: DDCController
     #endif
+
+    /// Intercepts volume keys/knob and redirects to software gain for HDMI devices
+    private var volumeKeyInterceptor: VolumeKeyInterceptor?
 
     private var taps: [pid_t: ProcessTapController] = [:]
     private var appliedPIDs: Set<pid_t> = []
@@ -168,10 +172,9 @@ final class AudioEngine {
         return nil
     }
 
-    init(settingsManager: SettingsManager? = nil, autoEQProfileManager: AutoEQProfileManager? = nil) {
+    init(settingsManager: SettingsManager? = nil) {
         let manager = settingsManager ?? SettingsManager()
         self.settingsManager = manager
-        self.autoEQProfileManager = autoEQProfileManager ?? AutoEQProfileManager()
         self.volumeState = VolumeState(settingsManager: manager)
 
         #if !APP_STORE
@@ -185,7 +188,6 @@ final class AudioEngine {
         Task { @MainActor in
             processMonitor.start()
             deviceMonitor.start()
-            bluetoothDeviceMonitor.start()
 
             #if !APP_STORE
             ddc.onProbeCompleted = { [weak self] in
@@ -223,6 +225,29 @@ final class AudioEngine {
                 }
             }
 
+            // Propagate software gain changes to all taps handled by SoftwareGainStore directly
+
+            // Load persisted software volumes for devices already present
+            deviceVolumeMonitor.loadSoftwareVolumes(from: manager, deviceMonitor: deviceMonitor)
+
+            // Seed SoftwareGainStore from persisted values so the render callback
+            // immediately has the right gain even before any UI interaction.
+            // Apply to ALL devices that have a stored software volume — this covers both
+            // devices without hardware volume control AND devices where the user has set
+            // a software volume override (SW badge), ensuring volumes are restored on relaunch.
+            for device in deviceMonitor.outputDevices {
+                let storedVol = manager.getSoftwareVolume(for: device.uid)
+                let muted = manager.getSoftwareMute(for: device.uid)
+                // Only apply if the device has no hardware control OR has an explicit saved volume
+                let hasExplicitVolume = storedVol != 1.0 || muted
+                if !device.id.hasOutputVolumeControl() || hasExplicitVolume {
+                    SoftwareGainStore.setGain(muted ? 0.0 : storedVol, for: device.uid)
+                }
+            }
+
+            // Seed fxSettings from persisted value
+            fxSettings = manager.getFXSettings()
+
             processMonitor.onAppsChanged = { [weak self] _ in
                 self?.cleanupStaleTaps()
                 self?.applyPersistedSettings()
@@ -230,12 +255,10 @@ final class AudioEngine {
 
             deviceMonitor.onDeviceDisconnected = { [weak self] deviceUID, deviceName in
                 self?.handleDeviceDisconnected(deviceUID, name: deviceName)
-                self?.bluetoothDeviceMonitor.refresh()
             }
 
             deviceMonitor.onDeviceConnected = { [weak self] deviceUID, deviceName in
                 self?.handleDeviceConnected(deviceUID, name: deviceName)
-                self?.bluetoothDeviceMonitor.notifyDeviceAppearedInCoreAudio()
             }
 
             deviceMonitor.onInputDeviceDisconnected = { [weak self] deviceUID, deviceName in
@@ -268,6 +291,13 @@ final class AudioEngine {
             if manager.appSettings.lockInputDevice {
                 restoreLockedInputDevice()
             }
+
+            // Start volume key interceptor — redirects knob/F11/F12 to software gain
+            // for HDMI devices that expose no hardware kAudioDevicePropertyVolumeScalar.
+            // No permissions required; falls back gracefully on hardware-volume devices.
+            let interceptor = VolumeKeyInterceptor(audioEngine: self)
+            interceptor.start()
+            self.volumeKeyInterceptor = interceptor
         }
     }
 
@@ -448,6 +478,8 @@ final class AudioEngine {
     /// Call from applicationWillTerminate or equivalent lifecycle hook.
     /// Note: For menu bar apps, process exit cleans up resources anyway, so this is optional.
     func shutdown() {
+        volumeKeyInterceptor?.stop()
+        volumeKeyInterceptor = nil
         stop()
         deviceVolumeMonitor.stop()
         logger.info("AudioEngine shutdown complete")
@@ -475,6 +507,17 @@ final class AudioEngine {
     }
 
     /// Update EQ settings for an app
+    // MARK: - FX Settings (global, applied to all taps)
+
+    /// Update global FX settings — persists and propagates to all active taps.
+    func setFXSettings(_ settings: FXSettings) {
+        fxSettings = settings
+        settingsManager.setFXSettings(settings)
+        for (_, tap) in taps {
+            tap.updateFXSettings(settings)
+        }
+    }
+
     func setEQSettings(_ settings: EQSettings, for app: AudioApp) {
         guard let tap = taps[app.id] else { return }
         tap.updateEQSettings(settings)
@@ -486,74 +529,35 @@ final class AudioEngine {
         return settingsManager.getEQSettings(for: app.persistenceIdentifier)
     }
 
-    // MARK: - Per-Device AutoEQ
+    // MARK: - Software Volume (for devices without hardware volume control)
 
-    func getAutoEQProfile(for deviceUID: String) -> AutoEQProfile? {
-        guard let selection = settingsManager.getAutoEQSelection(for: deviceUID) else { return nil }
-        return autoEQProfileManager.profile(for: selection.profileID)
+    /// Returns the current software volume (0.0–1.0) for a device.
+    func getSoftwareVolume(for device: AudioDevice) -> Float {
+        deviceVolumeMonitor.softwareVolumes[device.id] ?? 1.0
     }
 
-    func setAutoEQProfile(for deviceUID: String, profileID: String?) {
-        if let profileID {
-            settingsManager.setAutoEQSelection(for: deviceUID, to: AutoEQSelection(profileID: profileID, isEnabled: true))
-        } else {
-            settingsManager.setAutoEQSelection(for: deviceUID, to: nil)
-        }
-        applyAutoEQToTaps(for: deviceUID)
+    /// Sets the device-level software gain. Writes to SoftwareGainStore (read at render
+    /// time by every tap routing to this device) and persists to SettingsManager.
+    /// No tap iteration needed — the store is global and polled every render cycle.
+    func setSoftwareVolume(for device: AudioDevice, to volume: Float) {
+        let clamped = max(0.0, min(1.0, volume))
+        settingsManager.setSoftwareVolume(for: device.uid, to: clamped)
+        deviceVolumeMonitor.updateSoftwareVolume(clamped, for: device.id)
+        let isMuted = deviceVolumeMonitor.softwareMuteStates[device.id] ?? false
+        SoftwareGainStore.setGain(isMuted ? 0.0 : clamped, for: device.uid)
     }
 
-    func setAutoEQEnabled(for deviceUID: String, enabled: Bool) {
-        guard var selection = settingsManager.getAutoEQSelection(for: deviceUID) else { return }
-        selection.isEnabled = enabled
-        settingsManager.setAutoEQSelection(for: deviceUID, to: selection)
-        applyAutoEQToTaps(for: deviceUID)
+    /// Returns the software mute state for a device.
+    func getSoftwareMute(for device: AudioDevice) -> Bool {
+        deviceVolumeMonitor.softwareMuteStates[device.id] ?? false
     }
 
-    func getAutoEQSelection(for deviceUID: String) -> AutoEQSelection? {
-        settingsManager.getAutoEQSelection(for: deviceUID)
-    }
-
-    /// Apply AutoEQ profile to all taps currently routed to the given device.
-    private func applyAutoEQToTaps(for deviceUID: String) {
-        for tap in taps.values {
-            guard tap.currentDeviceUID == deviceUID else { continue }
-            applyAutoEQToTap(tap)
-        }
-    }
-
-    /// Apply the correct AutoEQ profile to a single tap based on its current device.
-    /// Skips AutoEQ entirely for devices that don't support it (speakers, HDMI, etc.).
-    /// If the profile isn't loaded yet, triggers an async fetch and applies when ready.
-    private func applyAutoEQToTap(_ tap: ProcessTapController) {
-        guard let deviceUID = tap.currentDeviceUID else { return }
-
-        // Skip AutoEQ for non-headphone devices (or if device not found in monitor)
-        guard let device = deviceMonitor.device(for: deviceUID) else { return }
-        guard device.supportsAutoEQ else {
-            tap.updateAutoEQProfile(nil)
-            return
-        }
-
-        guard let selection = settingsManager.getAutoEQSelection(for: deviceUID),
-              selection.isEnabled else {
-            tap.updateAutoEQProfile(nil)
-            return
-        }
-
-        // Try in-memory first (instant)
-        if let profile = autoEQProfileManager.profile(for: selection.profileID) {
-            tap.updateAutoEQProfile(profile)
-            return
-        }
-
-        // Profile not loaded yet — fetch asynchronously
-        tap.updateAutoEQProfile(nil)
-        Task { @MainActor in
-            guard let profile = await autoEQProfileManager.resolveProfile(for: selection.profileID) else { return }
-            // Verify tap still exists and is still routed to the same device
-            guard tap.currentDeviceUID == deviceUID else { return }
-            tap.updateAutoEQProfile(profile)
-        }
+    /// Toggles the software mute. Writes to SoftwareGainStore immediately.
+    func setSoftwareMute(for device: AudioDevice, to muted: Bool) {
+        settingsManager.setSoftwareMute(for: device.uid, to: muted)
+        deviceVolumeMonitor.updateSoftwareMute(muted, for: device.id)
+        let vol = deviceVolumeMonitor.softwareVolumes[device.id] ?? 1.0
+        SoftwareGainStore.setGain(muted ? 0.0 : vol, for: device.uid)
     }
 
     /// Sets the output device for an app.
@@ -597,7 +601,6 @@ final class AudioEngine {
                         tap.currentDeviceVolume = self.deviceVolumeMonitor.volumes[device.id] ?? 1.0
                         tap.isDeviceMuted = self.deviceVolumeMonitor.muteStates[device.id] ?? false
                     }
-                    self.applyAutoEQToTap(tap)
                     self.logger.debug("Switched \(app.name) to device: \(targetUID)")
                 } catch {
                     self.logger.error("Failed to switch device for \(app.name): \(error.localizedDescription)")
@@ -728,7 +731,7 @@ final class AudioEngine {
             // Load and apply persisted EQ settings
             let eqSettings = settingsManager.getEQSettings(for: app.persistenceIdentifier)
             tap.updateEQSettings(eqSettings)
-            applyAutoEQToTap(tap)
+            tap.updateFXSettings(fxSettings)
 
             logger.debug("Created tap for \(app.name) on \(deviceUIDs.count) device(s)")
         } catch {
@@ -837,6 +840,7 @@ final class AudioEngine {
         if let device = deviceMonitor.device(for: deviceUID) {
             tap.currentDeviceVolume = deviceVolumeMonitor.volumes[device.id] ?? 1.0
             tap.isDeviceMuted = deviceVolumeMonitor.muteStates[device.id] ?? false
+            // Software gain is read from SoftwareGainStore at render time — no tap-level init needed
         }
 
         do {
@@ -846,7 +850,7 @@ final class AudioEngine {
             // Load and apply persisted EQ settings
             let eqSettings = settingsManager.getEQSettings(for: app.persistenceIdentifier)
             tap.updateEQSettings(eqSettings)
-            applyAutoEQToTap(tap)
+            tap.updateFXSettings(fxSettings)
 
             logger.debug("Created tap for \(app.name)")
         } catch {
@@ -920,7 +924,6 @@ final class AudioEngine {
                         try await tap.switchDevice(to: fallbackUID)
                         tap.volume = self.volumeState.getVolume(for: tap.app.id)
                         tap.isMuted = self.volumeState.getMute(for: tap.app.id)
-                        self.applyAutoEQToTap(tap)
                     } catch {
                         self.logger.error("Failed to switch \(tap.app.name) to fallback: \(error.localizedDescription)")
                     }
@@ -963,6 +966,19 @@ final class AudioEngine {
         // Register newly connected device in priority list
         settingsManager.ensureDeviceInPriority(deviceUID)
 
+        // Restore saved software volume/mute for this device.
+        // Covers SW-only devices AND devices with HW control that had a software override saved.
+        if let device = deviceMonitor.device(for: deviceUID) {
+            let vol = settingsManager.getSoftwareVolume(for: deviceUID)
+            let muted = settingsManager.getSoftwareMute(for: deviceUID)
+            let hasExplicitVolume = vol != 1.0 || muted
+            if !device.id.hasOutputVolumeControl() || hasExplicitVolume {
+                deviceVolumeMonitor.updateSoftwareVolume(vol, for: device.id)
+                deviceVolumeMonitor.updateSoftwareMute(muted, for: device.id)
+                SoftwareGainStore.setGain(muted ? 0.0 : vol, for: deviceUID)
+            }
+        }
+
         var affectedApps: [AudioApp] = []
         var tapsToSwitch: [ProcessTapController] = []
 
@@ -999,7 +1015,6 @@ final class AudioEngine {
                             tap.currentDeviceVolume = self.deviceVolumeMonitor.volumes[device.id] ?? 1.0
                             tap.isDeviceMuted = self.deviceVolumeMonitor.muteStates[device.id] ?? false
                         }
-                        self.applyAutoEQToTap(tap)
                     } catch {
                         self.logger.error("Failed to switch \(tap.app.name) back to \(deviceName): \(error.localizedDescription)")
                     }
@@ -1105,7 +1120,6 @@ final class AudioEngine {
                             tap.currentDeviceVolume = self.deviceVolumeMonitor.volumes[device.id] ?? 1.0
                             tap.isDeviceMuted = self.deviceVolumeMonitor.muteStates[device.id] ?? false
                         }
-                        self.applyAutoEQToTap(tap)
                     } catch {
                         self.logger.error("Failed to switch \(app.name) to new default: \(error.localizedDescription)")
                     }

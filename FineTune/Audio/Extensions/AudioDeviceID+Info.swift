@@ -18,8 +18,15 @@ extension AudioDeviceID {
     }
 
     func readTransportType() -> TransportType {
-        let raw = (try? read(kAudioDevicePropertyTransportType, defaultValue: UInt32(0))) ?? 0
-        return TransportType(rawValue: raw)
+        var address = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyTransportType,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var transportType: UInt32 = 0
+        var size = UInt32(MemoryLayout<UInt32>.size)
+        AudioObjectGetPropertyData(self, &address, 0, nil, &size, &transportType)
+        return TransportType(rawValue: transportType)
     }
 }
 
@@ -36,5 +43,13 @@ extension AudioObjectID {
 
     func readProcessBundleID() -> String? {
         try? readString(kAudioProcessPropertyBundleID)
+    }
+}
+
+// MARK: - Audio Tap
+
+extension AudioObjectID {
+    func readAudioTapStreamBasicDescription() throws -> AudioStreamBasicDescription {
+        try read(kAudioTapPropertyFormat, defaultValue: AudioStreamBasicDescription())
     }
 }

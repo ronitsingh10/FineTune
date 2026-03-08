@@ -2,36 +2,20 @@
   <img src="assets/icon.png" width="128" height="128" alt="FineTune app icon">
 </p>
 
-<h1 align="center">FineTune</h1>
+<h1 align="center">FineTuneFX</h1>
 
 <p align="center">
   <strong>Per-app volume control for macOS</strong>
 </p>
-
-<p align="center">
-  <a href="https://github.com/ronitsingh10/FineTune/releases/latest"><img src="https://img.shields.io/github/v/release/ronitsingh10/FineTune" alt="Latest Release"></a>
-  <a href="https://github.com/ronitsingh10/FineTune/releases"><img src="https://img.shields.io/github/downloads/ronitsingh10/FineTune/total" alt="Downloads"></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/License-GPLv3-blue.svg" alt="License: GPL v3"></a>
-  <a href="https://www.apple.com/macos/"><img src="https://img.shields.io/badge/macOS-15%2B-brightgreen" alt="macOS 15+"></a>
-</p>
-
-<p align="center">
-  The volume mixer macOS should have built in.<br>
-  Free and open-source.
-</p>
-
----
-
-<p align="center">
-  <img src="assets/screenshot-main.png" alt="FineTune showing per-app volume control with EQ and multi-device output" width="750">
-</p>
-
 ## Features
 
 - **Per-app volume** — Individual sliders and mute for each application
 - **Multi-device output** — Route audio to multiple devices simultaneously
+- **SW Volume control for devices w/o HW control** — Monitor and adjust volume levels of devices w/o hardware mgmt, via SW
 - **Input device control** — Monitor and adjust microphone levels
-- **10-band EQ** — 20 presets across 5 categories
+- **Sound Enhancements** — Clarity, Ambience, Surround Sound, Dynamic Boost, Bass Boost
+- **Fixed 10-band per app EQ** — 20 presets across 5 categories
+- **Variable 9-band system-wide EQ** — 13 presets
 - **Pinned apps** — Pre-configure apps before they play
 - **Audio routing** — Send apps to different outputs or follow system default
 - **Monitor speaker control** — Adjust volume on external displays via DDC
@@ -40,11 +24,6 @@
 - **Menu bar app** — Lightweight, always accessible
 - **URL schemes** — Automate volume, mute, device routing, and more from scripts
 
-<p align="center">
-  <img src="assets/screenshot-input.png" alt="FineTune input device control" width="400">
-  <img src="assets/screenshot-settings.png" alt="FineTune settings panel" width="400">
-</p>
-
 ## Install
 
 **Homebrew** (recommended)
@@ -52,8 +31,6 @@
 ```bash
 brew install --cask finetune
 ```
-
-**Manual** — [Download latest release](https://github.com/ronitsingh10/FineTune/releases/latest)
 
 ## Why FineTune?
 

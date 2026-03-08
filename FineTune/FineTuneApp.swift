@@ -86,8 +86,7 @@ struct FineTuneApp: App {
         OrphanedTapCleanup.destroyOrphanedDevices()
 
         let settings = SettingsManager()
-        let profileManager = AutoEQProfileManager()
-        let engine = AudioEngine(settingsManager: settings, autoEQProfileManager: profileManager)
+        let engine = AudioEngine(settingsManager: settings)
         _audioEngine = State(initialValue: engine)
 
         // Pass engine to AppDelegate

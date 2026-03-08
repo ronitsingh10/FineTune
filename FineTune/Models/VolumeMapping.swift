@@ -32,7 +32,6 @@ enum VolumeMapping {
             return Double(gain * 0.5)
         } else {
             // 100%-maxBoost → 50-100% slider
-            guard maxBoost > 1.0 else { return 1.0 }
             let t = (gain - 1.0) / (maxBoost - 1.0)
             return 0.5 + Double(t) * 0.5
         }

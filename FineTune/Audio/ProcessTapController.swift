@@ -1,4 +1,4 @@
-// FineTune/Audio/Engine/ProcessTapController.swift
+// FineTune/Audio/ProcessTapController.swift
 import AudioToolbox
 import Foundation
 import os
@@ -76,7 +76,7 @@ final class ProcessTapController {
     private nonisolated(unsafe) var rampCoefficient: Float = 0.0007
     private nonisolated(unsafe) var secondaryRampCoefficient: Float = 0.0007
     private nonisolated(unsafe) var eqProcessor: EQProcessor?
-    private nonisolated(unsafe) var autoEQProcessor: AutoEQProcessor?
+    private nonisolated(unsafe) var fxProcessor: FXProcessor?
 
     // Target device UIDs for synchronized multi-output (first is clock source)
     private var targetDeviceUIDs: [String]
@@ -145,8 +145,8 @@ final class ProcessTapController {
         eqProcessor?.updateSettings(settings)
     }
 
-    func updateAutoEQProfile(_ profile: AutoEQProfile?) {
-        autoEQProcessor?.updateProfile(profile)
+    func updateFXSettings(_ settings: FXSettings) {
+        fxProcessor?.update(settings)
     }
 
     // MARK: - Multi-Device Aggregate Configuration
@@ -250,7 +250,7 @@ final class ProcessTapController {
         logger.debug("Ramp coefficient: \(self.rampCoefficient)")
 
         eqProcessor = EQProcessor(sampleRate: sampleRate)
-        autoEQProcessor = AutoEQProcessor(sampleRate: sampleRate)
+        fxProcessor = FXProcessor(sampleRate: sampleRate)
 
         // Create IO proc with gain processing
         err = AudioDeviceCreateIOProcIDWithBlock(&primaryResources.deviceProcID, primaryResources.aggregateDeviceID, queue) { [weak self] _, inInputData, _, outOutputData, _ in
@@ -549,7 +549,7 @@ final class ProcessTapController {
             let rampTimeSeconds: Float = 0.030
             rampCoefficient = 1 - exp(-1 / (Float(deviceSampleRate) * rampTimeSeconds))
             eqProcessor?.updateSampleRate(deviceSampleRate)
-            autoEQProcessor?.updateSampleRate(deviceSampleRate)
+                fxProcessor?.updateSampleRate(deviceSampleRate)
         }
 
         _primaryCurrentVolume = _secondaryCurrentVolume
@@ -656,7 +656,7 @@ final class ProcessTapController {
         if let deviceSampleRate = try? primaryResources.aggregateDeviceID.readNominalSampleRate() {
             rampCoefficient = 1 - exp(-1 / (Float(deviceSampleRate) * 0.030))
             eqProcessor?.updateSampleRate(deviceSampleRate)
-            autoEQProcessor?.updateSampleRate(deviceSampleRate)
+                fxProcessor?.updateSampleRate(deviceSampleRate)
         }
     }
 
@@ -787,12 +787,22 @@ final class ProcessTapController {
                 eq.process(input: outputSamples, output: outputSamples, frameCount: frameCount)
             }
 
-            // Per-device AutoEQ correction (after per-app EQ)
-            let autoEQ = autoEQProcessor
-            if let autoEQ, autoEQ.isEnabled, !crossfadeState.isActive {
+            // Software device gain: device-level attenuation for HDMI/no-hardware-volume
+            // devices. Reads from the shared SoftwareGainStore at render time — applies to
+            // ALL taps routing to this device with no per-tap state or push propagation.
+            let softGain = SoftwareGainStore.gain(for: targetDeviceUIDs)
+            if softGain != 1.0 {
+                for i in 0..<sampleCount {
+                    outputSamples[i] *= softGain
+                }
+            }
+
+
+            // FX processing (global — Clarity, Ambience, Surround, Dynamic Boost, Bass Boost)
+            if let fx = fxProcessor, !crossfadeState.isActive {
                 let channels = Int(inputBuffer.mNumberChannels)
                 let frameCount = channels > 1 ? sampleCount / channels : sampleCount
-                autoEQ.process(input: outputSamples, output: outputSamples, frameCount: frameCount)
+                fx.process(buffer: outputSamples, frameCount: frameCount, channelCount: channels)
             }
 
             // Post-EQ soft limiting: catches any clipping from EQ boost or volume > 1.0.
@@ -895,12 +905,20 @@ final class ProcessTapController {
                 eq.process(input: outputSamples, output: outputSamples, frameCount: frameCount)
             }
 
-            // Per-device AutoEQ correction (after per-app EQ)
-            let autoEQ = autoEQProcessor
-            if let autoEQ, autoEQ.isEnabled, !crossfadeState.isActive {
+            // Software device gain — same store, same device UIDs.
+            let softGain = SoftwareGainStore.gain(for: targetDeviceUIDs)
+            if softGain != 1.0 {
+                for i in 0..<sampleCount {
+                    outputSamples[i] *= softGain
+                }
+            }
+
+
+            // FX processing (global — Clarity, Ambience, Surround, Dynamic Boost, Bass Boost)
+            if let fx = fxProcessor, !crossfadeState.isActive {
                 let channels = Int(inputBuffer.mNumberChannels)
                 let frameCount = channels > 1 ? sampleCount / channels : sampleCount
-                autoEQ.process(input: outputSamples, output: outputSamples, frameCount: frameCount)
+                fx.process(buffer: outputSamples, frameCount: frameCount, channelCount: channels)
             }
 
             // Post-EQ soft limiting: catches any clipping from EQ boost or volume > 1.0.

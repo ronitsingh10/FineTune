@@ -29,6 +29,7 @@ struct AppRow: View {
     let onEQChange: (EQSettings) -> Void
     let isEQExpanded: Bool
     let onEQToggle: () -> Void
+    let showEQButton: Bool
 
     @State private var isRowHovered = false
     @State private var isIconHovered = false
@@ -72,7 +73,8 @@ struct AppRow: View {
         eqSettings: EQSettings = EQSettings(),
         onEQChange: @escaping (EQSettings) -> Void = { _ in },
         isEQExpanded: Bool = false,
-        onEQToggle: @escaping () -> Void = {}
+        onEQToggle: @escaping () -> Void = {},
+        showEQButton: Bool = false
     ) {
         self.app = app
         self.volume = volume
@@ -98,6 +100,7 @@ struct AppRow: View {
         self.onEQChange = onEQChange
         self.isEQExpanded = isEQExpanded
         self.onEQToggle = onEQToggle
+        self.showEQButton = showEQButton
         // Initialize local EQ state for reactive UI updates
         self._localEQSettings = State(initialValue: eqSettings)
     }
@@ -165,6 +168,7 @@ struct AppRow: View {
                     deviceSelectionMode: deviceSelectionMode,
                     maxVolumeBoost: maxVolumeBoost,
                     isEQExpanded: isEQExpanded,
+                    showEQButton: showEQButton,
                     onVolumeChange: onVolumeChange,
                     onMuteChange: onMuteChange,
                     onDeviceSelected: onDeviceSelected,
@@ -227,6 +231,7 @@ struct AppRowWithLevelPolling: View {
     let onEQChange: (EQSettings) -> Void
     let isEQExpanded: Bool
     let onEQToggle: () -> Void
+    let showEQButton: Bool
 
     @State private var displayLevel: Float = 0
     @State private var levelTimer: Timer?
@@ -256,7 +261,8 @@ struct AppRowWithLevelPolling: View {
         eqSettings: EQSettings = EQSettings(),
         onEQChange: @escaping (EQSettings) -> Void = { _ in },
         isEQExpanded: Bool = false,
-        onEQToggle: @escaping () -> Void = {}
+        onEQToggle: @escaping () -> Void = {},
+        showEQButton: Bool = false
     ) {
         self.app = app
         self.volume = volume
@@ -283,6 +289,7 @@ struct AppRowWithLevelPolling: View {
         self.onEQChange = onEQChange
         self.isEQExpanded = isEQExpanded
         self.onEQToggle = onEQToggle
+        self.showEQButton = showEQButton
     }
 
     var body: some View {
@@ -310,7 +317,8 @@ struct AppRowWithLevelPolling: View {
             eqSettings: eqSettings,
             onEQChange: onEQChange,
             isEQExpanded: isEQExpanded,
-            onEQToggle: onEQToggle
+            onEQToggle: onEQToggle,
+            showEQButton: showEQButton
         )
         .onAppear {
             if isPopupVisible {
