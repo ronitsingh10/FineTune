@@ -1,5 +1,6 @@
 // FineTune/Views/Rows/DeviceRow.swift
 import SwiftUI
+import Foundation
 
 /// A row displaying a device with volume controls
 /// Used in the Output Devices section
@@ -9,9 +10,24 @@ struct DeviceRow: View {
     let volume: Float
     let isMuted: Bool
     let hasVolumeControl: Bool
+    let currentSampleRate: Double
+    let availableSampleRates: [Double]
+    let canSetSampleRate: Bool
+    let canDisconnectBluetooth: Bool
+    let eqSettings: EQSettings
+    let headphoneEQSettings: HeadphoneEQSettings
+    let isEQExpanded: Bool
+    let canUseEQ: Bool
+    let eqDisabledReason: String?
     let onSetDefault: () -> Void
     let onVolumeChange: (Float) -> Void
     let onMuteToggle: () -> Void
+    let onSampleRateChange: (Double) -> Void
+    let onDisconnectBluetooth: () -> Void
+    let onEQToggle: () -> Void
+    let onEQChange: (EQSettings) -> Void
+    let onHeadphoneEQChange: (HeadphoneEQSettings) -> Void
+    let onHeadphoneEQImport: (URL) -> Result<HeadphoneEQSettings, Error>
 
     // AutoEQ (all optional — existing call sites work without them)
     let autoEQProfileName: String?
@@ -27,6 +43,8 @@ struct DeviceRow: View {
 
     @State private var sliderValue: Double
     @State private var isEditing = false
+    @State private var localEQSettings: EQSettings
+    @State private var localHeadphoneEQSettings: HeadphoneEQSettings
 
     /// Show muted icon when system muted OR volume is 0
     private var showMutedIcon: Bool { isMuted || sliderValue == 0 }
@@ -40,39 +58,51 @@ struct DeviceRow: View {
         volume: Float,
         isMuted: Bool,
         hasVolumeControl: Bool = true,
+        currentSampleRate: Double,
+        availableSampleRates: [Double] = [],
+        canSetSampleRate: Bool = false,
+        canDisconnectBluetooth: Bool = false,
+        eqSettings: EQSettings = .flat,
+        headphoneEQSettings: HeadphoneEQSettings = .empty,
+        isEQExpanded: Bool = false,
+        canUseEQ: Bool = true,
+        eqDisabledReason: String? = nil,
         onSetDefault: @escaping () -> Void,
         onVolumeChange: @escaping (Float) -> Void,
         onMuteToggle: @escaping () -> Void,
-        autoEQProfileName: String? = nil,
-        autoEQEnabled: Bool = false,
-        onAutoEQToggle: (() -> Void)? = nil,
-        autoEQProfileManager: AutoEQProfileManager? = nil,
-        autoEQSelection: AutoEQSelection? = nil,
-        autoEQFavoriteIDs: Set<String> = [],
-        onAutoEQSelect: ((AutoEQProfile?) -> Void)? = nil,
-        onAutoEQImport: (() -> Void)? = nil,
-        onAutoEQToggleFavorite: ((String) -> Void)? = nil,
-        autoEQImportError: String? = nil
+        onSampleRateChange: @escaping (Double) -> Void,
+        onDisconnectBluetooth: @escaping () -> Void = {},
+        onEQToggle: @escaping () -> Void = {},
+        onEQChange: @escaping (EQSettings) -> Void = { _ in },
+        onHeadphoneEQChange: @escaping (HeadphoneEQSettings) -> Void = { _ in },
+        onHeadphoneEQImport: @escaping (URL) -> Result<HeadphoneEQSettings, Error> = { _ in .failure(NSError(domain: "DeviceRow", code: -1, userInfo: [NSLocalizedDescriptionKey: "Import unavailable"])) }
     ) {
         self.device = device
         self.isDefault = isDefault
         self.volume = volume
         self.isMuted = isMuted
         self.hasVolumeControl = hasVolumeControl
+        self.currentSampleRate = currentSampleRate
+        self.availableSampleRates = availableSampleRates
+        self.canSetSampleRate = canSetSampleRate
+        self.canDisconnectBluetooth = canDisconnectBluetooth
+        self.eqSettings = eqSettings
+        self.headphoneEQSettings = headphoneEQSettings
+        self.isEQExpanded = isEQExpanded
+        self.canUseEQ = canUseEQ
+        self.eqDisabledReason = eqDisabledReason
         self.onSetDefault = onSetDefault
         self.onVolumeChange = onVolumeChange
         self.onMuteToggle = onMuteToggle
-        self.autoEQProfileName = autoEQProfileName
-        self.autoEQEnabled = autoEQEnabled
-        self.onAutoEQToggle = onAutoEQToggle
-        self.autoEQProfileManager = autoEQProfileManager
-        self.autoEQSelection = autoEQSelection
-        self.autoEQFavoriteIDs = autoEQFavoriteIDs
-        self.onAutoEQSelect = onAutoEQSelect
-        self.onAutoEQImport = onAutoEQImport
-        self.onAutoEQToggleFavorite = onAutoEQToggleFavorite
-        self.autoEQImportError = autoEQImportError
+        self.onSampleRateChange = onSampleRateChange
+        self.onDisconnectBluetooth = onDisconnectBluetooth
+        self.onEQToggle = onEQToggle
+        self.onEQChange = onEQChange
+        self.onHeadphoneEQChange = onHeadphoneEQChange
+        self.onHeadphoneEQImport = onHeadphoneEQImport
         self._sliderValue = State(initialValue: Double(volume))
+        self._localEQSettings = State(initialValue: eqSettings)
+        self._localHeadphoneEQSettings = State(initialValue: headphoneEQSettings)
     }
 
     var body: some View {
@@ -170,6 +200,8 @@ struct DeviceRow: View {
                         onMuteToggle()
                     }
                 }
+                .buttonStyle(.plain)
+                .help(canUseEQ ? "EQ" : (eqDisabledReason ?? "EQ unavailable for this output configuration"))
 
                 // Editable volume percentage
                 EditablePercentage(
@@ -180,12 +212,42 @@ struct DeviceRow: View {
                     range: 0...100
                 )
             }
+            .frame(height: DesignTokens.Dimensions.rowContentHeight)
+        } expandedContent: {
+            EQPanelView(
+                settings: $localEQSettings,
+                onPresetSelected: { preset in
+                    var updated = preset.settings
+                    updated.isEnabled = localEQSettings.isEnabled
+                    localEQSettings = updated
+                    onEQChange(localEQSettings)
+                },
+                onSettingsChanged: { updated in
+                    localEQSettings = updated
+                    onEQChange(updated)
+                },
+                headphoneSettings: $localHeadphoneEQSettings,
+                onHeadphoneSettingsChanged: { updated in
+                    localHeadphoneEQSettings = updated
+                    onHeadphoneEQChange(updated)
+                },
+                onHeadphoneProfileImport: onHeadphoneEQImport,
+                isUsingDeviceEQ: true,
+                onUseDeviceEQ: nil
+            )
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
         .frame(height: DesignTokens.Dimensions.rowContentHeight)
         .onChange(of: volume) { _, newValue in
             // Only sync from external changes when user is NOT dragging
             guard !isEditing else { return }
             sliderValue = Double(newValue)
+        }
+        .onChange(of: eqSettings) { _, newValue in
+            localEQSettings = newValue
+        }
+        .onChange(of: headphoneEQSettings) { _, newValue in
+            localHeadphoneEQSettings = newValue
         }
     }
 }
