@@ -50,6 +50,17 @@ final class AudioDeviceMonitor {
     private var knownDeviceUIDs: Set<String> = []
     private var knownInputDeviceUIDs: Set<String> = []
 
+    private let settingsManager: SettingsManager
+
+    init(settingsManager: SettingsManager) {
+        self.settingsManager = settingsManager
+    }
+
+    /// Forces an immediate rebuild of output/input device lists.
+    func refreshNow() {
+        refresh()
+    }
+
     func start() {
         guard deviceListListenerBlock == nil else { return }
 
@@ -107,19 +118,29 @@ final class AudioDeviceMonitor {
     private func refresh() {
         do {
             let deviceIDs = try AudioObjectID.readDeviceList()
+            let showAllDevices = settingsManager.showAllDevices
             var outputDeviceList: [AudioDevice] = []
             var inputDeviceList: [AudioDevice] = []
 
             for deviceID in deviceIDs {
-                guard !deviceID.isAggregateDevice() else { continue }
+                // Respect user preference for showing all devices
+                if deviceID.isAggregateDevice() && !showAllDevices { continue }
 
                 guard let uid = try? deviceID.readDeviceUID(),
                       let name = try? deviceID.readDeviceName() else {
                     continue
                 }
 
+                // Filter out known FineTune-created devices to avoid self-references
+                let lowerUID = uid.lowercased()
+                let lowerName = name.lowercased()
+                let bundleID = Bundle.main.bundleIdentifier?.lowercased() ?? "finetune"
+                if lowerUID.contains("finetune") || lowerName.contains("finetune") || (!bundleID.isEmpty && lowerUID.contains(bundleID)) {
+                    continue
+                }
+
                 // Output devices - filter virtual devices (avoid clutter from Teams Audio, BlackHole, etc.)
-                if deviceID.hasOutputStreams() && !deviceID.isVirtualDevice() {
+                if deviceID.hasOutputStreams() && (showAllDevices || !deviceID.isVirtualDevice()) {
                     // Try Core Audio icon first (via LRU cache), fall back to SF Symbol
                     let icon = DeviceIconCache.shared.icon(for: uid) {
                         deviceID.readDeviceIcon()

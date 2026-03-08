@@ -8,7 +8,7 @@ import UserNotifications
 @MainActor
 final class AudioEngine {
     let processMonitor = AudioProcessMonitor()
-    let deviceMonitor = AudioDeviceMonitor()
+    let deviceMonitor: AudioDeviceMonitor
     let deviceVolumeMonitor: DeviceVolumeMonitor
     let volumeState: VolumeState
     let settingsManager: SettingsManager
@@ -169,6 +169,7 @@ final class AudioEngine {
     init(settingsManager: SettingsManager? = nil) {
         let manager = settingsManager ?? SettingsManager()
         self.settingsManager = manager
+        self.deviceMonitor = AudioDeviceMonitor(settingsManager: manager)
         self.volumeState = VolumeState(settingsManager: manager)
 
         #if !APP_STORE
@@ -436,6 +437,12 @@ final class AudioEngine {
         }
         taps.removeAll()
         logger.info("AudioEngine stopped")
+    }
+
+    /// Rebuilds device lists immediately (used by settings-driven filters).
+    func refreshDeviceLists() {
+        deviceMonitor.refreshNow()
+        registerNewDevicesInPriority()
     }
 
     /// Explicit shutdown for app termination. Ensures all listeners are cleaned up.
