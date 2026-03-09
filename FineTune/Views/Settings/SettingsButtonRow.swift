@@ -49,18 +49,14 @@ struct SettingsButtonRow: View {
             description: "Clear all volumes, EQ, and device routings",
             buttonLabel: "Reset",
             isDestructive: true
-        ) {
-            print("Reset tapped")
-        }
+        ) {}
 
         SettingsButtonRow(
             icon: "square.and.arrow.up",
             title: "Export Settings",
             description: "Save settings to a file",
             buttonLabel: "Export"
-        ) {
-            print("Export tapped")
-        }
+        ) {}
     }
     .padding()
     .frame(width: 450)

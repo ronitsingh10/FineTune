@@ -17,6 +17,8 @@ final class AudioProcessMonitor {
         "com.apple.siri",
         "com.apple.Siri",
         "com.apple.assistant",
+        "com.apple.corespeech",
+        "com.apple.CoreSpeech",
         "com.apple.audio",
         "com.apple.coreaudio",
         "com.apple.mediaremote",
@@ -39,6 +41,8 @@ final class AudioProcessMonitor {
         "systemsoundserv",
         "coreaudiod",
         "audiomxd",
+        "corespeech",
+        "corespeechd",
     ]
 
     /// Returns true if the bundle ID or process name indicates a system daemon that should be filtered
@@ -63,7 +67,6 @@ final class AudioProcessMonitor {
     private var processListListenerBlock: AudioObjectPropertyListenerBlock?
     private var processListenerBlocks: [AudioObjectID: AudioObjectPropertyListenerBlock] = [:]
     private var monitoredProcesses: Set<AudioObjectID> = []
-
     private var processListAddress = AudioObjectPropertyAddress(
         mSelector: kAudioHardwarePropertyProcessObjectList,
         mScope: kAudioObjectPropertyScopeGlobal,
@@ -129,7 +132,6 @@ final class AudioProcessMonitor {
         // Set up listener first
         processListListenerBlock = { [weak self] numberAddresses, addresses in
             Task { @MainActor [weak self] in
-                self?.logger.debug("[DIAG] kAudioHardwarePropertyProcessObjectList fired")
                 self?.refresh()
             }
         }
@@ -169,7 +171,6 @@ final class AudioProcessMonitor {
             let myPID = ProcessInfo.processInfo.processIdentifier
 
             var apps: [AudioApp] = []
-
             for objectID in processIDs {
                 guard objectID.readProcessIsRunning() else { continue }
                 guard let pid = try? objectID.readProcessPID(), pid != myPID else { continue }
@@ -189,6 +190,18 @@ final class AudioProcessMonitor {
                     ?? NSImage(systemSymbolName: "app.fill", accessibilityDescription: nil)
                     ?? NSImage()
                 let bundleID = resolvedApp?.bundleIdentifier ?? objectID.readProcessBundleID()
+
+                // If we cannot resolve to a real app bundle, ignore Apple helper/daemon
+                // processes and unidentified ephemeral process objects. These are a common
+                // source of noisy CoreAudio task-port warnings and should not be user-facing.
+                if resolvedApp == nil {
+                    if let bundleID, bundleID.hasPrefix("com.apple.") {
+                        continue
+                    }
+                    if bundleID == nil {
+                        continue
+                    }
+                }
 
                 // Skip system daemons (siri, coreaudio, etc.) - they shouldn't appear in the apps list
                 if isSystemDaemon(bundleID: bundleID, name: name) { continue }
