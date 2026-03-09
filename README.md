@@ -3,6 +3,7 @@
 </p>
 
 <h1 align="center">FineTuneFX</h1>
+<img width="610" height="600" alt="image" src="https://github.com/user-attachments/assets/f995de01-2be8-41f1-ab74-16686f9e0eb7" />
 
 <p align="center">
   <strong>Per-app volume control for macOS</strong>
