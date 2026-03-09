@@ -15,10 +15,11 @@ struct EditablePercentage: View {
     @FocusState private var isFocused: Bool
     @State private var coordinator = ClickOutsideCoordinator()
     @State private var componentFrame: CGRect = .zero
+    @Environment(ThemeManager.self) private var theme
 
     /// Text color adapts to state: accent when editing, secondary otherwise
     private var textColor: Color {
-        isEditing ? DesignTokens.Colors.accentPrimary : DesignTokens.Colors.textSecondary
+        isEditing ? theme.accentColor : DesignTokens.Colors.textSecondary
     }
 
     var body: some View {
@@ -60,10 +61,10 @@ struct EditablePercentage: View {
             if isEditing {
                 // Subtle pill background when editing
                 RoundedRectangle(cornerRadius: 4)
-                    .fill(DesignTokens.Colors.accentPrimary.opacity(0.12))
+                    .fill(theme.accentColor.opacity(0.12))
                     .overlay {
                         RoundedRectangle(cornerRadius: 4)
-                            .strokeBorder(DesignTokens.Colors.accentPrimary.opacity(0.4), lineWidth: 1)
+                            .strokeBorder(theme.accentColor.opacity(0.4), lineWidth: 1)
                     }
             } else if isHovered {
                 // Subtle hover background to indicate clickability

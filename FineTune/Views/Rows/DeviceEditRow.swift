@@ -100,12 +100,13 @@ private struct EditablePriority: View {
     @FocusState private var isFocused: Bool
     @State private var coordinator = ClickOutsideCoordinator()
     @State private var componentFrame: CGRect = .zero
+    @Environment(ThemeManager.self) private var theme
 
     /// Display number is 1-based
     private var displayNumber: Int { index + 1 }
 
     private var textColor: Color {
-        isEditing ? DesignTokens.Colors.accentPrimary : DesignTokens.Colors.textSecondary
+        isEditing ? theme.accentColor : DesignTokens.Colors.textSecondary
     }
 
     var body: some View {
@@ -140,10 +141,10 @@ private struct EditablePriority: View {
         .background {
             if isEditing {
                 RoundedRectangle(cornerRadius: 4)
-                    .fill(DesignTokens.Colors.accentPrimary.opacity(0.12))
+                    .fill(theme.accentColor.opacity(0.12))
                     .overlay {
                         RoundedRectangle(cornerRadius: 4)
-                            .strokeBorder(DesignTokens.Colors.accentPrimary.opacity(0.4), lineWidth: 1)
+                            .strokeBorder(theme.accentColor.opacity(0.4), lineWidth: 1)
                     }
             } else if isHovered {
                 RoundedRectangle(cornerRadius: 4)

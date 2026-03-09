@@ -117,15 +117,24 @@ private struct FXSystemPanel: View {
     @State private var selectedPreset: FXPreset? = .general
     @State private var isDirty: Bool = false
     @State private var fxAreaHovered = false
+    @AppStorage("lastFXPresetID") private var savedPresetID: String = FXPreset.general.rawValue
 
     init(settings: FXSettings, onSettingsChanged: @escaping (FXSettings) -> Void) {
         self.settings = settings
         self.onSettingsChanged = onSettingsChanged
         _local = State(initialValue: settings)
+
+        // First try to match the current settings exactly to a preset
         if let match = settings.matchingPreset() {
             _selectedPreset = State(initialValue: match)
+            _isDirty = State(initialValue: false)
         } else {
-            _selectedPreset = State(initialValue: .general)
+            // Fall back to the last user-selected preset name (no asterisk yet — user
+            // may have changed settings outside of a preset selection, but we still
+            // want to show which preset they were last on, with the dirty marker).
+            let savedID = UserDefaults.standard.string(forKey: "lastFXPresetID") ?? FXPreset.general.rawValue
+            let restored = FXPreset(rawValue: savedID) ?? .general
+            _selectedPreset = State(initialValue: restored)
             _isDirty = State(initialValue: true)
         }
     }
@@ -143,6 +152,7 @@ private struct FXSystemPanel: View {
                     FXPresetDropdown(label: presetLabel) { preset in
                         selectedPreset = preset
                         isDirty = false
+                        savedPresetID = preset.rawValue
                         local = preset.settings
                         onSettingsChanged(local)
                     }
@@ -384,58 +394,52 @@ private struct FXPresetDropdown: View {
 }
 
 // MARK: - FX Slider row
-// Label above, then the track with the value overlaid just right of the thumb.
+// Label above; value text always sits to the right of the thumb.
+// The usable track is shortened by `labelReserve` pts on the right so even
+// "10" (the widest value) never overlaps or flips sides.
 
 private struct FXSliderRow: View {
     let label: String
     @Binding var value: Int
     let showValue: Bool
-    private let accent = Color(red: 0.9, green: 0.2, blue: 0.3)
-    private let steps  = 10
-    private let thumbR: CGFloat = 7
-    private let valueGap: CGFloat = 6   // gap between thumb edge and value text
+
+    @Environment(ThemeManager.self) private var theme
+
+    private let steps        = 10
+    private let thumbR: CGFloat   = 7
+    private let valueGap: CGFloat = 5
+    private let labelReserve: CGFloat = 22   // reserved on right for "10"
 
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
             Text(label)
-                .font(.system(size: 10))
-                .foregroundStyle(DesignTokens.Colors.textSecondary)
+                .font(DesignTokens.Typography.pickerText)
+                .foregroundStyle(DesignTokens.Colors.textPrimary)
 
             GeometryReader { geo in
-                let w     = geo.size.width
-                let frac  = CGFloat(value) / CGFloat(steps)
-                let thumbX = (thumbR + frac * (w - thumbR * 2)).clamped(thumbR, w - thumbR)
-                // Value text sits just right of the thumb.
-                // At max (10) we flip it left of the thumb so it never overflows.
-                let atMax = value == steps
-                let labelX = atMax
-                    ? thumbX - thumbR - valueGap   // anchor .trailing when at max
-                    : thumbX + thumbR + valueGap   // anchor .leading otherwise
+                let trackW = geo.size.width - labelReserve
+                let frac   = CGFloat(value) / CGFloat(steps)
+                let thumbX = (thumbR + frac * (trackW - thumbR * 2))
+                    .clamped(thumbR, trackW - thumbR)
+                let labelCx = thumbX + thumbR + valueGap + 7
+                let accent  = theme.accentColor
 
                 ZStack(alignment: .leading) {
-                    // Track background
                     Capsule()
                         .fill(Color.white.opacity(0.12))
-                        .frame(height: 3)
+                        .frame(width: trackW, height: 3)
 
-                    // Filled portion
                     Capsule()
                         .fill(accent)
                         .frame(width: thumbX, height: 3)
 
-                    // Thumb
                     Circle()
                         .fill(Color.white)
                         .frame(width: thumbR * 2, height: thumbR * 2)
                         .shadow(color: .black.opacity(0.4), radius: 1.5, y: 1)
                         .offset(x: thumbX - thumbR)
 
-                    // Value — follows thumb. At max, sits left of thumb so it's never hidden.
                     if showValue {
-                        let halfLabel: CGFloat = 8   // approx half-width of "10"
-                        let labelCx = atMax
-                            ? thumbX - thumbR - valueGap - halfLabel  // left of thumb
-                            : thumbX + thumbR + valueGap + halfLabel  // right of thumb
                         Text("\(value)")
                             .font(.system(size: 10, weight: .semibold).monospacedDigit())
                             .foregroundStyle(accent)
@@ -446,7 +450,7 @@ private struct FXSliderRow: View {
                 }
                 .contentShape(Rectangle())
                 .gesture(DragGesture(minimumDistance: 0).onChanged { drag in
-                    let raw = drag.location.x / w * CGFloat(steps)
+                    let raw = drag.location.x / trackW * CGFloat(steps)
                     value = min(steps, max(0, Int(raw.rounded())))
                 })
                 .animation(.easeInOut(duration: 0.08), value: showValue)
@@ -468,8 +472,10 @@ private struct FXEQCurve: View {
     @State private var dragStartY: CGFloat  = 0
     @State private var dragStartGain: Float = 0
 
+    @Environment(ThemeManager.self) private var theme
+    @Environment(\.colorScheme) private var colorScheme
+
     private let labelH: CGFloat = 13
-    private let accent = Color(red: 0.9, green: 0.2, blue: 0.3)
     private let n = 9
 
     private func colCenter(_ i: Int, width: CGFloat) -> CGFloat {
@@ -489,6 +495,12 @@ private struct FXEQCurve: View {
         GeometryReader { geo in
             let size = geo.size
             let colW = size.width / CGFloat(n)
+            let accent = theme.accentColor
+            let isDark = colorScheme == .dark
+            let gridColor = isDark ? Color.white.opacity(0.07) : Color.black.opacity(0.10)
+            let midlineColor = isDark ? Color.white.opacity(0.18) : Color.black.opacity(0.20)
+            let labelColor = isDark ? Color.white.opacity(0.65) : Color.black.opacity(0.65)
+            let labelActiveColor = isDark ? Color.white : Color.black
 
             Canvas { ctx, sz in
                 let midY = labelH + (sz.height - labelH) * 0.5
@@ -498,13 +510,13 @@ private struct FXEQCurve: View {
                     let x = colCenter(i, width: sz.width)
                     var p = Path(); p.move(to: CGPoint(x: x, y: labelH))
                     p.addLine(to: CGPoint(x: x, y: sz.height))
-                    ctx.stroke(p, with: .color(.white.opacity(0.07)), lineWidth: 0.5)
+                    ctx.stroke(p, with: .color(gridColor), lineWidth: 0.5)
                 }
                 // Midline
                 var mid = Path()
                 mid.move(to: CGPoint(x: 0, y: midY))
                 mid.addLine(to: CGPoint(x: sz.width, y: midY))
-                ctx.stroke(mid, with: .color(.white.opacity(0.15)), lineWidth: 0.5)
+                ctx.stroke(mid, with: .color(midlineColor), lineWidth: 0.5)
 
                 let pts = (0..<n).map { i in
                     CGPoint(x: colCenter(i, width: sz.width), y: yFor(gains[i], height: sz.height))
@@ -559,13 +571,13 @@ private struct FXEQCurve: View {
                                 .font((isDrag
                                     ? Font.system(size: 9, weight: .bold)
                                     : Font.system(size: 8)).monospacedDigit())
-                                .foregroundColor(isDrag ? .white : Color.white.opacity(0.65)),
+                                .foregroundColor(isDrag ? labelActiveColor : labelColor),
                             at: CGPoint(x: p.x, y: p.y - 10), anchor: .center
                         )
                     }
                 }
             }
-            .background(Color.black.opacity(0.25))
+            .background(Color.primary.opacity(0.08))
             .gesture(DragGesture(minimumDistance: 0)
                 .onChanged { drag in
                     if draggingBand == -1 {
@@ -620,9 +632,11 @@ private struct FXFreqDial: View {
     @State private var startY: CGFloat   = 0
     @State private var startFreq: Double = 0
 
+    @Environment(ThemeManager.self) private var theme
+    @Environment(\.colorScheme) private var colorScheme
+
     private static let startDeg: Double = 225.0
     private static let sweepDeg: Double = 270.0
-    private let accent = Color(red: 0.9, green: 0.2, blue: 0.3)
 
     private var fraction: Double {
         ((freq - range.min) / max(1, range.max - range.min)).clamped(0, 1)
@@ -638,6 +652,8 @@ private struct FXFreqDial: View {
     var body: some View {
         VStack(spacing: 2) {
             Canvas { ctx, size in
+                let accent = theme.accentColor
+                let isDark = colorScheme == .dark
                 let cx = size.width/2, cy = size.height/2
                 let r  = min(cx, cy) - 1.5
                 let center = CGPoint(x: cx, y: cy)
@@ -647,7 +663,7 @@ private struct FXFreqDial: View {
 
                 var ghost = Path()
                 ghost.addArc(center: center, radius: r, startAngle: cs, endAngle: ce, clockwise: false)
-                ctx.stroke(ghost, with: .color(.white.opacity(0.12)),
+                ctx.stroke(ghost, with: .color(isDark ? Color.white.opacity(0.12) : Color.black.opacity(0.15)),
                            style: StrokeStyle(lineWidth: 2, lineCap: .round))
 
                 if fraction > 0.005 {
@@ -669,7 +685,8 @@ private struct FXFreqDial: View {
                     let lbl = freq >= 1000
                         ? String(format: "%.1fk", freq/1000)
                         : String(format: "%.0f", freq)
-                    ctx.draw(Text(lbl).font(.system(size: 6, weight: .semibold)).foregroundColor(.white),
+                    ctx.draw(Text(lbl).font(.system(size: 6, weight: .semibold))
+                                      .foregroundColor(isDark ? .white : .black),
                              at: center, anchor: .center)
                 }
             }

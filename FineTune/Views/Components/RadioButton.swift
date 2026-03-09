@@ -7,13 +7,14 @@ struct RadioButton: View {
     let action: () -> Void
 
     @State private var isHovered = false
+    @Environment(ThemeManager.self) private var theme
 
     var body: some View {
         Button(action: action) {
             Image(systemName: isSelected ? "inset.filled.circle" : "circle")
                 .font(.system(size: 14))
                 .symbolRenderingMode(isSelected ? .monochrome : .hierarchical)
-                .foregroundStyle(isSelected ? DesignTokens.Colors.defaultDevice : buttonColor)
+                .foregroundStyle(isSelected ? theme.accentColor : buttonColor)
                 .frame(
                     minWidth: DesignTokens.Dimensions.minTouchTarget,
                     minHeight: DesignTokens.Dimensions.minTouchTarget

@@ -319,6 +319,7 @@ private struct DevicePickerRow: View {
     let onTap: () -> Void
 
     @State private var isHovered = false
+    @Environment(ThemeManager.self) private var theme
 
     var body: some View {
         Button(action: onTap) {
@@ -363,14 +364,14 @@ private struct DevicePickerRow: View {
             // Checkbox for multi mode
             Image(systemName: isSelected ? "checkmark.square.fill" : "square")
                 .font(.system(size: 12))
-                .foregroundStyle(isSelected ? DesignTokens.Colors.accentPrimary : DesignTokens.Colors.textTertiary)
+                .foregroundStyle(isSelected ? theme.accentColor : DesignTokens.Colors.textTertiary)
                 .frame(width: 16)
         } else {
             // Checkmark for single mode (only show when selected)
             if isSelected {
                 Image(systemName: "checkmark")
                     .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(DesignTokens.Colors.accentPrimary)
+                    .foregroundStyle(theme.accentColor)
                     .frame(width: 16)
             } else {
                 Spacer()

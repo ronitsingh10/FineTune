@@ -2,9 +2,9 @@
 import SwiftUI
 import AppKit
 
-/// A dark frosted glass background using NSVisualEffectView
-/// Provides deeper vibrancy than SwiftUI's built-in materials
-/// Updated for macOS 26+ Liquid Glass aesthetic
+/// A frosted glass background using NSVisualEffectView.
+/// Appearance (dark/light) is driven by the SwiftUI colorScheme environment —
+/// no hardcoded darkAqua so ThemeManager's isDarkMode takes full effect.
 struct VisualEffectBackground: NSViewRepresentable {
     var material: NSVisualEffectView.Material = .hudWindow
     var blendingMode: NSVisualEffectView.BlendingMode = .behindWindow
@@ -14,37 +14,43 @@ struct VisualEffectBackground: NSViewRepresentable {
         view.material = material
         view.blendingMode = blendingMode
         view.state = .active
-        // Force dark appearance for consistency
-        view.appearance = NSAppearance(named: .darkAqua)
+        // Appearance synced in updateNSView
         return view
     }
 
     func updateNSView(_ nsView: NSVisualEffectView, context: Context) {
         nsView.material = material
         nsView.blendingMode = blendingMode
+        // Follow SwiftUI's colorScheme (set by ThemeManager via preferredColorScheme)
+        nsView.appearance = context.environment.colorScheme == .dark
+            ? NSAppearance(named: .darkAqua)
+            : NSAppearance(named: .aqua)
     }
 }
 
-// MARK: - Colors
+// MARK: - Glass background modifier (reads ThemeManager for tint + colorScheme)
 
-extension Color {
-    /// Popup background overlay - uses theme-aware color from DesignTokens
-    /// Darker than before for more contrast with floating glass rows
-    static var popupBackgroundOverlay: Color { DesignTokens.Colors.popupOverlay }
+private struct GlassBackgroundModifier: ViewModifier {
+    @Environment(ThemeManager.self) private var theme
+
+    func body(content: Content) -> some View {
+        content
+            .background(theme.backgroundOverlayColor)
+            .background(VisualEffectBackground(material: .hudWindow, blendingMode: .behindWindow))
+    }
 }
 
 // MARK: - View Extensions
 
 extension View {
-    /// Applies a dark glass background using NSVisualEffectView
-    /// The primary popup container style - darker to make floating rows pop
+    /// Applies a theme-aware glass background.
+    /// Dark hi-contrast → original dark popup look.
+    /// Light hi-contrast → lighter blur.
+    /// Lo-contrast → pastel primary tint over the blur.
     func darkGlassBackground() -> some View {
-        self
-            .background(Color.popupBackgroundOverlay)
-            .background(VisualEffectBackground(material: .hudWindow, blendingMode: .behindWindow))
+        modifier(GlassBackgroundModifier())
     }
 
-    /// Applies EQ panel glass background (recessed style)
     func eqPanelBackground() -> some View {
         modifier(EQPanelBackgroundModifier())
     }
@@ -52,8 +58,6 @@ extension View {
 
 // MARK: - EQ Panel Background Modifier
 
-/// Modifier that applies glass background to EQ panel
-/// Locked to recessed style: dark overlay with subtle border
 struct EQPanelBackgroundModifier: ViewModifier {
     func body(content: Content) -> some View {
         content
@@ -70,35 +74,14 @@ struct EQPanelBackgroundModifier: ViewModifier {
 
 // MARK: - Previews
 
-#Preview("Dark Glass Popup Background") {
+#Preview("Dark Glass - Hi-Contrast") {
     VStack(spacing: 16) {
-        Text("OUTPUT DEVICES")
-            .sectionHeaderStyle()
+        Text("OUTPUT DEVICES").bold()
         Text("Dark frosted glass background")
-            .foregroundStyle(.primary)
     }
-    .padding(DesignTokens.Spacing.lg)
+    .padding(20)
     .frame(width: 300)
     .darkGlassBackground()
-    .clipShape(RoundedRectangle(cornerRadius: DesignTokens.Dimensions.cornerRadius))
-    .environment(\.colorScheme, .dark)
-}
-
-#Preview("EQ Panel - Recessed") {
-    VStack(spacing: 8) {
-        Text("EQ Panel - Recessed")
-            .foregroundStyle(.secondary)
-        HStack {
-            ForEach(0..<5) { _ in
-                Rectangle()
-                    .fill(.secondary.opacity(0.3))
-                    .frame(width: 20, height: 60)
-            }
-        }
-    }
-    .padding()
-    .eqPanelBackground()
-    .padding()
-    .darkGlassBackground()
-    .environment(\.colorScheme, .dark)
+    .clipShape(RoundedRectangle(cornerRadius: 12))
+    .environment(ThemeManager())
 }

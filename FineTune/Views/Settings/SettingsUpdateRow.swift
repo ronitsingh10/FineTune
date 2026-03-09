@@ -6,6 +6,7 @@ struct SettingsUpdateRow: View {
     @Binding var automaticallyChecks: Bool
     let lastCheckDate: Date?
     let onCheckNow: () -> Void
+    @Environment(ThemeManager.self) private var theme
 
     private var descriptionText: String {
         let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0"
@@ -32,7 +33,7 @@ struct SettingsUpdateRow: View {
                     Toggle("", isOn: $automaticallyChecks)
                         .toggleStyle(.switch)
                         .controlSize(.mini)
-                        .tint(DesignTokens.Colors.accentPrimary)
+                        .tint(theme.accentColor)
                         .labelsHidden()
                 }
 

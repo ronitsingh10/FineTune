@@ -6,6 +6,7 @@ struct ModeToggle: View {
     @Binding var mode: DeviceSelectionMode
 
     @State private var hoveredOption: DeviceSelectionMode?
+    @Environment(ThemeManager.self) private var theme
 
     private let options: [(mode: DeviceSelectionMode, label: String)] = [
         (.single, "Single"),
@@ -41,7 +42,7 @@ struct ModeToggle: View {
             HStack(spacing: DesignTokens.Spacing.xs) {
                 Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
                     .font(.system(size: 10))
-                    .foregroundStyle(isSelected ? DesignTokens.Colors.accentPrimary : DesignTokens.Colors.textTertiary)
+                    .foregroundStyle(isSelected ? theme.accentColor : DesignTokens.Colors.textTertiary)
 
                 Text(label)
                     .font(.system(size: 11, weight: isSelected ? .medium : .regular))

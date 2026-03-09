@@ -29,6 +29,7 @@ struct FineTuneApp: App {
     @State private var audioEngine: AudioEngine
     @StateObject private var updateManager = UpdateManager()
     @State private var showMenuBarExtra = true
+    @State private var themeManager = ThemeManager()
 
     /// Icon style captured at launch (doesn't change during runtime)
     private let launchIconStyle: MenuBarIconStyle
@@ -71,12 +72,13 @@ struct FineTuneApp: App {
 
     @ViewBuilder
     private var menuBarContent: some View {
-        MenuBarPopupView(
+        ThemedContainer(
             audioEngine: audioEngine,
             deviceVolumeMonitor: audioEngine.deviceVolumeMonitor,
             updateManager: updateManager,
             launchIconStyle: launchIconStyle
         )
+        .environment(themeManager)
     }
 
     init() {
@@ -124,5 +126,29 @@ struct FineTuneApp: App {
         ) { [settings] _ in
             settings.flushSync()
         }
+    }
+}
+
+// MARK: - ThemedContainer
+// A dedicated View so that @Observable ThemeManager changes trigger re-renders of
+// .tint() and .preferredColorScheme(). An App's @ViewBuilder body doesn't re-evaluate
+// on @Observable changes, so we need a real View body to track them.
+private struct ThemedContainer: View {
+    let audioEngine: AudioEngine
+    let deviceVolumeMonitor: DeviceVolumeMonitor
+    let updateManager: UpdateManager
+    let launchIconStyle: MenuBarIconStyle
+
+    @Environment(ThemeManager.self) private var theme
+
+    var body: some View {
+        MenuBarPopupView(
+            audioEngine: audioEngine,
+            deviceVolumeMonitor: deviceVolumeMonitor,
+            updateManager: updateManager,
+            launchIconStyle: launchIconStyle
+        )
+        .tint(theme.accentColor)
+        .preferredColorScheme(theme.colorScheme)
     }
 }

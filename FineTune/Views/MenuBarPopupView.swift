@@ -9,6 +9,11 @@ struct MenuBarPopupView: View {
     /// Icon style that was applied at app launch (for restart-required detection)
     let launchIconStyle: MenuBarIconStyle
 
+    @Environment(ThemeManager.self) private var theme
+
+    /// Track whether colour palette editor is open (FX tab only)
+    @State private var isColorPaletteOpen = false
+
     /// Memoized sorted output devices - only recomputed when device list or default changes
     @State private var sortedDevices: [AudioDevice] = []
 
@@ -98,12 +103,21 @@ struct MenuBarPopupView: View {
                     onResetAll: {
                         audioEngine.settingsManager.resetAllSettings()
                         localAppSettings = audioEngine.settingsManager.appSettings
-                        // Sync Core Audio: system sounds should follow default after reset
                         deviceVolumeMonitor.setSystemFollowDefault()
                     },
                     deviceVolumeMonitor: deviceVolumeMonitor,
                     outputDevices: sortedDevices
                 )
+                .transition(.asymmetric(
+                    insertion: .move(edge: .trailing).combined(with: .opacity),
+                    removal: .move(edge: .trailing).combined(with: .opacity)
+                ))
+            } else if isColorPaletteOpen {
+                ColorPaletteEditor(onCancel: {
+                    withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+                        isColorPaletteOpen = false
+                    }
+                })
                 .transition(.asymmetric(
                     insertion: .move(edge: .trailing).combined(with: .opacity),
                     removal: .move(edge: .trailing).combined(with: .opacity)
@@ -125,7 +139,7 @@ struct MenuBarPopupView: View {
         .padding(DesignTokens.Spacing.lg)
         .frame(width: DesignTokens.Dimensions.popupWidth)
         .darkGlassBackground()
-        .environment(\.colorScheme, .dark)
+        .environment(\.colorScheme, theme.colorScheme)
         .onAppear {
             updateSortedDevices()
             updateSortedInputDevices()
@@ -141,6 +155,7 @@ struct MenuBarPopupView: View {
         }
         .onChange(of: activeTab) { _, _ in
             exitEditModeSaving()
+            if isColorPaletteOpen { isColorPaletteOpen = false }
         }
         .onChange(of: localAppSettings) { _, newValue in
             audioEngine.settingsManager.updateAppSettings(newValue)
@@ -166,24 +181,44 @@ struct MenuBarPopupView: View {
 
     // MARK: - Edit Priority Button
 
-    /// Edit priority button — pencil ↔ checkmark, styled to match settingsButton
+    /// On the FX tab: opens the colour palette editor (paintpalette icon).
+    /// On all other tabs: pencil ↔ checkmark for device priority reorder.
     private var editPriorityButton: some View {
-        Button {
-            toggleDevicePriorityEdit()
-        } label: {
-            Image(systemName: isEditingDevicePriority ? "checkmark" : "pencil")
-                .font(.system(size: 12, weight: isEditingDevicePriority ? .bold : .regular))
-                .symbolRenderingMode(.hierarchical)
-                .foregroundStyle(DesignTokens.Colors.interactiveDefault)
-                .frame(
-                    minWidth: DesignTokens.Dimensions.minTouchTarget,
-                    minHeight: DesignTokens.Dimensions.minTouchTarget
-                )
-                .contentShape(Rectangle())
+        Group {
+            if activeTab == .fx {
+                Button {
+                    withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+                        isColorPaletteOpen.toggle()
+                    }
+                } label: {
+                    Image(systemName: isColorPaletteOpen ? "checkmark" : "paintpalette")
+                        .font(.system(size: 12, weight: isColorPaletteOpen ? .bold : .regular))
+                        .symbolRenderingMode(.hierarchical)
+                        .foregroundStyle(DesignTokens.Colors.interactiveDefault)
+                        .frame(minWidth: DesignTokens.Dimensions.minTouchTarget,
+                               minHeight: DesignTokens.Dimensions.minTouchTarget)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .animation(.spring(response: 0.3, dampingFraction: 0.75), value: isColorPaletteOpen)
+                .help(isColorPaletteOpen ? "Done" : "Colour Palette")
+            } else {
+                Button {
+                    toggleDevicePriorityEdit()
+                } label: {
+                    Image(systemName: isEditingDevicePriority ? "checkmark" : "pencil")
+                        .font(.system(size: 12, weight: isEditingDevicePriority ? .bold : .regular))
+                        .symbolRenderingMode(.hierarchical)
+                        .foregroundStyle(DesignTokens.Colors.interactiveDefault)
+                        .frame(minWidth: DesignTokens.Dimensions.minTouchTarget,
+                               minHeight: DesignTokens.Dimensions.minTouchTarget)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .animation(.spring(response: 0.3, dampingFraction: 0.75), value: isEditingDevicePriority)
+                .help(isEditingDevicePriority ? "Done reordering" : "Reorder devices")
+            }
         }
-        .buttonStyle(.plain)
-        .animation(.spring(response: 0.3, dampingFraction: 0.75), value: isEditingDevicePriority)
-        .help(isEditingDevicePriority ? "Done reordering" : "Reorder devices")
     }
 
     // MARK: - Settings Button
@@ -422,7 +457,7 @@ struct MenuBarPopupView: View {
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .help("Sound Enhancement (FX)")
+            .help("Special Effects (FX)")
         }
         .padding(3)
         .background(

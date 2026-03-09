@@ -13,6 +13,8 @@ struct SettingsIconPickerRow: View {
         selection != appliedStyle
     }
 
+    @Environment(ThemeManager.self) private var theme
+
     var body: some View {
         HStack(spacing: DesignTokens.Spacing.sm) {
             Image(systemName: icon)
@@ -38,7 +40,7 @@ struct SettingsIconPickerRow: View {
                 }
                 .buttonStyle(.plain)
                 .font(DesignTokens.Typography.pickerText)
-                .foregroundStyle(DesignTokens.Colors.accentPrimary)
+                .foregroundStyle(theme.accentColor)
             }
 
             // Icon options on the right
@@ -81,6 +83,8 @@ private struct IconOption: View {
     let isSelected: Bool
     let onSelect: () -> Void
 
+    @Environment(ThemeManager.self) private var theme
+
     var body: some View {
         Button(action: onSelect) {
             Group {
@@ -94,16 +98,16 @@ private struct IconOption: View {
                         .frame(width: 14, height: 14)
                 }
             }
-            .foregroundStyle(isSelected ? DesignTokens.Colors.accentPrimary : DesignTokens.Colors.textSecondary)
+            .foregroundStyle(isSelected ? theme.accentColor : DesignTokens.Colors.textSecondary)
             .frame(width: 30, height: 30)
             .contentShape(Rectangle())
             .background {
                 RoundedRectangle(cornerRadius: 6)
-                    .fill(isSelected ? DesignTokens.Colors.accentPrimary.opacity(0.15) : Color.clear)
+                    .fill(isSelected ? theme.accentColor.opacity(0.15) : Color.clear)
             }
             .overlay {
                 RoundedRectangle(cornerRadius: 6)
-                    .stroke(isSelected ? DesignTokens.Colors.accentPrimary : Color.clear, lineWidth: 1.5)
+                    .stroke(isSelected ? theme.accentColor : Color.clear, lineWidth: 1.5)
             }
         }
         .buttonStyle(.plain)

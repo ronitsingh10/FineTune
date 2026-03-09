@@ -23,6 +23,7 @@
 - **Volume boost** — Amplify up to 400%
 - **Menu bar app** — Lightweight, always accessible
 - **URL schemes** — Automate volume, mute, device routing, and more from scripts
+- **Colour schemes** — Light mode, dark mode, hi/lo-contrast, primary colour picker
 
 ## Install
 
