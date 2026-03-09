@@ -31,6 +31,13 @@ final class AudioProcessMonitor {
         "com.apple.NotificationCenter",
         "com.apple.UserNotifications",
         "com.apple.usernotifications",
+        "com.apple.SpeechRecognitionCore",
+        "com.apple.speech",
+        "com.apple.dictation",
+        "com.apple.corespeech",
+        "com.apple.CoreSpeech",
+        "com.apple.VoiceControl",
+        "com.apple.voicecontrol",
     ]
 
     /// Process names for system daemons (fallback when bundle ID is nil or different format)
@@ -39,6 +46,9 @@ final class AudioProcessMonitor {
         "systemsoundserv",
         "coreaudiod",
         "audiomxd",
+        "speechrecognitiond",
+        "dictationd",
+        "corespeech",
     ]
 
     /// Returns true if the bundle ID or process name indicates a system daemon that should be filtered
