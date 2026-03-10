@@ -20,15 +20,19 @@ import CoreVideo
 struct FXSpectrumView: NSViewRepresentable {
     let isEnabled:   Bool
     let audioEngine: AudioEngine
-
-    @Environment(ThemeManager.self) private var theme
+    // Colour passed explicitly from the call site so it is always resolved
+    // at SwiftUI body time — not inside NSViewRepresentable callbacks where
+    // the environment may still reflect the previous animation frame.
+    let accentR: CGFloat
+    let accentG: CGFloat
+    let accentB: CGFloat
 
     func makeCoordinator() -> SpectrumCoordinator { SpectrumCoordinator() }
 
     func makeNSView(context: Context) -> SpectrumNSView {
         let v = SpectrumNSView()
+        push(context.coordinator)   // set correct colour BEFORE display link starts
         context.coordinator.attach(to: v, engine: audioEngine)
-        push(context.coordinator)
         return v
     }
 
@@ -37,10 +41,7 @@ struct FXSpectrumView: NSViewRepresentable {
     }
 
     private func push(_ c: SpectrumCoordinator) {
-        var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0
-        (NSColor(theme.accentColor).usingColorSpace(.sRGB) ?? .systemBlue)
-            .getRed(&r, green: &g, blue: &b, alpha: nil)
-        c.configure(r: r, g: g, b: b, enabled: isEnabled)
+        c.configure(r: accentR, g: accentG, b: accentB, enabled: isEnabled)
     }
 }
 
@@ -60,8 +61,10 @@ final class SpectrumCoordinator {
     private weak var engine: AudioEngine?
     private var displayLink: CVDisplayLink?
 
-    private var cr: CGFloat = 0; private var cg: CGFloat = 0.5; private var cb: CGFloat = 1
+    private var cr: CGFloat = 0; private var cg: CGFloat = 0; private var cb: CGFloat = 0
     private var enabled: Bool = true
+    // Prevents rendering with default colours before the theme colour is pushed
+    private var isConfigured: Bool = false
 
     func attach(to v: SpectrumNSView, engine: AudioEngine) {
         self.view   = v
@@ -70,6 +73,7 @@ final class SpectrumCoordinator {
     }
 
     func configure(r: CGFloat, g: CGFloat, b: CGFloat, enabled: Bool) {
+        isConfigured = true
         cr = r; cg = g; cb = b; self.enabled = enabled
     }
 
@@ -99,11 +103,12 @@ final class SpectrumCoordinator {
     private var frameSkip = false
 
     private func tick() {
+        guard isConfigured else { return }  // don't render before theme colour is set
         frameSkip.toggle()
         guard !frameSkip else { return }   // ~30 fps
 
         guard let eng = engine else { return }
-        let rawBands = eng.spectrumBandLevels   // [Float] × 10, non-isolated read
+        let rawBands = fetchBands(from: eng)   // [Float] × 10 (main-actor read)
 
         let N = Self.barsPerBand   // 4
         let half = N / 2           // 2
@@ -135,6 +140,13 @@ final class SpectrumCoordinator {
             view?.refresh(bandGraph: snap, r: r, g: g, b: b, enabled: en)
         }
     }
+
+    private func fetchBands(from engine: AudioEngine) -> [Float] {
+        if Thread.isMainThread { return engine.spectrumBandLevels }
+        var bands: [Float] = []
+        DispatchQueue.main.sync { bands = engine.spectrumBandLevels }
+        return bands
+    }
 }
 
 // MARK: - NSView
@@ -142,8 +154,9 @@ final class SpectrumCoordinator {
 final class SpectrumNSView: NSView {
 
     private var bandGraph = [Float](repeating: 0, count: SpectrumCoordinator.totalBars)
-    private var r: CGFloat = 0; private var g: CGFloat = 0.5; private var b: CGFloat = 1
+    private var r: CGFloat = 0; private var g: CGFloat = 0; private var b: CGFloat = 0
     private var enabled = true
+    private var isConfigured = false  // skip draw until refresh() called with real colour
 
     override var isFlipped: Bool { true }
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { false }
@@ -152,10 +165,12 @@ final class SpectrumNSView: NSView {
         self.bandGraph = bandGraph
         self.r = r; self.g = g; self.b = b
         self.enabled = enabled
+        self.isConfigured = true
         needsDisplay = true
     }
 
     override func draw(_ dirtyRect: NSRect) {
+        guard isConfigured else { return }  // don't draw until real colour is set
         guard let ctx = NSGraphicsContext.current?.cgContext else { return }
         let W = bounds.width
         let H = bounds.height

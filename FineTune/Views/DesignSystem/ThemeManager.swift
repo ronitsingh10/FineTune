@@ -21,15 +21,74 @@ final class ThemeManager {
     var isDarkMode:  Bool  = true  { didSet { save() } }
     var isHiContrast: Bool = true  { didSet { save() } }
 
+    // Optional independent cell-background colour override.
+    // When useCustomCellBg = false, backgroundOverlayColor derives from primary as before.
+    var useCustomCellBg: Bool   = false { didSet { save() } }
+    var cellBgHue:       Double = 0.583 { didSet { save() } }
+    var cellBgSat:       Double = 0.80  { didSet { save() } }
+    var cellBgBri:       Double = 1.00  { didSet { save() } }
+
+    // Optional independent accent override.
+    var useCustomAccent: Bool   = false { didSet { save() } }
+    var accentHue:       Double = 0.583 { didSet { save() } }
+    var accentSat:       Double = 0.80  { didSet { save() } }
+    var accentBri:       Double = 1.00  { didSet { save() } }
+
+    // Optional independent background overlay override.
+    var useCustomBackground: Bool   = false { didSet { save() } }
+    var backgroundHue:       Double = 0.583 { didSet { save() } }
+    var backgroundSat:       Double = 0.80  { didSet { save() } }
+    var backgroundBri:       Double = 1.00  { didSet { save() } }
+
+    // Optional independent cell-border override.
+    var useCustomCellBorder: Bool   = false { didSet { save() } }
+    var cellBorderHue:       Double = 0.583 { didSet { save() } }
+    var cellBorderSat:       Double = 0.80  { didSet { save() } }
+    var cellBorderBri:       Double = 1.00  { didSet { save() } }
+
+    // Suppresses save() during init so intermediate assignments don't overwrite
+    // not-yet-loaded UserDefaults values with Swift property defaults.
+    private var isLoading = true
+
+    /// Incremented on every meaningful theme change. Views that read derived Color
+    /// properties (which @Observable cannot track directly) should also read this
+    /// property to ensure they re-render when the theme changes.
+    private(set) var themeVersion: Int = 0
+
     // MARK: - Init (loads from UserDefaults)
 
     init() {
         let d = UserDefaults.standard
-        if d.object(forKey: "theme.hue")        != nil { hue        = d.double(forKey: "theme.hue") }
-        if d.object(forKey: "theme.sat")        != nil { saturation = d.double(forKey: "theme.sat") }
-        if d.object(forKey: "theme.bri")        != nil { brightness = d.double(forKey: "theme.bri") }
-        if d.object(forKey: "theme.dark")       != nil { isDarkMode  = d.bool(forKey: "theme.dark") }
+        if d.object(forKey: "theme.hue")        != nil { hue          = d.double(forKey: "theme.hue") }
+        if d.object(forKey: "theme.sat")        != nil { saturation   = d.double(forKey: "theme.sat") }
+        if d.object(forKey: "theme.bri")        != nil { brightness   = d.double(forKey: "theme.bri") }
+        if d.object(forKey: "theme.dark")       != nil { isDarkMode   = d.bool(forKey: "theme.dark") }
         if d.object(forKey: "theme.hiContrast") != nil { isHiContrast = d.bool(forKey: "theme.hiContrast") }
+        if d.object(forKey: "theme.cellBgOn")   != nil { useCustomCellBg = d.bool(forKey: "theme.cellBgOn") }
+        if d.object(forKey: "theme.cellBgHue")  != nil { cellBgHue   = d.double(forKey: "theme.cellBgHue") }
+        if d.object(forKey: "theme.cellBgSat")  != nil { cellBgSat   = d.double(forKey: "theme.cellBgSat") }
+        if d.object(forKey: "theme.cellBgBri")  != nil { cellBgBri   = d.double(forKey: "theme.cellBgBri") }
+
+        // Default overrides to primary unless stored in defaults.
+        accentHue = hue; accentSat = saturation; accentBri = brightness
+        backgroundHue = hue; backgroundSat = saturation; backgroundBri = brightness
+        cellBorderHue = hue; cellBorderSat = saturation; cellBorderBri = brightness
+
+        if d.object(forKey: "theme.accentOn")     != nil { useCustomAccent = d.bool(forKey: "theme.accentOn") }
+        if d.object(forKey: "theme.accentHue")    != nil { accentHue = d.double(forKey: "theme.accentHue") }
+        if d.object(forKey: "theme.accentSat")    != nil { accentSat = d.double(forKey: "theme.accentSat") }
+        if d.object(forKey: "theme.accentBri")    != nil { accentBri = d.double(forKey: "theme.accentBri") }
+
+        if d.object(forKey: "theme.bgOn")         != nil { useCustomBackground = d.bool(forKey: "theme.bgOn") }
+        if d.object(forKey: "theme.bgHue")        != nil { backgroundHue = d.double(forKey: "theme.bgHue") }
+        if d.object(forKey: "theme.bgSat")        != nil { backgroundSat = d.double(forKey: "theme.bgSat") }
+        if d.object(forKey: "theme.bgBri")        != nil { backgroundBri = d.double(forKey: "theme.bgBri") }
+
+        if d.object(forKey: "theme.borderOn")     != nil { useCustomCellBorder = d.bool(forKey: "theme.borderOn") }
+        if d.object(forKey: "theme.borderHue")    != nil { cellBorderHue = d.double(forKey: "theme.borderHue") }
+        if d.object(forKey: "theme.borderSat")    != nil { cellBorderSat = d.double(forKey: "theme.borderSat") }
+        if d.object(forKey: "theme.borderBri")    != nil { cellBorderBri = d.double(forKey: "theme.borderBri") }
+        isLoading = false
     }
 
     // MARK: - Derived: accent
@@ -42,7 +101,10 @@ final class ThemeManager {
     /// Accent used for interactive elements (slider fills, dots, active states).
     /// Hi-contrast → vivid.  Lo-contrast → desaturated/pastel.
     var accentColor: Color {
-        isHiContrast
+        if useCustomAccent {
+            return Color(hue: accentHue, saturation: accentSat, brightness: accentBri)
+        }
+        return isHiContrast
             ? primaryColor
             : Color(hue: hue, saturation: saturation * 0.45,
                     brightness: min(1.0, brightness * 1.08))
@@ -55,22 +117,63 @@ final class ThemeManager {
     /// Hi-contrast dark  → black 40% (original behaviour)
     /// Hi-contrast light → white 8%
     /// Lo-contrast       → pastel tint derived from the user's hue/sat/bri
+    /// The effective hue/sat/bri for the background overlay.
+    /// Window-level background overlay — always derived from primary colour, never from
+    /// cellBg values. cellTintColor is the per-cell overlay that uses cellBg values.
     var backgroundOverlayColor: Color {
+        if useCustomBackground {
+            let op: Double
+            if isHiContrast { op = isDarkMode ? 0.40 : 0.08 }
+            else { op = isDarkMode ? 0.72 : 0.60 }
+            return Color(hue: backgroundHue, saturation: backgroundSat, brightness: backgroundBri).opacity(op)
+        }
         guard isHiContrast else {
-            // Scale the user's chosen saturation and brightness down to a background-suitable range.
-            // Dark:  low brightness, moderate saturation → deep tinted dark
-            // Light: high brightness, low saturation → pale pastel
-            let bgSat = isDarkMode
-                ? saturation * 0.55        // e.g. sat=0.8 → 0.44
-                : saturation * 0.28        // e.g. sat=0.8 → 0.22
-            let bgBri = isDarkMode
-                ? brightness * 0.18        // e.g. bri=1.0 → 0.18
-                : 0.80 + brightness * 0.18 // e.g. bri=1.0 → 0.98
+            let bgSat = isDarkMode ? saturation * 0.55 : saturation * 0.28
+            let bgBri = isDarkMode ? brightness * 0.18 : 0.80 + brightness * 0.18
             let bgOpacity: Double = isDarkMode ? 0.72 : 0.60
-            return Color(hue: hue, saturation: bgSat, brightness: bgBri)
-                   .opacity(bgOpacity)
+            return Color(hue: hue, saturation: bgSat, brightness: bgBri).opacity(bgOpacity)
         }
         return isDarkMode ? .black.opacity(0.40) : .white.opacity(0.08)
+    }
+
+    // MARK: - Derived: separator accent
+    /// Used for element-break dividers and active tab backgrounds.
+    /// Hi-contrast → neutral grey (matches system separator tone).
+    /// Lo-contrast → primary hue at low-medium opacity so it's visibly tinted but subtle.
+    var separatorAccentColor: Color {
+        let base = useCustomAccent
+            ? Color(hue: accentHue, saturation: accentSat, brightness: accentBri)
+            : accentColor
+        let opacity = isHiContrast ? (isDarkMode ? 0.22 : 0.18) : 0.35
+        return base.opacity(opacity)
+    }
+
+    /// Section header text (e.g. "APPS") — stronger than separator lines for readability.
+    var sectionHeaderColor: Color {
+        let base = useCustomAccent
+            ? Color(hue: accentHue, saturation: accentSat, brightness: accentBri)
+            : accentColor
+        let opacity = isHiContrast ? (isDarkMode ? 0.55 : 0.45) : 0.55
+        return base.opacity(opacity)
+    }
+
+    // MARK: - Derived: cell tint (what cells actually render on top of their material)
+    /// The tint overlay applied inside each ExpandableGlassRow.
+    /// When useCustomCellBg=true, derives from cellBg* values; otherwise from primary.
+    /// This is the ONLY place that uses cellBg* — backgroundOverlayColor uses primary only.
+    var cellTintColor: Color {
+        if useCustomCellBg {
+            // Explicit cell bg — use stored HSB directly at fixed opacity.
+            let opacity: Double = isDarkMode ? 0.30 : 0.40
+            return Color(hue: cellBgHue, saturation: cellBgSat, brightness: cellBgBri)
+                        .opacity(opacity)
+        } else {
+            // No override — derive subtle tint from primary.
+            let bgSat = isDarkMode ? saturation * 0.55 : saturation * 0.28
+            let bgBri = isDarkMode ? brightness * 0.18 : 0.80 + brightness * 0.18
+            let opacity: Double = isDarkMode ? 0.18 : 0.28
+            return Color(hue: hue, saturation: bgSat, brightness: bgBri).opacity(opacity)
+        }
     }
 
     // MARK: - Derived: cell borders
@@ -79,13 +182,23 @@ final class ThemeManager {
     /// Hi-contrast → standard grey/separator (adapts to light/dark automatically).
     /// Lo-contrast → soft tint derived from the primary hue.
     var cellBorderColor: Color {
-        isHiContrast
+        if useCustomCellBorder {
+            let base = Color(hue: cellBorderHue, saturation: cellBorderSat, brightness: cellBorderBri)
+            let opacity = isHiContrast ? 0.30 : 0.28
+            return base.opacity(opacity)
+        }
+        return isHiContrast
             ? Color(nsColor: .separatorColor).opacity(0.30)
             : Color(hue: hue, saturation: saturation * 0.65, brightness: min(1.0, brightness * 0.90)).opacity(0.28)
     }
 
     var cellBorderHoverColor: Color {
-        isHiContrast
+        if useCustomCellBorder {
+            let base = Color(hue: cellBorderHue, saturation: cellBorderSat, brightness: cellBorderBri)
+            let opacity = isHiContrast ? 0.50 : 0.45
+            return base.opacity(opacity)
+        }
+        return isHiContrast
             ? Color(nsColor: .separatorColor).opacity(0.50)
             : Color(hue: hue, saturation: saturation * 0.75, brightness: min(1.0, brightness * 0.95)).opacity(0.45)
     }
@@ -97,11 +210,32 @@ final class ThemeManager {
     // MARK: - Persistence
 
     private func save() {
+        guard !isLoading else { return }
+        themeVersion &+= 1   // overflow-safe bump; triggers @Observable re-render
         let d = UserDefaults.standard
-        d.set(hue,          forKey: "theme.hue")
-        d.set(saturation,   forKey: "theme.sat")
-        d.set(brightness,   forKey: "theme.bri")
-        d.set(isDarkMode,   forKey: "theme.dark")
-        d.set(isHiContrast, forKey: "theme.hiContrast")
+        d.set(hue,             forKey: "theme.hue")
+        d.set(saturation,      forKey: "theme.sat")
+        d.set(brightness,      forKey: "theme.bri")
+        d.set(isDarkMode,      forKey: "theme.dark")
+        d.set(isHiContrast,    forKey: "theme.hiContrast")
+        d.set(useCustomCellBg, forKey: "theme.cellBgOn")
+        d.set(cellBgHue,       forKey: "theme.cellBgHue")
+        d.set(cellBgSat,       forKey: "theme.cellBgSat")
+        d.set(cellBgBri,       forKey: "theme.cellBgBri")
+
+        d.set(useCustomAccent, forKey: "theme.accentOn")
+        d.set(accentHue,       forKey: "theme.accentHue")
+        d.set(accentSat,       forKey: "theme.accentSat")
+        d.set(accentBri,       forKey: "theme.accentBri")
+
+        d.set(useCustomBackground, forKey: "theme.bgOn")
+        d.set(backgroundHue,       forKey: "theme.bgHue")
+        d.set(backgroundSat,       forKey: "theme.bgSat")
+        d.set(backgroundBri,       forKey: "theme.bgBri")
+
+        d.set(useCustomCellBorder, forKey: "theme.borderOn")
+        d.set(cellBorderHue,       forKey: "theme.borderHue")
+        d.set(cellBorderSat,       forKey: "theme.borderSat")
+        d.set(cellBorderBri,       forKey: "theme.borderBri")
     }
 }

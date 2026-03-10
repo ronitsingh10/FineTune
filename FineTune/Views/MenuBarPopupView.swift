@@ -274,6 +274,7 @@ struct MenuBarPopupView: View {
 
     @ViewBuilder
     private var fxTabContent: some View {
+        let _ = theme.themeVersion  // force re-render when derived colours change
         FXPanelView(
             settings: audioEngine.fxSettingsForEditing,
             onSettingsChanged: { audioEngine.setFXSettings($0) },
@@ -301,7 +302,9 @@ struct MenuBarPopupView: View {
         )
         .padding(.top, 4)
 
-        Divider()
+        theme.separatorAccentColor
+            .frame(height: 0.5)
+            .padding(.horizontal, 2)
             .padding(.vertical, DesignTokens.Spacing.xs)
 
         HStack {
@@ -323,7 +326,9 @@ struct MenuBarPopupView: View {
         // Devices section (tabbed: Output / Input)
         devicesSection
 
-        Divider()
+        theme.separatorAccentColor
+            .frame(height: 0.5)
+            .padding(.horizontal, 2)
             .padding(.vertical, DesignTokens.Spacing.xs)
 
         // Apps section — only on Playback (output) tab
@@ -334,7 +339,9 @@ struct MenuBarPopupView: View {
                 appsSection
             }
 
-            Divider()
+            theme.separatorAccentColor
+                .frame(height: 0.5)
+                .padding(.horizontal, 2)
                 .padding(.vertical, DesignTokens.Spacing.xs)
         }
 

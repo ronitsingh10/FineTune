@@ -110,11 +110,13 @@ struct FXPanelView: View {
 private struct SoundTargetPicker: View {
     @Binding var selection: FXPanelView.SoundTarget
     @Namespace private var ns
+    @Environment(ThemeManager.self) private var theme
 
     private let buttonSize: CGFloat = 26
     private let cornerRadius: CGFloat = 6   // matches DesignTokens.Dimensions.buttonRadius
 
     var body: some View {
+        let _ = theme.themeVersion  // force re-render when derived colours change
         HStack(spacing: 2) {
             tab("System", target: .system)
             tab("Apps",   target: .apps)
@@ -122,10 +124,10 @@ private struct SoundTargetPicker: View {
         .padding(3)
         .background(
             RoundedRectangle(cornerRadius: cornerRadius + 3)
-                .fill(.white.opacity(0.05))
+                .fill(theme.separatorAccentColor.opacity(0.4))
                 .overlay(
                     RoundedRectangle(cornerRadius: cornerRadius + 3)
-                        .strokeBorder(.white.opacity(0.1), lineWidth: 0.5)
+                        .strokeBorder(theme.separatorAccentColor, lineWidth: 0.5)
                 )
         )
     }
@@ -138,19 +140,31 @@ private struct SoundTargetPicker: View {
         } label: {
             Text(label)
                 .font(.system(size: 10, weight: .medium))
-                .foregroundStyle(active ? Color.primary : Color.secondary.opacity(0.6))
+                .foregroundStyle(active ? Color.primary : Color.secondary.opacity(0.5))
                 .frame(height: buttonSize)
                 .padding(.horizontal, 8)
                 .background {
                     if active {
                         RoundedRectangle(cornerRadius: cornerRadius)
-                            .fill(.white.opacity(0.1))
+                            .fill(theme.separatorAccentColor)
                             .matchedGeometryEffect(id: "soundTarget", in: ns)
                     }
                 }
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+    }
+}
+
+// MARK: - FX Element Separator
+
+private struct FXSeparator: View {
+    @Environment(ThemeManager.self) private var theme
+    var body: some View {
+        let _ = theme.themeVersion  // force re-render when derived colours change
+        theme.separatorAccentColor
+            .frame(height: 0.5)
+            .padding(.horizontal, 2)
     }
 }
 
@@ -177,6 +191,15 @@ private struct FXSystemPanel: View {
     let onFXFollowDefault:    () -> Void
 
     @Environment(ThemeManager.self) private var theme
+
+    /// Resolved accent RGB — computed in the SwiftUI body so it always reflects
+    /// the current theme at render time, not at NSViewRepresentable callback time.
+    private var accentRGB: (CGFloat, CGFloat, CGFloat) {
+        var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0
+        (NSColor(theme.accentColor).usingColorSpace(.sRGB) ?? .systemBlue)
+            .getRed(&r, green: &g, blue: &b, alpha: nil)
+        return (r, g, b)
+    }
     @State private var local: FXSettings
     @State private var selectedPreset: FXPreset? = .general
     @State private var isDirty: Bool = false
@@ -211,14 +234,18 @@ private struct FXSystemPanel: View {
         self.fxEditingUID         = fxEditingUID
         _local = State(initialValue: settings)
 
+        // Restore preset and dirty state from persistence.
+        // isDirty is NEVER forced true here — only user interaction (markDirtyAndEmit)
+        // sets it. This prevents the asterisk appearing on tab-return without edits.
         if let match = settings.matchingPreset() {
             _selectedPreset = State(initialValue: match)
             _isDirty = State(initialValue: false)
         } else {
-            let savedID = UserDefaults.standard.string(forKey: "lastFXPresetID") ?? FXPreset.general.rawValue
-            let restored = FXPreset(rawValue: savedID) ?? .general
+            let savedID    = UserDefaults.standard.string(forKey: "lastFXPresetID") ?? FXPreset.general.rawValue
+            let savedDirty = UserDefaults.standard.bool(forKey: "lastFXPresetDirty")
+            let restored   = FXPreset(rawValue: savedID) ?? .general
             _selectedPreset = State(initialValue: restored)
-            _isDirty = State(initialValue: true)
+            _isDirty = State(initialValue: savedDirty)
         }
     }
 
@@ -235,6 +262,8 @@ private struct FXSystemPanel: View {
                     FXPresetDropdown(label: presetLabel) { preset in
                         selectedPreset = preset
                         isDirty = false
+                        UserDefaults.standard.set(false,       forKey: "lastFXPresetDirty")
+                        UserDefaults.standard.set(preset.rawValue, forKey: "lastFXPresetID")
                         savedPresetID = preset.rawValue
                         local = preset.settings
                         onSettingsChanged(local)
@@ -282,10 +311,15 @@ private struct FXSystemPanel: View {
                 .frame(height: DesignTokens.Dimensions.rowContentHeight)
             } expandedContent: { EmptyView() }
 
+            FXSeparator()
+
             // ── Cell 2: Spectrum Visualizer ──────────────────────────────
             ExpandableGlassRow(isExpanded: false) {
                 FXSpectrumView(isEnabled: local.isEnabled,
-                               audioEngine: audioEngine)
+                               audioEngine: audioEngine,
+                               accentR: accentRGB.0,
+                               accentG: accentRGB.1,
+                               accentB: accentRGB.2)
                     .frame(height: 48)
                     .padding(.vertical, 4)
             } expandedContent: { EmptyView() }
@@ -315,6 +349,8 @@ private struct FXSystemPanel: View {
             .saturation(local.isEnabled ? 1 : 0).opacity(local.isEnabled ? 1 : 0.55)
             .disabled(!local.isEnabled)
 
+            FXSeparator()
+
             // ── Cell 4: EQ Curve + Dials ─────────────────────────────────
             ExpandableGlassRow(isExpanded: false) {
                 VStack(spacing: 0) {
@@ -340,7 +376,12 @@ private struct FXSystemPanel: View {
         }
         .onChange(of: settings) { _, v in
             local = v
-            if let m = v.matchingPreset() { selectedPreset = m; isDirty = false }
+            if let m = v.matchingPreset() {
+                selectedPreset = m
+                isDirty = false
+                UserDefaults.standard.set(false, forKey: "lastFXPresetDirty")
+                UserDefaults.standard.set(m.rawValue, forKey: "lastFXPresetID")
+            }
         }
         // Also trigger when the editing target switches — covers the case where two devices
         // have identical settings values so onChange(of: settings) wouldn't fire.
@@ -349,7 +390,16 @@ private struct FXSystemPanel: View {
         .onChange(of: fxEditingUID) { _, _ in
             let current = audioEngine.fxSettingsForEditing
             local = current
-            if let m = current.matchingPreset() { selectedPreset = m; isDirty = false }
+            if let m = current.matchingPreset() {
+                selectedPreset = m
+                isDirty = false
+                UserDefaults.standard.set(false, forKey: "lastFXPresetDirty")
+                UserDefaults.standard.set(m.rawValue, forKey: "lastFXPresetID")
+            } else {
+                // Restore saved dirty state for this new device's settings
+                let savedDirty = UserDefaults.standard.bool(forKey: "lastFXPresetDirty")
+                isDirty = savedDirty
+            }
         }
     }
 
@@ -367,6 +417,8 @@ private struct FXSystemPanel: View {
 
     private func markDirtyAndEmit() {
         isDirty = true
+        UserDefaults.standard.set(true,           forKey: "lastFXPresetDirty")
+        UserDefaults.standard.set(savedPresetID,  forKey: "lastFXPresetID")
         onSettingsChanged(local)
     }
 }
@@ -632,8 +684,10 @@ private struct FXEQCurve: View {
             let size = geo.size
             let accent = theme.accentColor
             let isDark = colorScheme == .dark
-            let gridColor = isDark ? Color.white.opacity(0.07) : Color.black.opacity(0.10)
-            let midlineColor = isDark ? Color.white.opacity(0.18) : Color.black.opacity(0.20)
+            // In light lo-contrast the pastel background makes faint lines invisible — boost opacity
+            let lightLC = !isDark && !theme.isHiContrast
+            let gridColor    = isDark ? Color.white.opacity(0.07) : Color.black.opacity(lightLC ? 0.22 : 0.10)
+            let midlineColor = isDark ? Color.white.opacity(0.18) : Color.black.opacity(lightLC ? 0.35 : 0.20)
             let labelColor = isDark ? Color.white.opacity(0.65) : Color.black.opacity(0.65)
             let labelActiveColor = isDark ? Color.white : Color.black
 

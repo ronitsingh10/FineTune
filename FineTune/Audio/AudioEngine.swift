@@ -470,13 +470,16 @@ final class AudioEngine {
     /// Aggregated per-band spectrum levels across all active taps (0–1, 10 bands).
     /// Bands are log-spaced from ~56 Hz to ~10 kHz (FXSound filter design).
     var spectrumBandLevels: [Float] {
-        guard !taps.isEmpty else { return Array(repeating: 0, count: SpectrumBandAnalyzer.bandCount) }
-        var result = Array(repeating: Float(0), count: SpectrumBandAnalyzer.bandCount)
-        for (_, tap) in taps {
+        let count = SpectrumBandAnalyzer.bandCount
+        guard !taps.isEmpty else { return Array(repeating: 0, count: count) }
+        let tapList = Array(taps.values)
+        var result = Array(repeating: Float(0), count: count)
+        for tap in tapList {
+            // Take a local copy — bandLevels is written from the render thread;
+            // the copy is safe as long as we re-check count after capture.
             let bands = tap.spectrumAnalyzer.bandLevels
-            for i in 0..<SpectrumBandAnalyzer.bandCount {
-                result[i] = max(result[i], bands[i])
-            }
+            guard bands.count == count else { continue }
+            for i in 0..<count { result[i] = max(result[i], bands[i]) }
         }
         return result
     }

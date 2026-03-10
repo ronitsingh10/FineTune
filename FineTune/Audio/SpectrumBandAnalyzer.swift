@@ -110,7 +110,9 @@ final class SpectrumBandAnalyzer {
             filters[b].squaredFiltered = 0; filters[b].level = 0
         }
         in1 = 0; in2 = 0
-        bandLevels = Array(repeating: 0, count: SpectrumBandAnalyzer.bandCount)
+        for b in 0..<SpectrumBandAnalyzer.bandCount {
+            bandLevels[b] = 0
+        }
     }
 
     // MARK: - Private

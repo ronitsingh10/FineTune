@@ -13,7 +13,10 @@ struct ExpandableGlassRow<Header: View, ExpandedContent: View>: View {
     @State private var isHovered = false
     @Environment(ThemeManager.self) private var theme
 
+    private var cellTint: Color { theme.cellTintColor }
+
     var body: some View {
+        let _ = theme.themeVersion  // force re-render when derived colours change
         VStack(spacing: 0) {
             header()
 
@@ -32,6 +35,12 @@ struct ExpandableGlassRow<Header: View, ExpandedContent: View>: View {
         .background {
             RoundedRectangle(cornerRadius: DesignTokens.Dimensions.rowRadius)
                 .fill(.ultraThinMaterial)
+        }
+        .overlay {
+            // Cell background tint — applied over the material so the colour is visible
+            RoundedRectangle(cornerRadius: DesignTokens.Dimensions.rowRadius)
+                .fill(cellTint)
+                .allowsHitTesting(false)
         }
         .overlay {
             RoundedRectangle(cornerRadius: DesignTokens.Dimensions.rowRadius)

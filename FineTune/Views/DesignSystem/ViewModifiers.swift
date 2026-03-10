@@ -5,16 +5,24 @@ import SwiftUI
 
 struct HoverableRowModifier: ViewModifier {
     @State private var isHovered = false
+    @Environment(ThemeManager.self) private var theme
 
     func body(content: Content) -> some View {
-        content
+        let _ = theme.themeVersion
+        return content
             .padding(.horizontal, DesignTokens.Spacing.sm)
             .padding(.vertical, DesignTokens.Spacing.xs)
             .background(
                 RoundedRectangle(cornerRadius: DesignTokens.Dimensions.buttonRadius)
                     .fill(.ultraThinMaterial)
             )
-            // Hover effect overlay (materials don't have native hover states)
+            // Cell tint overlay — same as ExpandableGlassRow
+            .overlay {
+                RoundedRectangle(cornerRadius: DesignTokens.Dimensions.buttonRadius)
+                    .fill(theme.cellTintColor)
+                    .allowsHitTesting(false)
+            }
+            // Hover effect overlay
             .overlay(
                 RoundedRectangle(cornerRadius: DesignTokens.Dimensions.buttonRadius)
                     .fill(isHovered ? Color.white.opacity(0.04) : Color.clear)
@@ -35,12 +43,18 @@ struct HoverableRowModifier: ViewModifier {
 // MARK: - Section Header Style Modifier
 
 struct SectionHeaderStyleModifier: ViewModifier {
+    @Environment(ThemeManager.self) private var theme
     func body(content: Content) -> some View {
-        content
+        let _ = theme.themeVersion
+        let darkShadow = theme.isDarkMode ? Color.black.opacity(0.45) : Color.white.opacity(0.80)
+        let lightShadow = theme.isDarkMode ? Color.white.opacity(0.18) : Color.black.opacity(0.28)
+        return content
             .font(DesignTokens.Typography.sectionHeader)
-            .foregroundStyle(DesignTokens.Colors.textTertiary)
+            .foregroundStyle(theme.sectionHeaderColor)
             .tracking(DesignTokens.Typography.sectionHeaderTracking)
             .textCase(.uppercase)
+            .shadow(color: darkShadow, radius: 1.2, x: 0, y: 1)
+            .shadow(color: lightShadow, radius: 0.2, x: 0, y: -0.6)
     }
 }
 
