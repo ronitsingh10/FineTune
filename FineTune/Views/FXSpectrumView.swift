@@ -193,13 +193,11 @@ final class SpectrumNSView: NSView {
 
         for i in 0..<n {
             let raw = bandGraph[i]
-            // Livelier at low levels, but with soft-knee compression so peaks
-            // don't pin at full height constantly.
-            let floor: CGFloat = 0.01
-            let level = max(0, CGFloat(raw) - floor)
-            let lifted = pow(level, 0.55)
-            let boosted = min(1.0, 1.0 - exp(-3.0 * lifted))
-            let halfH   = max(1.5, boosted * midY * 0.95)
+            // FxSound-style linear scaling (their visualizer uses height = band_value * 100).
+            // Our band values tend to sit ~0.01–0.16 for loud audio, so scale up.
+            let v = max(0.01, CGFloat(raw))
+            let boosted = min(1.0, v * 6.2)
+            let halfH   = max(1.5, boosted * midY)
             let x     = CGFloat(i) * (barW + gap)
             let rect  = CGRect(x: x, y: midY - halfH, width: barW, height: halfH * 2)
 

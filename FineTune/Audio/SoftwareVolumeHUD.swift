@@ -44,9 +44,12 @@ final class SoftwareVolumeHUD {
         if let screen = NSScreen.main {
             let sw = p.frame.width
             let sh = p.frame.height
-            let margin: CGFloat = 24
-            let x = screen.visibleFrame.maxX - sw - margin
-            let y = screen.visibleFrame.maxY - sh - margin
+            // Nudge closer to the system OSD's typical top-right position.
+            // Slightly tighter margins help cover the hollow OSD.
+            let marginX: CGFloat = 10
+            let marginY: CGFloat = 8
+            let x = screen.visibleFrame.maxX - sw - marginX
+            let y = screen.visibleFrame.maxY - sh - marginY
             p.setFrameOrigin(NSPoint(x: x, y: y))
         }
 
@@ -93,67 +96,125 @@ final class SoftwareVolumeHUD {
 
 private final class HUDContentView: NSView {
 
-    var volumeLevel: CGFloat = 0 { didSet { needsDisplay = true } }
-    var isMuted: Bool = false    { didSet { needsDisplay = true } }
-    var deviceName: String = ""  { didSet { needsDisplay = true } }
+    var volumeLevel: CGFloat = 0 { didSet { updateUI() } }
+    var isMuted: Bool = false    { didSet { updateUI() } }
+    var deviceName: String = ""  { didSet { updateUI() } }
+
+    private let blurView = NSVisualEffectView()
+    private let iconView = NSImageView()
+    private let label = NSTextField(labelWithString: "")
+    private let barTrack = NSView()
+    private let barFill = NSView()
 
     override var isFlipped: Bool { true }
 
-    override func draw(_ dirtyRect: NSRect) {
-        guard let ctx = NSGraphicsContext.current?.cgContext else { return }
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        wantsLayer = true
 
-        let r = bounds
-        let cornerRadius: CGFloat = 14
+        // Background blur (HUD style)
+        blurView.material = .hudWindow
+        blurView.blendingMode = .behindWindow
+        blurView.state = .active
+        blurView.wantsLayer = true
+        blurView.layer?.cornerRadius = 14
+        blurView.layer?.masksToBounds = true
+        blurView.layer?.borderWidth = 1
+        blurView.layer?.borderColor = NSColor(white: 1, alpha: 0.12).cgColor
+        addSubview(blurView)
 
-        // Background pill — dark translucent
-        let bg = NSColor(white: 0.13, alpha: 0.92)
-        bg.setFill()
-        NSBezierPath(roundedRect: r, xRadius: cornerRadius, yRadius: cornerRadius).fill()
+        // Icon
+        iconView.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 17, weight: .semibold)
+        iconView.contentTintColor = .white
+        addSubview(iconView)
 
-        // ── Label row ─────────────────────────────────────────────────────────
-        let labelY: CGFloat = 14
-        let iconStr = isMuted ? "🔇" : (volumeLevel > 0.5 ? "🔊" : (volumeLevel > 0 ? "🔉" : "🔈"))
-        let icon = NSAttributedString(
-            string: iconStr,
-            attributes: [.font: NSFont.systemFont(ofSize: 16)]
-        )
-        icon.draw(at: NSPoint(x: 14, y: labelY))
-
-        let nameAttr = NSAttributedString(
-            string: isMuted ? "Muted" : "\(Int(round(volumeLevel * 100)))%  \(deviceName)",
-            attributes: [
-                .font: NSFont.systemFont(ofSize: 12, weight: .medium),
-                .foregroundColor: NSColor.white
-            ]
-        )
-        nameAttr.draw(at: NSPoint(x: 42, y: labelY + 1))
-
-        // ── Fill bar ──────────────────────────────────────────────────────────
-        let barX: CGFloat = 14
-        let barY: CGFloat = 44
-        let barH: CGFloat = 10
-        let barW = r.width - 28
-        let barRadius: CGFloat = barH / 2
+        // Label
+        label.font = NSFont.systemFont(ofSize: 12, weight: .medium)
+        label.textColor = .white
+        label.lineBreakMode = .byTruncatingTail
+        addSubview(label)
 
         // Track
-        let trackColor = NSColor(white: 1, alpha: 0.18)
-        trackColor.setFill()
-        NSBezierPath(roundedRect: NSRect(x: barX, y: barY, width: barW, height: barH),
-                     xRadius: barRadius, yRadius: barRadius).fill()
+        barTrack.wantsLayer = true
+        barTrack.layer?.cornerRadius = 5
+        barTrack.layer?.backgroundColor = NSColor(white: 1, alpha: 0.18).cgColor
+        addSubview(barTrack)
 
         // Fill
-        let fillW = max(barRadius * 2, barW * (isMuted ? 0 : volumeLevel))
-        let fillGrad = NSGradient(
-            colors: [NSColor(red: 0.30, green: 0.80, blue: 1.0, alpha: 1),
-                     NSColor(red: 0.10, green: 0.55, blue: 1.0, alpha: 1)],
-            atLocations: [0, 1],
-            colorSpace: .sRGB
-        )
-        ctx.saveGState()
-        let fillPath = NSBezierPath(roundedRect: NSRect(x: barX, y: barY, width: fillW, height: barH),
-                                    xRadius: barRadius, yRadius: barRadius)
-        fillPath.addClip()
-        fillGrad?.draw(in: NSRect(x: barX, y: barY, width: fillW, height: barH), angle: 0)
-        ctx.restoreGState()
+        barFill.wantsLayer = true
+        barFill.layer?.cornerRadius = 5
+        barFill.layer?.backgroundColor = NSColor.systemBlue.withAlphaComponent(0.95).cgColor
+        barFill.layer?.shadowColor = NSColor.systemBlue.cgColor
+        barFill.layer?.shadowOpacity = 0.35
+        barFill.layer?.shadowRadius = 6
+        barFill.layer?.shadowOffset = .zero
+        barTrack.addSubview(barFill)
+
+        updateUI()
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override func layout() {
+        super.layout()
+        blurView.frame = bounds
+
+        let inset: CGFloat = 14
+        let iconSize: CGFloat = 18
+        iconView.frame = NSRect(x: inset, y: 16, width: iconSize, height: iconSize)
+
+        let labelX = inset + iconSize + 10
+        label.frame = NSRect(x: labelX, y: 15, width: bounds.width - labelX - inset, height: 18)
+
+        let barY: CGFloat = 42
+        let barH: CGFloat = 10
+        let barW = bounds.width - inset * 2
+        barTrack.frame = NSRect(x: inset, y: barY, width: barW, height: barH)
+
+        updateBar(animated: false)
+    }
+
+    private func updateUI() {
+        let pct = Int(round(volumeLevel * 100))
+        label.stringValue = isMuted ? "Muted" : "\(pct)%  \(deviceName)"
+
+        let symbolName: String
+        if isMuted {
+            symbolName = "speaker.slash.fill"
+        } else if volumeLevel > 0.66 {
+            symbolName = "speaker.wave.3.fill"
+        } else if volumeLevel > 0.33 {
+            symbolName = "speaker.wave.2.fill"
+        } else if volumeLevel > 0 {
+            symbolName = "speaker.wave.1.fill"
+        } else {
+            symbolName = "speaker.fill"
+        }
+        if let img = NSImage(systemSymbolName: symbolName, accessibilityDescription: nil) {
+            iconView.image = img
+        }
+
+        updateBar(animated: true)
+    }
+
+    private func updateBar(animated: Bool) {
+        let level = isMuted ? 0 : max(0.0, min(1.0, volumeLevel))
+        let barW = barTrack.bounds.width
+        let barH = barTrack.bounds.height
+        let minW: CGFloat = barH
+        let fillW = max(minW, barW * level)
+        let newFrame = NSRect(x: 0, y: 0, width: fillW, height: barH)
+
+        if animated {
+            NSAnimationContext.runAnimationGroup { ctx in
+                ctx.duration = 0.12
+                ctx.timingFunction = CAMediaTimingFunction(name: .easeOut)
+                barFill.animator().frame = newFrame
+            }
+        } else {
+            barFill.frame = newFrame
+        }
     }
 }
