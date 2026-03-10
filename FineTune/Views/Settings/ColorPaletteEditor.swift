@@ -62,6 +62,7 @@ struct ColorPaletteEditor: View {
     @State private var snapshotBri:        Double = 0
     @State private var snapshotDark:       Bool   = true
     @State private var snapshotHiContrast: Bool   = true
+    @State private var snapshotGlassMode:  Bool   = false
     @State private var snapshotCellBgOn:   Bool   = false
     @State private var snapshotCellBgH:    Double = 0
     @State private var snapshotCellBgS:    Double = 0
@@ -85,6 +86,7 @@ struct ColorPaletteEditor: View {
     @State private var savedCustomBri:       Double? = nil
     @State private var savedCustomDark:      Bool?   = nil
     @State private var savedCustomHiContrast: Bool?  = nil
+    @State private var savedCustomGlassMode: Bool?   = nil
     @State private var savedCustomCellBgOn:  Bool?   = nil
     @State private var savedCustomCellBgH:   Double? = nil
     @State private var savedCustomCellBgS:   Double? = nil
@@ -258,6 +260,7 @@ struct ColorPaletteEditor: View {
         let brBri: Double
         let isDarkMode: Bool
         let isHiContrast: Bool
+        let isGlassMode: Bool
         let editTarget: EditTarget
     }
 
@@ -280,6 +283,7 @@ struct ColorPaletteEditor: View {
             brBri: brBri,
             isDarkMode: theme.isDarkMode,
             isHiContrast: theme.isHiContrast,
+            isGlassMode: theme.isGlassMode,
             editTarget: editTarget
         )
     }
@@ -292,6 +296,7 @@ struct ColorPaletteEditor: View {
         snapshotBri        = theme.brightness
         snapshotDark       = theme.isDarkMode
         snapshotHiContrast = theme.isHiContrast
+        snapshotGlassMode  = theme.isGlassMode
         snapshotCellBgOn   = theme.useCustomCellBg
         snapshotCellBgH    = theme.cellBgHue
         snapshotCellBgS    = theme.cellBgSat
@@ -345,7 +350,7 @@ struct ColorPaletteEditor: View {
         if old.brHue != new.brHue { handleBorderHueChange(new.brHue) }
         if old.brSat != new.brSat { handleBorderSatChange(new.brSat) }
         if old.brBri != new.brBri { handleBorderBriChange(new.brBri) }
-        if old.isDarkMode != new.isDarkMode || old.isHiContrast != new.isHiContrast {
+        if old.isDarkMode != new.isDarkMode || old.isHiContrast != new.isHiContrast || old.isGlassMode != new.isGlassMode {
             markCustom()
         }
         if old.editTarget != new.editTarget {
@@ -535,6 +540,7 @@ struct ColorPaletteEditor: View {
         if theme.useCustomAccent || theme.useCustomBackground || theme.useCustomCellBorder {
             return "Custom"
         }
+        if theme.isGlassMode { return "Custom" }
         return presets.first(where: {
             abs($0.hue - theme.hue) < 0.001 &&
             abs($0.saturation - theme.saturation) < 0.001 &&
@@ -568,6 +574,7 @@ struct ColorPaletteEditor: View {
         savedCustomBri        = brightness
         savedCustomDark       = theme.isDarkMode
         savedCustomHiContrast = theme.isHiContrast
+        savedCustomGlassMode  = theme.isGlassMode
         savedCustomCellBgOn   = theme.useCustomCellBg
         savedCustomCellBgH    = cbHue
         savedCustomCellBgS    = cbSat
@@ -596,6 +603,7 @@ struct ColorPaletteEditor: View {
         theme.brightness = brightness
         theme.isDarkMode   = savedCustomDark       ?? theme.isDarkMode
         theme.isHiContrast = savedCustomHiContrast ?? theme.isHiContrast
+        theme.isGlassMode  = savedCustomGlassMode  ?? theme.isGlassMode
         theme.useCustomCellBg = savedCustomCellBgOn ?? false
         cbHue = savedCustomCellBgH ?? cbHue
         cbSat = savedCustomCellBgS ?? cbSat
@@ -636,6 +644,7 @@ struct ColorPaletteEditor: View {
         theme.brightness = preset.brightness
         theme.isDarkMode   = preset.isDark
         theme.isHiContrast = preset.isHiContrast
+        theme.isGlassMode  = false   // presets are dark/light; exit glass mode
 
         theme.useCustomAccent = false
         theme.useCustomBackground = false
@@ -671,6 +680,7 @@ struct ColorPaletteEditor: View {
         theme.brightness   = snapshotBri
         theme.isDarkMode   = snapshotDark
         theme.isHiContrast = snapshotHiContrast
+        theme.isGlassMode  = snapshotGlassMode
         theme.useCustomCellBg = snapshotCellBgOn
         theme.cellBgHue    = snapshotCellBgH
         theme.cellBgSat    = snapshotCellBgS
@@ -868,18 +878,48 @@ private struct ColorPaletteEditorSection: View {
 
 private struct ColorPaletteAppearanceSection: View {
     @Environment(ThemeManager.self) private var theme
+
+    /// A 3-way ThemeMode computed from isDarkMode + isGlassMode,
+    /// so PaletteTabPicker gets a single Binding<ThemeMode>.
+    private var themeModeBinding: Binding<ThemeMode> {
+        Binding(
+            get: {
+                if theme.isGlassMode { return .glass }
+                return theme.isDarkMode ? .dark : .light
+            },
+            set: { mode in
+                switch mode {
+                case .dark:
+                    theme.isDarkMode  = true
+                    theme.isGlassMode = false
+                case .light:
+                    theme.isDarkMode  = false
+                    theme.isGlassMode = false
+                case .glass:
+                    theme.isDarkMode  = true   // glass always uses dark NSAppearance
+                    theme.isGlassMode = true
+                }
+            }
+        )
+    }
+
     var body: some View {
         ExpandableGlassRow(isExpanded: false) {
             VStack(alignment: .leading, spacing: 10) {
                 PaletteSectionLabel(text: "APPEARANCE")
                 PaletteTabPicker(
-                    selection: Binding(get: { theme.isDarkMode },
-                                       set: { theme.isDarkMode = $0 }),
+                    selection: themeModeBinding,
                     options: [
-                        (true,  "moon.fill",    "Dark"),
-                        (false, "sun.max.fill", "Light"),
+                        (.dark,  "moon.fill",    "Dark"),
+                        (.light, "sun.max.fill", "Light"),
+                        (.glass, "drop.fill",    "Glass"),
                     ]
                 )
+                if theme.isGlassMode {
+                    Text("Liquid Glass uses a maximally transparent frosted material with iridescent highlights — the iOS 26 aesthetic.")
+                        .font(.system(size: 9))
+                        .foregroundStyle(DesignTokens.Colors.textSecondary)
+                }
                 PaletteSectionLabel(text: "CONTRAST")
                 PaletteTabPicker(
                     selection: Binding(get: { theme.isHiContrast },
@@ -889,7 +929,7 @@ private struct ColorPaletteAppearanceSection: View {
                         (false, "circle.grid.cross",      "Lo-Contrast")
                     ]
                 )
-                if !theme.isHiContrast {
+                if !theme.isHiContrast && !theme.isGlassMode {
                     Text("In lo-contrast, the background uses a pastel shade of your primary colour instead.")
                         .font(.system(size: 9))
                         .foregroundStyle(DesignTokens.Colors.textSecondary)

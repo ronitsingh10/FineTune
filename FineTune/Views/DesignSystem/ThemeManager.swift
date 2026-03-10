@@ -3,11 +3,22 @@ import SwiftUI
 import AppKit
 import Observation
 
+// MARK: - ThemeMode
+
+/// The three visual appearance modes available in the FX tab theme selector.
+enum ThemeMode: String {
+    case dark  = "dark"
+    case light = "light"
+    /// Liquid Glass — iOS 26-inspired ultra-transparent frosted glass aesthetic.
+    case glass = "glass"
+}
+
 /// App-wide theme. Inject at the root with .environment(themeManager)
 /// and read in child views with @Environment(ThemeManager.self).
 ///
 /// - primaryColor / accentColor: the user-chosen hue used for sliders, fills, dots
 /// - isDarkMode:    dark or light background
+/// - isGlassMode:   iOS 26 liquid glass aesthetic (overrides isDarkMode, uses dark scheme)
 /// - isHiContrast:  true  → vivid primary, grey/white cell borders, plain dark or light bg
 ///                  false → desaturated primary, primary-tinted borders, pastel-tinted bg
 @Observable
@@ -20,6 +31,12 @@ final class ThemeManager {
     var brightness: Double = 1.00  { didSet { save() } }
     var isDarkMode:  Bool  = true  { didSet { save() } }
     var isHiContrast: Bool = true  { didSet { save() } }
+
+    /// Liquid Glass mode — iOS 26-inspired ultra-clear frosted glass aesthetic.
+    /// When active, the app uses a dark color scheme with maximum-transparency
+    /// NSVisualEffectView material, iridescent prismatic overlays, and specular
+    /// white borders, independently of isDarkMode.
+    var isGlassMode: Bool = false  { didSet { save() } }
 
     // Optional independent cell-background colour override.
     // When useCustomCellBg = false, backgroundOverlayColor derives from primary as before.
@@ -55,6 +72,13 @@ final class ThemeManager {
     /// property to ensure they re-render when the theme changes.
     private(set) var themeVersion: Int = 0
 
+    /// KVO token that watches NSApp.effectiveAppearance.
+    /// Used in glass mode so `colorScheme` tracks the system dark/light preference
+    /// — critical when macOS "Reduce Transparency" is on and NSVisualEffectView
+    /// falls back to an opaque fill that must match the real system appearance.
+    @ObservationIgnored
+    private var appearanceObservation: NSKeyValueObservation?
+
     // MARK: - Init (loads from UserDefaults)
 
     init() {
@@ -64,6 +88,7 @@ final class ThemeManager {
         if d.object(forKey: "theme.bri")        != nil { brightness   = d.double(forKey: "theme.bri") }
         if d.object(forKey: "theme.dark")       != nil { isDarkMode   = d.bool(forKey: "theme.dark") }
         if d.object(forKey: "theme.hiContrast") != nil { isHiContrast = d.bool(forKey: "theme.hiContrast") }
+        if d.object(forKey: "theme.glass")      != nil { isGlassMode  = d.bool(forKey: "theme.glass") }
         if d.object(forKey: "theme.cellBgOn")   != nil { useCustomCellBg = d.bool(forKey: "theme.cellBgOn") }
         if d.object(forKey: "theme.cellBgHue")  != nil { cellBgHue   = d.double(forKey: "theme.cellBgHue") }
         if d.object(forKey: "theme.cellBgSat")  != nil { cellBgSat   = d.double(forKey: "theme.cellBgSat") }
@@ -89,6 +114,20 @@ final class ThemeManager {
         if d.object(forKey: "theme.borderSat")    != nil { cellBorderSat = d.double(forKey: "theme.borderSat") }
         if d.object(forKey: "theme.borderBri")    != nil { cellBorderBri = d.double(forKey: "theme.borderBri") }
         isLoading = false
+
+        // Defer KVO setup one run-loop tick so NSApp is fully initialised before
+        // we observe it. (@State properties are created before NSApplication launches,
+        // so NSApp is still nil at the point init() returns.)
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.appearanceObservation = NSApp.observe(\.effectiveAppearance, options: [.new]) { [weak self] _, _ in
+                DispatchQueue.main.async { [weak self] in
+                    guard let self, self.isGlassMode else { return }
+                    // Bump themeVersion so @Observable-tracked views re-evaluate colorScheme.
+                    self.themeVersion &+= 1
+                }
+            }
+        }
     }
 
     // MARK: - Derived: accent
@@ -114,6 +153,7 @@ final class ThemeManager {
 
     /// Overlay tint applied over the blur material for the popup background.
     ///
+    /// Glass mode        → near-zero tint; NSVisualEffectView provides all depth
     /// Hi-contrast dark  → black 40% (original behaviour)
     /// Hi-contrast light → white 8%
     /// Lo-contrast       → pastel tint derived from the user's hue/sat/bri
@@ -121,6 +161,10 @@ final class ThemeManager {
     /// Window-level background overlay — always derived from primary colour, never from
     /// cellBg values. cellTintColor is the per-cell overlay that uses cellBg values.
     var backgroundOverlayColor: Color {
+        // Glass: minimal tint — the ultra-thin visual effect material handles depth
+        if isGlassMode {
+            return primaryColor.opacity(0.04)
+        }
         if useCustomBackground {
             let op: Double
             if isHiContrast { op = isDarkMode ? 0.40 : 0.08 }
@@ -162,6 +206,10 @@ final class ThemeManager {
     /// When useCustomCellBg=true, derives from cellBg* values; otherwise from primary.
     /// This is the ONLY place that uses cellBg* — backgroundOverlayColor uses primary only.
     var cellTintColor: Color {
+        // Glass mode: extremely subtle accent wash — cells should feel nearly transparent
+        if isGlassMode {
+            return Color(hue: hue, saturation: saturation * 0.25, brightness: 0.95).opacity(0.05)
+        }
         if useCustomCellBg {
             // Explicit cell bg — use stored HSB directly at fixed opacity.
             let opacity: Double = isDarkMode ? 0.30 : 0.40
@@ -179,9 +227,13 @@ final class ThemeManager {
     // MARK: - Derived: cell borders
 
     /// Stroke colour for ExpandableGlassRow borders.
+    /// Glass mode  → bright specular white — the "edge-of-glass" highlight.
     /// Hi-contrast → standard grey/separator (adapts to light/dark automatically).
     /// Lo-contrast → soft tint derived from the primary hue.
     var cellBorderColor: Color {
+        if isGlassMode {
+            return Color.white.opacity(0.22)
+        }
         if useCustomCellBorder {
             let base = Color(hue: cellBorderHue, saturation: cellBorderSat, brightness: cellBorderBri)
             let opacity = isHiContrast ? 0.30 : 0.28
@@ -193,6 +245,9 @@ final class ThemeManager {
     }
 
     var cellBorderHoverColor: Color {
+        if isGlassMode {
+            return Color.white.opacity(0.40)
+        }
         if useCustomCellBorder {
             let base = Color(hue: cellBorderHue, saturation: cellBorderSat, brightness: cellBorderBri)
             let opacity = isHiContrast ? 0.50 : 0.45
@@ -205,7 +260,21 @@ final class ThemeManager {
 
     // MARK: - Derived: colorScheme
 
-    var colorScheme: ColorScheme { isDarkMode ? .dark : .light }
+    /// In glass mode, tracks `NSApp.effectiveAppearance` (the real system dark/light)
+    /// rather than the stored `isDarkMode` flag. This is essential when macOS
+    /// "Reduce Transparency" is active: NSVisualEffectView falls back to an opaque
+    /// solid fill, so the colour scheme must match what the system is actually showing.
+    /// In dark/light modes, the stored `isDarkMode` flag is used as normal.
+    var colorScheme: ColorScheme {
+        if isGlassMode {
+            // NSApp may be nil during the very first render (before the deferred KVO
+            // setup fires), so fall back to isDarkMode in that narrow window.
+            let isDark = NSApp?.effectiveAppearance
+                .bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            return isDark ? .dark : .light
+        }
+        return isDarkMode ? .dark : .light
+    }
 
     // MARK: - Persistence
 
@@ -218,6 +287,7 @@ final class ThemeManager {
         d.set(brightness,      forKey: "theme.bri")
         d.set(isDarkMode,      forKey: "theme.dark")
         d.set(isHiContrast,    forKey: "theme.hiContrast")
+        d.set(isGlassMode,     forKey: "theme.glass")
         d.set(useCustomCellBg, forKey: "theme.cellBgOn")
         d.set(cellBgHue,       forKey: "theme.cellBgHue")
         d.set(cellBgSat,       forKey: "theme.cellBgSat")

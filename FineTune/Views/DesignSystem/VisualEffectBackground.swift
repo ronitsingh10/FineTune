@@ -28,15 +28,79 @@ struct VisualEffectBackground: NSViewRepresentable {
     }
 }
 
+// MARK: - Liquid Glass background layers (iOS 26 aesthetic)
+
+/// The multi-layer stack that produces the iOS 26 "Liquid Glass" look on macOS.
+///
+/// Layer order (bottom → top):
+///  1. NSVisualEffectView with `.fullScreenUI` — maximally transparent frosted blur
+///  2. Iridescent prismatic AngularGradient — the colour-shift caustic effect
+///  3. Accent hue wash — very subtle tint from the user's chosen colour
+///  4. Top-edge specular highlight — simulates light catching the glass rim
+private struct LiquidGlassOverlay: View {
+    @Environment(ThemeManager.self) private var theme
+    /// Rotating the angular gradient by the hue shifts the prismatic spread
+    /// so each accent colour produces a complementary shimmer.
+    private var prismRotation: Double { theme.hue * 360 }
+
+    var body: some View {
+        ZStack {
+            // 1. Ultra-transparent blur — fullScreenUI is the clearest macOS material
+            VisualEffectBackground(material: .fullScreenUI, blendingMode: .behindWindow)
+
+            // 2. Prismatic iridescent caustic overlay (very low opacity).
+            //    startAngle offsets by the user's hue so each colour choice
+            //    produces a unique complementary shimmer spread.
+            AngularGradient(
+                colors: [
+                    Color(hue: (theme.hue + 0.00).truncatingRemainder(dividingBy: 1), saturation: 0.6, brightness: 1.0).opacity(0.055),
+                    Color(hue: (theme.hue + 0.12).truncatingRemainder(dividingBy: 1), saturation: 0.5, brightness: 1.0).opacity(0.040),
+                    Color(hue: (theme.hue + 0.25).truncatingRemainder(dividingBy: 1), saturation: 0.5, brightness: 1.0).opacity(0.030),
+                    Color(hue: (theme.hue + 0.40).truncatingRemainder(dividingBy: 1), saturation: 0.4, brightness: 1.0).opacity(0.025),
+                    Color(hue: (theme.hue + 0.55).truncatingRemainder(dividingBy: 1), saturation: 0.5, brightness: 1.0).opacity(0.030),
+                    Color(hue: (theme.hue + 0.70).truncatingRemainder(dividingBy: 1), saturation: 0.5, brightness: 1.0).opacity(0.040),
+                    Color(hue: (theme.hue + 0.85).truncatingRemainder(dividingBy: 1), saturation: 0.6, brightness: 1.0).opacity(0.050),
+                    Color(hue: (theme.hue + 0.00).truncatingRemainder(dividingBy: 1), saturation: 0.6, brightness: 1.0).opacity(0.055),
+                ],
+                center: .topLeading,
+                startAngle: .degrees(prismRotation),
+                endAngle: .degrees(prismRotation + 360)
+            )
+            .blendMode(.plusLighter)
+
+            // 3. Subtle accent-hue wash so the user's chosen colour still
+            //    shows through in glass mode
+            theme.primaryColor.opacity(0.045)
+
+            // 4. Top-edge specular — light catching the glass top rim
+            LinearGradient(
+                colors: [
+                    Color.white.opacity(0.10),
+                    Color.white.opacity(0.02),
+                    Color.clear,
+                ],
+                startPoint: .top,
+                endPoint: .init(x: 0.5, y: 0.22)
+            )
+        }
+    }
+}
+
 // MARK: - Glass background modifier (reads ThemeManager for tint + colorScheme)
 
 private struct GlassBackgroundModifier: ViewModifier {
     @Environment(ThemeManager.self) private var theme
 
     func body(content: Content) -> some View {
-        content
-            .background(theme.backgroundOverlayColor)
-            .background(VisualEffectBackground(material: .hudWindow, blendingMode: .behindWindow))
+        if theme.isGlassMode {
+            // Liquid Glass: swap to the iOS 26-style layered blur
+            content.background(LiquidGlassOverlay())
+        } else {
+            // Standard dark/light modes: original tinted hudWindow blur
+            content
+                .background(theme.backgroundOverlayColor)
+                .background(VisualEffectBackground(material: .hudWindow, blendingMode: .behindWindow))
+        }
     }
 }
 
@@ -84,4 +148,18 @@ struct EQPanelBackgroundModifier: ViewModifier {
     .darkGlassBackground()
     .clipShape(RoundedRectangle(cornerRadius: 12))
     .environment(ThemeManager())
+}
+
+#Preview("Liquid Glass") {
+    let tm = ThemeManager()
+    let _ = { tm.isGlassMode = true }()
+    VStack(spacing: 16) {
+        Text("OUTPUT DEVICES").bold()
+        Text("Liquid Glass — iOS 26 aesthetic")
+    }
+    .padding(20)
+    .frame(width: 300)
+    .darkGlassBackground()
+    .clipShape(RoundedRectangle(cornerRadius: 12))
+    .environment(tm)
 }

@@ -46,8 +46,12 @@ struct SectionHeaderStyleModifier: ViewModifier {
     @Environment(ThemeManager.self) private var theme
     func body(content: Content) -> some View {
         let _ = theme.themeVersion
-        let darkShadow = theme.isDarkMode ? Color.black.opacity(0.45) : Color.white.opacity(0.80)
-        let lightShadow = theme.isDarkMode ? Color.white.opacity(0.18) : Color.black.opacity(0.28)
+        // Use colorScheme (not isDarkMode directly) so glass mode's system-tracking
+        // appearance is reflected — isDarkMode stays true in glass mode but colorScheme
+        // may return .light when the system has switched to Light.
+        let isDark = theme.colorScheme == .dark
+        let darkShadow  = isDark ? Color.black.opacity(0.45) : Color.white.opacity(0.80)
+        let lightShadow = isDark ? Color.white.opacity(0.18) : Color.black.opacity(0.28)
         return content
             .font(DesignTokens.Typography.sectionHeader)
             .foregroundStyle(theme.sectionHeaderColor)
