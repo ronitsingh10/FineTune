@@ -24,7 +24,7 @@
 - **SW Volume control for devices w/o HW control** — Monitor and adjust volume levels of devices w/o hardware mgmt, via SW
 - **Monitor speaker control** — Adjust volume on external displays via DDC
 - **Volume boost** — Amplify up to 400%
-- **Sound Enhancements** — Per-device and system-wide Clarity, Ambience, Surround Sound, Dynamic Boost, Bass Boost with stackable layering
+- **Sound Enhancements** — Clarity, Ambience, Surround Sound, Dynamic Boost, Bass Boost with stackable layering per device
 - **Variable 9-band system-wide EQ** — 13 presets, stackable per-device
 - **Fixed 10-band per app EQ** — 20 presets across 5 categories
 - **Visualiser** — 10-band analyser w/ resonant IIR bandpass filters; per-band energy bars animating outward
