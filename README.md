@@ -1,11 +1,11 @@
 <p align="center">
   <img src="assets/icon.png" width="128" height="128" alt="FineTune app icon">
 </p>
+
+<h1 align="center">FineTuneFX</h1>
 <p align="center">
   <strong>Precision audio management for macOS</strong>
 </p>
-
-<h1 align="center">FineTuneFX</h1>
 <img width="583" height="652" alt="image" src="https://github.com/user-attachments/assets/c054151c-fddd-493d-8abc-77fcd940b7ef" />
 <img width="583" height="468" alt="image" src="https://github.com/user-attachments/assets/50c9bb01-a8fa-4fbc-aa9e-b030911bd501" />
 
