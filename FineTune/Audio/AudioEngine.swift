@@ -467,6 +467,20 @@ final class AudioEngine {
         return levels
     }
 
+    /// Aggregated per-band spectrum levels across all active taps (0–1, 10 bands).
+    /// Bands are log-spaced from ~56 Hz to ~10 kHz (FXSound filter design).
+    var spectrumBandLevels: [Float] {
+        guard !taps.isEmpty else { return Array(repeating: 0, count: SpectrumBandAnalyzer.bandCount) }
+        var result = Array(repeating: Float(0), count: SpectrumBandAnalyzer.bandCount)
+        for (_, tap) in taps {
+            let bands = tap.spectrumAnalyzer.bandLevels
+            for i in 0..<SpectrumBandAnalyzer.bandCount {
+                result[i] = max(result[i], bands[i])
+            }
+        }
+        return result
+    }
+
     /// Get audio level for a specific app
     func getAudioLevel(for app: AudioApp) -> Float {
         taps[app.id]?.audioLevel ?? 0.0

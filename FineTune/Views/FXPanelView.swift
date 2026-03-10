@@ -284,8 +284,7 @@ private struct FXSystemPanel: View {
 
             // ── Cell 2: Spectrum Visualizer ──────────────────────────────
             ExpandableGlassRow(isExpanded: false) {
-                FXSpectrumView(gains: local.eqGains, freqs: local.eqFreqs,
-                               isEnabled: local.isEnabled,
+                FXSpectrumView(isEnabled: local.isEnabled,
                                audioEngine: audioEngine)
                     .frame(height: 48)
                     .padding(.vertical, 4)

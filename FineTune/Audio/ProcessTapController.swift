@@ -53,6 +53,9 @@ final class ProcessTapController {
     // compensation during crossfade to avoid gain jumps (RT-013).
     /// Smoothed peak level for VU meter display (exponential moving average)
     private nonisolated(unsafe) var _peakLevel: Float = 0.0
+    private nonisolated(unsafe) var _storedSampleRate: Float = 48000
+    // Per-band spectrum analyser (FXSound resonant filter design)
+    let spectrumAnalyzer = SpectrumBandAnalyzer()
     /// Separate peak level for secondary tap during crossfade (avoids torn RMW from concurrent callbacks)
     private nonisolated(unsafe) var _secondaryPeakLevel: Float = 0.0
     private nonisolated(unsafe) var _currentDeviceVolume: Float = 1.0
@@ -247,6 +250,7 @@ final class ProcessTapController {
         }
         let rampTimeSeconds: Float = 0.030  // 30ms - fast enough to feel responsive, slow enough to avoid clicks
         rampCoefficient = 1 - exp(-1 / (Float(sampleRate) * rampTimeSeconds))
+        _storedSampleRate = Float(sampleRate)
         logger.debug("Ramp coefficient: \(self.rampCoefficient)")
 
         eqProcessor = EQProcessor(sampleRate: sampleRate)
@@ -705,6 +709,14 @@ final class ProcessTapController {
         }
         let rawPeak = min(maxPeak, 1.0)
         _peakLevel = _peakLevel + levelSmoothingFactor * (rawPeak - _peakLevel)
+
+        // Feed raw samples to the per-band spectrum analyser
+        if let firstBuf = inputBuffers.first, let data = firstBuf.mData {
+            let samples = data.assumingMemoryBound(to: Float.self)
+            let frameCount = Int(firstBuf.mDataByteSize) / MemoryLayout<Float>.size / 2
+            spectrumAnalyzer.processBlock(samples, frameCount: frameCount,
+                                          channelCount: 2, sampleRate: _storedSampleRate)
+        }
 
         if _isMuted {
             for outputBuffer in outputBuffers {
