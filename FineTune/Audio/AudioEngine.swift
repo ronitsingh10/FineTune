@@ -560,6 +560,7 @@ final class AudioEngine {
     /// In multi mode, writes to all selected device UIDs simultaneously.
     func setFXSettings(_ settings: FXSettings) {
         fxSettings = settings   // keep observable var in sync for spectrum view
+        fxSettingsForEditing = settings  // keep FX panel state in sync when returning to tab
         if fxDeviceMode == .multi {
             // Apply the same settings to every selected device
             for uid in fxSelectedDeviceUIDs {
@@ -1259,9 +1260,11 @@ final class AudioEngine {
             }
         }
 
-        // Update routing for ALL apps following default (including those in grace period)
-        // This ensures apps resuming during grace period get the correct device
+        // Update routing for apps following default (including those in grace period).
+        // Guard against stale followsDefault entries by only switching apps that
+        // were actually routed to the old default.
         for pid in followsDefault {
+            guard appDeviceRouting[pid] == oldDefaultUID else { continue }
             appDeviceRouting[pid] = newDefaultUID
         }
 
@@ -1269,6 +1272,8 @@ final class AudioEngine {
         var tapsToSwitch: [(app: AudioApp, tap: ProcessTapController)] = []
         for app in apps {
             guard followsDefault.contains(app.id) else { continue }
+            // Skip apps explicitly routed to a non-default device.
+            guard appDeviceRouting[app.id] == newDefaultUID else { continue }
             if let tap = taps[app.id] {
                 tapsToSwitch.append((app, tap))
             }
