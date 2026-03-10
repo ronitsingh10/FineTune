@@ -27,7 +27,7 @@
 - **Sound Enhancements** — Per-device and system-wide Clarity, Ambience, Surround Sound, Dynamic Boost, Bass Boost with stackable layering
 - **Variable 9-band system-wide EQ** — 13 presets, stackable per-device
 - **Fixed 10-band per app EQ** — 20 presets across 5 categories
-- **Visualiser** — Sound activity monitor
+- **Visualiser** — 10-band analyser w/ resonant IIR bandpass filters; per-band energy bars animating outward
 - **Colour schemes** — Light mode, dark mode, hi/lo-contrast, primary colour picker
 - **URL schemes** — Automate volume, mute, device routing, and more from scripts
 - **Menu bar app** — Lightweight, always accessible
