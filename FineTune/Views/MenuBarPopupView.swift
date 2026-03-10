@@ -275,8 +275,18 @@ struct MenuBarPopupView: View {
     @ViewBuilder
     private var fxTabContent: some View {
         FXPanelView(
-            settings: audioEngine.fxSettings,
+            settings: audioEngine.fxSettingsForEditing,
             onSettingsChanged: { audioEngine.setFXSettings($0) },
+            outputDevices: audioEngine.prioritySortedOutputDevices,
+            defaultDeviceUID: audioEngine.deviceVolumeMonitor.defaultDeviceUID,
+            fxDeviceMode: audioEngine.fxDeviceMode,
+            fxDeviceUID: audioEngine.fxDeviceUID,
+            fxSelectedDeviceUIDs: audioEngine.fxSelectedDeviceUIDs,
+            fxFollowsDefault: audioEngine.fxFollowsDefault,
+            onFXDeviceModeChange: { audioEngine.setFXDeviceMode($0) },
+            onFXDeviceSelected: { audioEngine.setFXDevice($0) },
+            onFXDevicesSelected: { audioEngine.setFXSelectedDeviceUIDs($0) },
+            onFXFollowDefault:   { audioEngine.setFXFollowDefault() },
             displayableApps: audioEngine.displayableApps,
             expandedEQAppID: fxExpandedEQAppID,
             onEQToggle: { appID in
@@ -557,8 +567,8 @@ struct MenuBarPopupView: View {
                         volume: deviceVolumeMonitor.volumes[device.id] ?? 1.0,
                         isMuted: deviceVolumeMonitor.muteStates[device.id] ?? false,
                         hasVolumeControl: audioEngine.hasVolumeControl(for: device.id),
-                        softwareVolume: audioEngine.getSoftwareVolume(for: device),
-                        isSoftwareMuted: audioEngine.getSoftwareMute(for: device),
+                        softwareVolume: audioEngine.softwareVolumesByUID[device.uid] ?? 1.0,
+                        isSoftwareMuted: audioEngine.softwareMutesByUID[device.uid] ?? false,
                         onSetDefault: {
                             deviceVolumeMonitor.setDefaultDevice(device.id)
                         },

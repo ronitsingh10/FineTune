@@ -93,8 +93,17 @@ final class SettingsManager {
         var softwareDeviceVolumes: [String: Float] = [:]
         var softwareDeviceMutes: [String: Bool] = [:]
 
-        // Global FX enhancement settings
+        // FX settings — "System Audio" slot (follow default)
         var fxSettings: FXSettings = FXSettings()
+
+        // Per-device FX settings — keyed by device UID
+        var fxSettingsPerDevice: [String: FXSettings] = [:]
+
+        // FX device picker state
+        var fxEditingUID:         String?             = nil   // nil = editing System Audio
+        var fxDeviceMode:         DeviceSelectionMode = .single
+        var fxDeviceUID:          String?             = nil   // nil = follow system default
+        var fxSelectedDeviceUIDs: [String]            = []    // for multi mode
     }
 
     init(directory: URL? = nil) {
@@ -159,12 +168,39 @@ final class SettingsManager {
         return settings.appEQSettings[appIdentifier] ?? EQSettings.flat
     }
 
-    func getFXSettings() -> FXSettings { settings.fxSettings }
+    // MARK: - FX Settings (per-device)
 
-    func setFXSettings(_ s: FXSettings) {
-        settings.fxSettings = s
+    /// Get FX settings for a specific device UID, or System Audio if uid is nil.
+    func getFXSettings(for uid: String? = nil) -> FXSettings {
+        if let uid { return settings.fxSettingsPerDevice[uid] ?? settings.fxSettings }
+        return settings.fxSettings
+    }
+
+    /// Save FX settings for a specific device UID, or System Audio if uid is nil.
+    func setFXSettings(_ s: FXSettings, for uid: String? = nil) {
+        if let uid { settings.fxSettingsPerDevice[uid] = s }
+        else        { settings.fxSettings = s }
         scheduleSave()
     }
+
+    // MARK: - FX Device Routing
+
+    func getFXEditingUID() -> String? { settings.fxEditingUID }
+    func setFXEditingUID(_ uid: String?) { settings.fxEditingUID = uid; scheduleSave() }
+
+    func getFXDeviceMode() -> DeviceSelectionMode { settings.fxDeviceMode }
+    func setFXDeviceMode(_ mode: DeviceSelectionMode) { settings.fxDeviceMode = mode; scheduleSave() }
+
+    func getFXDeviceUID() -> String? { settings.fxDeviceUID }
+    func setFXDeviceUID(_ uid: String?) { settings.fxDeviceUID = uid; scheduleSave() }
+
+    func getFXSelectedDeviceUIDs() -> Set<String> { Set(settings.fxSelectedDeviceUIDs) }
+    func setFXSelectedDeviceUIDs(_ uids: Set<String>) { settings.fxSelectedDeviceUIDs = Array(uids); scheduleSave() }
+
+    func isFXFollowingDefault() -> Bool { settings.fxDeviceUID == nil && settings.fxDeviceMode == .single }
+
+    /// True if a specific per-device FX settings slot exists (vs falling back to System Audio).
+    func hasFXSettings(for uid: String) -> Bool { settings.fxSettingsPerDevice[uid] != nil }
 
     func setEQSettings(_ eqSettings: EQSettings, for appIdentifier: String) {
         settings.appEQSettings[appIdentifier] = eqSettings
@@ -292,23 +328,47 @@ final class SettingsManager {
     // MARK: - Software Device Volume (for devices without hardware volume control)
 
     /// Returns the persisted software volume (0.0–1.0) for a device UID, defaulting to 1.0.
+    // MARK: - Software Volume (UserDefaults-backed for atomicity)
+    //
+    // We use UserDefaults as the primary store for software volumes and mutes.
+    // UserDefaults.synchronize() (or its automatic equivalent) writes are atomic and
+    // immediate — unlike our debounced JSON path which has a 500 ms window where a
+    // quit or crash can drop the value. The JSON store is kept in sync for portability
+    // but is NOT the authoritative source on read.
+
+    private func udVolKey(_ uid: String) -> String { "swvol_\(uid)" }
+    private func udMuteKey(_ uid: String) -> String { "swmute_\(uid)" }
+
     func getSoftwareVolume(for deviceUID: String) -> Float {
-        settings.softwareDeviceVolumes[deviceUID] ?? 1.0
+        let ud = UserDefaults.standard
+        if ud.object(forKey: udVolKey(deviceUID)) != nil {
+            return Float(ud.double(forKey: udVolKey(deviceUID)))
+        }
+        // Fallback to JSON store (migration path for existing installs)
+        return settings.softwareDeviceVolumes[deviceUID] ?? 1.0
     }
 
-    /// Persists a software volume setting for a device UID.
     func setSoftwareVolume(for deviceUID: String, to volume: Float) {
-        settings.softwareDeviceVolumes[deviceUID] = max(0.0, min(1.0, volume))
+        let clamped = max(0.0, min(1.0, volume))
+        // Primary: UserDefaults — atomic and immediate
+        UserDefaults.standard.set(Double(clamped), forKey: udVolKey(deviceUID))
+        // Mirror to JSON store so the data stays in sync
+        settings.softwareDeviceVolumes[deviceUID] = clamped
         scheduleSave()
     }
 
-    /// Returns the persisted software mute state for a device UID.
     func getSoftwareMute(for deviceUID: String) -> Bool {
-        settings.softwareDeviceMutes[deviceUID] ?? false
+        let ud = UserDefaults.standard
+        if ud.object(forKey: udMuteKey(deviceUID)) != nil {
+            return ud.bool(forKey: udMuteKey(deviceUID))
+        }
+        return settings.softwareDeviceMutes[deviceUID] ?? false
     }
 
-    /// Persists a software mute state for a device UID.
     func setSoftwareMute(for deviceUID: String, to muted: Bool) {
+        // Primary: UserDefaults — atomic and immediate
+        UserDefaults.standard.set(muted, forKey: udMuteKey(deviceUID))
+        // Mirror to JSON store
         settings.softwareDeviceMutes[deviceUID] = muted
         scheduleSave()
     }
@@ -410,7 +470,7 @@ final class SettingsManager {
         writeToDisk()
     }
 
-    private func writeToDisk() {
+    func writeToDisk() {
         do {
             let directory = settingsURL.deletingLastPathComponent()
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)

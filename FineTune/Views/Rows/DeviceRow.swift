@@ -175,6 +175,14 @@ struct DeviceRow: View {
         }
         .frame(height: DesignTokens.Dimensions.rowContentHeight)
         .hoverableRow()
+        .onAppear {
+            // Force-sync @State from the prop on every appearance.
+            // @State only initialises from the init argument on first creation,
+            // so if the row is recreated (DDC probe, device list refresh, etc.)
+            // while the prop already has the correct value, .onChange never fires.
+            sliderValue = Double(volume)
+            softwareSliderValue = Double(softwareVolume)
+        }
         .onChange(of: volume) { _, newValue in
             guard !isEditing else { return }
             sliderValue = Double(newValue)

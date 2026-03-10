@@ -7,6 +7,18 @@ struct FXPanelView: View {
     let settings: FXSettings
     let onSettingsChanged: (FXSettings) -> Void
 
+    // FX device routing
+    let outputDevices:        [AudioDevice]
+    let defaultDeviceUID:     String?
+    let fxDeviceMode:         DeviceSelectionMode
+    let fxDeviceUID:          String?
+    let fxSelectedDeviceUIDs: Set<String>
+    let fxFollowsDefault:     Bool
+    let onFXDeviceModeChange: (DeviceSelectionMode) -> Void
+    let onFXDeviceSelected:   (String) -> Void
+    let onFXDevicesSelected:  (Set<String>) -> Void
+    let onFXFollowDefault:    () -> Void
+
     // Injected from MenuBarPopupView for the APPS sub-view
     let displayableApps: [DisplayableApp]
     let expandedEQAppID: String?
@@ -19,16 +31,36 @@ struct FXPanelView: View {
 
     init(settings: FXSettings,
          onSettingsChanged: @escaping (FXSettings) -> Void,
+         outputDevices: [AudioDevice],
+         defaultDeviceUID: String?,
+         fxDeviceMode: DeviceSelectionMode,
+         fxDeviceUID: String?,
+         fxSelectedDeviceUIDs: Set<String>,
+         fxFollowsDefault: Bool,
+         onFXDeviceModeChange: @escaping (DeviceSelectionMode) -> Void,
+         onFXDeviceSelected:   @escaping (String) -> Void,
+         onFXDevicesSelected:  @escaping (Set<String>) -> Void,
+         onFXFollowDefault:    @escaping () -> Void,
          displayableApps: [DisplayableApp],
          expandedEQAppID: String?,
          onEQToggle: @escaping (String) -> Void,
          audioEngine: AudioEngine) {
-        self.settings = settings
-        self.onSettingsChanged = onSettingsChanged
-        self.displayableApps = displayableApps
-        self.expandedEQAppID = expandedEQAppID
-        self.onEQToggle = onEQToggle
-        self.audioEngine = audioEngine
+        self.settings             = settings
+        self.onSettingsChanged    = onSettingsChanged
+        self.outputDevices        = outputDevices
+        self.defaultDeviceUID     = defaultDeviceUID
+        self.fxDeviceMode         = fxDeviceMode
+        self.fxDeviceUID          = fxDeviceUID
+        self.fxSelectedDeviceUIDs = fxSelectedDeviceUIDs
+        self.fxFollowsDefault     = fxFollowsDefault
+        self.onFXDeviceModeChange = onFXDeviceModeChange
+        self.onFXDeviceSelected   = onFXDeviceSelected
+        self.onFXDevicesSelected  = onFXDevicesSelected
+        self.onFXFollowDefault    = onFXFollowDefault
+        self.displayableApps      = displayableApps
+        self.expandedEQAppID      = expandedEQAppID
+        self.onEQToggle           = onEQToggle
+        self.audioEngine          = audioEngine
     }
 
     var body: some View {
@@ -43,7 +75,21 @@ struct FXPanelView: View {
             .padding(.bottom, 2)
 
             if soundTarget == .system {
-                FXSystemPanel(settings: settings, onSettingsChanged: onSettingsChanged)
+                FXSystemPanel(
+                    settings: settings,
+                    onSettingsChanged: onSettingsChanged,
+                    outputDevices: outputDevices,
+                    defaultDeviceUID: defaultDeviceUID,
+                    fxDeviceMode: fxDeviceMode,
+                    fxDeviceUID: fxDeviceUID,
+                    fxSelectedDeviceUIDs: fxSelectedDeviceUIDs,
+                    fxFollowsDefault: fxFollowsDefault,
+                    onFXDeviceModeChange: onFXDeviceModeChange,
+                    onFXDeviceSelected: onFXDeviceSelected,
+                    onFXDevicesSelected: onFXDevicesSelected,
+                    onFXFollowDefault: onFXFollowDefault,
+                    audioEngine: audioEngine
+                )
             } else {
                 FXAppsPanel(
                     displayableApps: displayableApps,
@@ -112,26 +158,58 @@ private struct SoundTargetPicker: View {
 private struct FXSystemPanel: View {
     let settings: FXSettings
     let onSettingsChanged: (FXSettings) -> Void
+    let audioEngine: AudioEngine
 
+    // Device routing
+    let outputDevices:        [AudioDevice]
+    let defaultDeviceUID:     String?
+    let fxDeviceMode:         DeviceSelectionMode
+    let fxDeviceUID:          String?
+    let fxSelectedDeviceUIDs: Set<String>
+    let fxFollowsDefault:     Bool
+    let onFXDeviceModeChange: (DeviceSelectionMode) -> Void
+    let onFXDeviceSelected:   (String) -> Void
+    let onFXDevicesSelected:  (Set<String>) -> Void
+    let onFXFollowDefault:    () -> Void
+
+    @Environment(ThemeManager.self) private var theme
     @State private var local: FXSettings
     @State private var selectedPreset: FXPreset? = .general
     @State private var isDirty: Bool = false
     @State private var fxAreaHovered = false
     @AppStorage("lastFXPresetID") private var savedPresetID: String = FXPreset.general.rawValue
 
-    init(settings: FXSettings, onSettingsChanged: @escaping (FXSettings) -> Void) {
-        self.settings = settings
-        self.onSettingsChanged = onSettingsChanged
+    init(settings: FXSettings, onSettingsChanged: @escaping (FXSettings) -> Void,
+         outputDevices: [AudioDevice],
+         defaultDeviceUID: String?,
+         fxDeviceMode: DeviceSelectionMode,
+         fxDeviceUID: String?,
+         fxSelectedDeviceUIDs: Set<String>,
+         fxFollowsDefault: Bool,
+         onFXDeviceModeChange: @escaping (DeviceSelectionMode) -> Void,
+         onFXDeviceSelected:   @escaping (String) -> Void,
+         onFXDevicesSelected:  @escaping (Set<String>) -> Void,
+         onFXFollowDefault:    @escaping () -> Void,
+         audioEngine: AudioEngine) {
+        self.settings             = settings
+        self.onSettingsChanged    = onSettingsChanged
+        self.outputDevices        = outputDevices
+        self.defaultDeviceUID     = defaultDeviceUID
+        self.fxDeviceMode         = fxDeviceMode
+        self.fxDeviceUID          = fxDeviceUID
+        self.fxSelectedDeviceUIDs = fxSelectedDeviceUIDs
+        self.fxFollowsDefault     = fxFollowsDefault
+        self.onFXDeviceModeChange = onFXDeviceModeChange
+        self.onFXDeviceSelected   = onFXDeviceSelected
+        self.onFXDevicesSelected  = onFXDevicesSelected
+        self.onFXFollowDefault    = onFXFollowDefault
+        self.audioEngine          = audioEngine
         _local = State(initialValue: settings)
 
-        // First try to match the current settings exactly to a preset
         if let match = settings.matchingPreset() {
             _selectedPreset = State(initialValue: match)
             _isDirty = State(initialValue: false)
         } else {
-            // Fall back to the last user-selected preset name (no asterisk yet — user
-            // may have changed settings outside of a preset selection, but we still
-            // want to show which preset they were last on, with the dirty marker).
             let savedID = UserDefaults.standard.string(forKey: "lastFXPresetID") ?? FXPreset.general.rawValue
             let restored = FXPreset(rawValue: savedID) ?? .general
             _selectedPreset = State(initialValue: restored)
@@ -146,7 +224,7 @@ private struct FXSystemPanel: View {
 
     var body: some View {
         VStack(spacing: 8) {
-            // ── Cell 1: Preset + Enable ──────────────────────────────────
+            // ── Cell 1: Preset + Device Picker + Enable ──────────────────
             ExpandableGlassRow(isExpanded: false) {
                 HStack(spacing: 8) {
                     FXPresetDropdown(label: presetLabel) { preset in
@@ -157,44 +235,91 @@ private struct FXSystemPanel: View {
                         onSettingsChanged(local)
                     }
                     Spacer()
-                    Toggle("", isOn: Binding(
-                        get: { local.isEnabled },
-                        set: { local.isEnabled = $0; onSettingsChanged(local) }
-                    ))
-                    .toggleStyle(.switch)
-                    .scaleEffect(0.7)
-                    .labelsHidden()
-                    .frame(width: 36)
-                    Text("Enable")
-                        .font(DesignTokens.Typography.pickerText)
-                        .foregroundStyle(.primary)
+                    // Device picker — same component used in app rows
+                    DevicePicker(
+                        devices: outputDevices,
+                        selectedDeviceUID: fxDeviceUID ?? defaultDeviceUID ?? "",
+                        selectedDeviceUIDs: fxSelectedDeviceUIDs,
+                        isFollowingDefault: fxFollowsDefault,
+                        defaultDeviceUID: defaultDeviceUID,
+                        mode: fxDeviceMode,
+                        onModeChange: onFXDeviceModeChange,
+                        onDeviceSelected: onFXDeviceSelected,
+                        onDevicesSelected: onFXDevicesSelected,
+                        onSelectFollowDefault: onFXFollowDefault,
+                        showModeToggle: true
+                    )
+                    // Power button — solid accent fill when on, hollow ring when off
+                    Button {
+                        local.isEnabled.toggle()
+                        onSettingsChanged(local)
+                    } label: {
+                        ZStack {
+                            Circle()
+                                .fill(local.isEnabled ? theme.accentColor : Color.clear)
+                                .frame(width: 26, height: 26)
+                            Circle()
+                                .strokeBorder(local.isEnabled
+                                              ? theme.accentColor
+                                              : DesignTokens.Colors.textSecondary,
+                                              lineWidth: 1.5)
+                                .frame(width: 26, height: 26)
+                            Image(systemName: "power")
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundStyle(local.isEnabled ? .black.opacity(0.85)
+                                                                 : DesignTokens.Colors.textSecondary)
+                        }
+                    }
+                    .buttonStyle(.plain)
+                    .help(local.isEnabled ? "Disable FX" : "Enable FX")
+                    .animation(.easeInOut(duration: 0.15), value: local.isEnabled)
                 }
                 .frame(height: DesignTokens.Dimensions.rowContentHeight)
             } expandedContent: { EmptyView() }
 
-            // ── Cell 2: FX Sliders ───────────────────────────────────────
+            // ── Cell 2: Spectrum Visualizer ──────────────────────────────
+            ExpandableGlassRow(isExpanded: false) {
+                FXSpectrumView(gains: local.eqGains, freqs: local.eqFreqs,
+                               isEnabled: local.isEnabled,
+                               audioEngine: audioEngine)
+                    .frame(height: 48)
+                    .padding(.vertical, 4)
+            } expandedContent: { EmptyView() }
+
+            // ── Cell 3: FX Sliders ───────────────────────────────────────
             ExpandableGlassRow(isExpanded: false) {
                 VStack(alignment: .leading, spacing: 6) {
-                    fxSlider("Clarity",        kp: \.clarity,       set: { local.clarity = $0 })
-                    fxSlider("Ambience",       kp: \.ambience,      set: { local.ambience = $0 })
-                    fxSlider("Surround Sound", kp: \.surroundSound, set: { local.surroundSound = $0 })
-                    fxSlider("Dynamic Boost",  kp: \.dynamicBoost,  set: { local.dynamicBoost = $0 })
-                    fxSlider("Bass Boost",     kp: \.bassBoost,     set: { local.bassBoost = $0 })
+                    fxSlider("Clarity",
+                             tooltip: "Enhances and elevates high-end fidelity and presence.",
+                             kp: \.clarity,       set: { local.clarity = $0 })
+                    fxSlider("Ambience",
+                             tooltip: "Thickens and smooths audio with controlled reverberation.",
+                             kp: \.ambience,      set: { local.ambience = $0 })
+                    fxSlider("Surround Sound",
+                             tooltip: "Widens the left-right balance for expansive, wide sound.",
+                             kp: \.surroundSound, set: { local.surroundSound = $0 })
+                    fxSlider("Dynamic Boost",
+                             tooltip: "Increases the overall volume and balance with responsive processing.",
+                             kp: \.dynamicBoost,  set: { local.dynamicBoost = $0 })
+                    fxSlider("Bass Boost",
+                             tooltip: "Boosts low end for full, impactful response.",
+                             kp: \.bassBoost,     set: { local.bassBoost = $0 })
                 }
                 .padding(.vertical, 4)
                 .onHover { fxAreaHovered = $0 }
             } expandedContent: { EmptyView() }
-            .opacity(local.isEnabled ? 1 : 0.4)
+            .saturation(local.isEnabled ? 1 : 0).opacity(local.isEnabled ? 1 : 0.55)
             .disabled(!local.isEnabled)
 
-            // ── Cell 3: EQ Curve + Dials ─────────────────────────────────
+            // ── Cell 4: EQ Curve + Dials ─────────────────────────────────
             ExpandableGlassRow(isExpanded: false) {
                 VStack(spacing: 0) {
                     FXEQCurve(gains: Binding(
                         get: { local.eqGains },
                         set: { local.eqGains = $0; markDirtyAndEmit() }
                     ))
-                    .frame(height: 80)
+                    .frame(height: 90)
+                    .padding(.horizontal, 4)
                     .clipShape(RoundedRectangle(cornerRadius: 4))
 
                     FXDialRow(freqs: Binding(
@@ -202,10 +327,11 @@ private struct FXSystemPanel: View {
                         set: { local.eqFreqs = $0; markDirtyAndEmit() }
                     ))
                     .padding(.top, 4)
+                    .padding(.horizontal, 4)
                 }
                 .padding(.vertical, 4)
             } expandedContent: { EmptyView() }
-            .opacity(local.isEnabled ? 1 : 0.4)
+            .saturation(local.isEnabled ? 1 : 0).opacity(local.isEnabled ? 1 : 0.55)
             .disabled(!local.isEnabled)
         }
         .onChange(of: settings) { _, v in
@@ -215,13 +341,15 @@ private struct FXSystemPanel: View {
     }
 
     @ViewBuilder
-    private func fxSlider(_ label: String, kp: KeyPath<FXSettings, Int>,
+    private func fxSlider(_ label: String, tooltip: String,
+                           kp: KeyPath<FXSettings, Int>,
                            set: @escaping (Int) -> Void) -> some View {
         FXSliderRow(
             label: label,
             value: Binding(get: { local[keyPath: kp] }, set: { set($0); markDirtyAndEmit() }),
             showValue: fxAreaHovered
         )
+        .help(tooltip)
     }
 
     private func markDirtyAndEmit() {
@@ -368,25 +496,19 @@ private struct FXPresetDropdown: View {
                 Button(preset.name) { onSelect(preset) }
             }
         } label: {
-            HStack(spacing: 0) {
-                Text(label)
-                    .font(DesignTokens.Typography.pickerText)
-                    .foregroundStyle(.primary)
-                    .lineLimit(1)
-                Spacer(minLength: 6)
-                Image(systemName: "chevron.down")
-                    .font(.system(size: 9, weight: .medium))
-                    .foregroundStyle(DesignTokens.Colors.textSecondary)
-            }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 5)
-            .frame(width: 200)
-            .background(
-                RoundedRectangle(cornerRadius: 7)
-                    .fill(Color.primary.opacity(0.08))
-                    .overlay(RoundedRectangle(cornerRadius: 7)
-                        .strokeBorder(Color.primary.opacity(0.12), lineWidth: 0.5))
-            )
+            Text(label)
+                .font(DesignTokens.Typography.pickerText)
+                .foregroundStyle(.primary)
+                .lineLimit(1)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 5)
+                .frame(width: 200, alignment: .leading)
+                .background(
+                    RoundedRectangle(cornerRadius: 7)
+                        .fill(Color.primary.opacity(0.08))
+                        .overlay(RoundedRectangle(cornerRadius: 7)
+                            .strokeBorder(Color.primary.opacity(0.12), lineWidth: 0.5))
+                )
         }
         .menuStyle(.borderlessButton)
         .fixedSize()
@@ -471,6 +593,7 @@ private struct FXEQCurve: View {
     @State private var draggingBand = -1
     @State private var dragStartY: CGFloat  = 0
     @State private var dragStartGain: Float = 0
+    @State private var hoverBand: Int = -1   // which band the cursor is over (-1 = none)
 
     @Environment(ThemeManager.self) private var theme
     @Environment(\.colorScheme) private var colorScheme
@@ -494,7 +617,6 @@ private struct FXEQCurve: View {
     var body: some View {
         GeometryReader { geo in
             let size = geo.size
-            let colW = size.width / CGFloat(n)
             let accent = theme.accentColor
             let isDark = colorScheme == .dark
             let gridColor = isDark ? Color.white.opacity(0.07) : Color.black.opacity(0.10)
@@ -504,47 +626,71 @@ private struct FXEQCurve: View {
 
             Canvas { ctx, sz in
                 let midY = labelH + (sz.height - labelH) * 0.5
+                let colW = sz.width / CGFloat(n)
+                let ctrl = colW * 0.4
 
-                // Grid verticals
+                // Grid verticals — dashed, gradient from accent (top) to dim (bottom)
                 for i in 0..<n {
                     let x = colCenter(i, width: sz.width)
                     var p = Path(); p.move(to: CGPoint(x: x, y: labelH))
                     p.addLine(to: CGPoint(x: x, y: sz.height))
-                    ctx.stroke(p, with: .color(gridColor), lineWidth: 0.5)
+                    ctx.stroke(p, with: .linearGradient(
+                        Gradient(stops: [
+                            .init(color: accent.opacity(0.55), location: 0),
+                            .init(color: gridColor,            location: 1)
+                        ]),
+                        startPoint: CGPoint(x: x, y: labelH),
+                        endPoint:   CGPoint(x: x, y: sz.height)
+                    ), style: StrokeStyle(lineWidth: 0.5, dash: [2.5, 3.0]))
                 }
-                // Midline
+                // Midline — full width
                 var mid = Path()
                 mid.move(to: CGPoint(x: 0, y: midY))
                 mid.addLine(to: CGPoint(x: sz.width, y: midY))
-                ctx.stroke(mid, with: .color(midlineColor), lineWidth: 0.5)
+                ctx.stroke(mid, with: .color(midlineColor),
+                           style: StrokeStyle(lineWidth: 0.5, dash: [3.0, 2.5]))
 
                 let pts = (0..<n).map { i in
                     CGPoint(x: colCenter(i, width: sz.width), y: yFor(gains[i], height: sz.height))
                 }
 
-                // Fill — edges go straight down from first/last dot, not to midline
+                // Gradient fill — extends to full width at the edge dot heights
+                // Left: horizontal run from x=0 at pts[0].y; right: run to x=width at pts[n-1].y
+                let maxGain = gains.map { abs($0) }.max() ?? 0
+                let fillOp  = Double(0.25 + (maxGain / 12.0) * 0.40)
                 var fill = Path()
-                fill.move(to: CGPoint(x: pts[0].x, y: sz.height))
-                fill.addLine(to: pts[0])
+                fill.move(to: CGPoint(x: 0, y: sz.height))
+                fill.addLine(to: CGPoint(x: 0, y: pts[0].y))          // left edge at first gain
+                fill.addLine(to: pts[0])                                // horizontal to first dot
                 for i in 1..<n {
-                    let ctrl = colW * 0.4
                     fill.addCurve(to: pts[i],
                         control1: CGPoint(x: pts[i-1].x + ctrl, y: pts[i-1].y),
                         control2: CGPoint(x: pts[i].x   - ctrl, y: pts[i].y))
                 }
-                fill.addLine(to: CGPoint(x: pts[n-1].x, y: sz.height))
+                fill.addLine(to: CGPoint(x: sz.width, y: pts[n-1].y)) // horizontal from last dot
+                fill.addLine(to: CGPoint(x: sz.width, y: sz.height))   // right edge down
                 fill.closeSubpath()
-                ctx.fill(fill, with: .color(accent.opacity(0.18)))
+                let topY = pts.map(\.y).min() ?? labelH
+                ctx.fill(fill, with: .linearGradient(
+                    Gradient(stops: [
+                        .init(color: accent.opacity(fillOp), location: 0),
+                        .init(color: accent.opacity(0),      location: 1)
+                    ]),
+                    startPoint: CGPoint(x: sz.width / 2, y: min(topY, midY)),
+                    endPoint:   CGPoint(x: sz.width / 2, y: sz.height),
+                    options: []
+                ))
 
-                // Curve line
+                // Curve line — solid, also extended to full width at edge heights
                 var line = Path()
-                line.move(to: pts[0])
+                line.move(to: CGPoint(x: 0, y: pts[0].y))
+                line.addLine(to: pts[0])
                 for i in 1..<n {
-                    let ctrl = colW * 0.4
                     line.addCurve(to: pts[i],
                         control1: CGPoint(x: pts[i-1].x + ctrl, y: pts[i-1].y),
                         control2: CGPoint(x: pts[i].x   - ctrl, y: pts[i].y))
                 }
+                line.addLine(to: CGPoint(x: sz.width, y: pts[n-1].y))
                 ctx.stroke(line, with: .color(accent),
                            style: StrokeStyle(lineWidth: 1.5, lineCap: .round, lineJoin: .round))
 
@@ -590,7 +736,17 @@ private struct FXEQCurve: View {
                 }
                 .onEnded { _ in draggingBand = -1 }
             )
-            .onHover { isHovering = $0 }
+            .onContinuousHover { phase in
+                switch phase {
+                case .active(let loc):
+                    isHovering = true
+                    hoverBand  = bandFor(x: loc.x, width: size.width)
+                case .ended:
+                    isHovering = false
+                    hoverBand  = -1
+                }
+            }
+            .help(hoverBand >= 0 ? fxBandTooltips[hoverBand] : "")
         }
     }
 }
@@ -611,7 +767,8 @@ private struct FXDialRow: View {
                             get: { i < freqs.count ? freqs[i] : fxEQBandRanges[i].min },
                             set: { v in if i < freqs.count { freqs[i] = v } }
                         ),
-                        range: fxEQBandRanges[i]
+                        range: fxEQBandRanges[i],
+                        bandIndex: i
                     )
                     .frame(width: colW)
                 }
@@ -623,14 +780,30 @@ private struct FXDialRow: View {
 
 // MARK: - Frequency Dial
 
+private let fxBandTooltips: [String] = [
+    "Super-low Bass. Increase this for more rumble and \"thump\"; decrease it if there's too much boominess.",
+    "Center of Bass. Increase this for a fuller low end; decrease it if the bass sounds overwhelming.",
+    "Low-Mid Range. Increase this to make vocals sound rich and warm; decrease it to help control sources that sound loud and muffled.",
+    "Low-Mid Range Focal. Increase this to bring out electric strings and vocal volume; decrease it to reduce any \"boxy\" tones.",
+    "Center-Mid Range. Increase this to drastically boost rhythm sources and snare hits; decrease it to cut out \"nasal\" tones.",
+    "High-Mid Range. Increase this to get more harmonics; decrease it to improve beats that have too much \"clickiness\" or orchestral sources that are piercing.",
+    "Lower-High Range. Increase this for more vocal clarity and articulation; decrease it and move the frequency wheel up and down to find and cut out overly loud \"S\" and \"T\" sounds.",
+    "Center-High Range. Increase this to make your audio sound more like it's in an airy, large space; decrease it to help with room noises and unwanted echoing.",
+    "Highest Range. Increase this to give your sound more of a crisp tone, with lots of overtones; decrease it to remove hiss or painfully high sounds."
+]
+
+private let fxDialTooltip = "This wheel adjusts which frequencies this EQ band targets - up or down to reach different frequencies and pitches. The EQ slider above controls the gain of this band: increase to boost, decrease to cut a portion of your audio's frequencies without modifying the rest of your sound. Drag around the dial's perimeter to change."
+
 private struct FXFreqDial: View {
     @Binding var freq: Double
     let range: (min: Double, max: Double)
+    let bandIndex: Int
 
-    @State private var isHovered = false
-    @State private var dragging  = false
-    @State private var startY: CGFloat   = 0
-    @State private var startFreq: Double = 0
+    @State private var isHovered   = false
+    @State private var dragging    = false
+    // Circular drag: track the angle the user started at
+    @State private var dragStartAngle: Double = 0
+    @State private var dragStartFreq:  Double = 0
 
     @Environment(ThemeManager.self) private var theme
     @Environment(\.colorScheme) private var colorScheme
@@ -649,58 +822,97 @@ private struct FXFreqDial: View {
             : String(format: "%.0f Hz", freq)
     }
 
+    // Convert a drag point relative to dial center → angle in degrees [0, 360)
+    private func angleDeg(from point: CGPoint, center: CGPoint) -> Double {
+        let dx = point.x - center.x
+        let dy = point.y - center.y
+        let rad = atan2(dy, dx)
+        let deg = rad * 180 / .pi + 90   // 0° = top
+        return (deg + 360).truncatingRemainder(dividingBy: 360)
+    }
+
+    // Map an on-dial angle to a fraction within the sweep arc
+    private func fractionFor(angle: Double) -> Double? {
+        // Sweep starts at startDeg, ends at startDeg + sweepDeg (modulo 360)
+        // startDeg = 225°, endDeg = 495° = 135°
+        // We remap angle into [0, 360) relative to startDeg
+        var relative = (angle - Self.startDeg + 360).truncatingRemainder(dividingBy: 360)
+        // Clamp: if outside the sweep, reject (dragging into the gap)
+        if relative > Self.sweepDeg + 15 { return nil }
+        return (relative / Self.sweepDeg).clamped(0, 1)
+    }
+
     var body: some View {
         VStack(spacing: 2) {
-            Canvas { ctx, size in
-                let accent = theme.accentColor
-                let isDark = colorScheme == .dark
-                let cx = size.width/2, cy = size.height/2
-                let r  = min(cx, cy) - 1.5
+            GeometryReader { geo in
+                let sz   = geo.size
+                let cx   = sz.width / 2; let cy = sz.height / 2
                 let center = CGPoint(x: cx, y: cy)
-                let cs = Angle.degrees(Self.startDeg - 90)
-                let ce = Angle.degrees(Self.startDeg + Self.sweepDeg - 90)
-                let cc = Angle.degrees(indicatorDeg - 90)
 
-                var ghost = Path()
-                ghost.addArc(center: center, radius: r, startAngle: cs, endAngle: ce, clockwise: false)
-                ctx.stroke(ghost, with: .color(isDark ? Color.white.opacity(0.12) : Color.black.opacity(0.15)),
-                           style: StrokeStyle(lineWidth: 2, lineCap: .round))
+                Canvas { ctx, canvSz in
+                    let accent = theme.accentColor
+                    let isDark = colorScheme == .dark
+                    let r  = min(canvSz.width, canvSz.height) / 2 - 1.5
+                    let center = CGPoint(x: canvSz.width / 2, y: canvSz.height / 2)
+                    let cs = Angle.degrees(Self.startDeg - 90)
+                    let ce = Angle.degrees(Self.startDeg + Self.sweepDeg - 90)
+                    let cc = Angle.degrees(indicatorDeg - 90)
 
-                if fraction > 0.005 {
-                    var active = Path()
-                    active.addArc(center: center, radius: r, startAngle: cs, endAngle: cc, clockwise: false)
-                    ctx.stroke(active, with: .color(accent),
+                    var ghost = Path()
+                    ghost.addArc(center: center, radius: r, startAngle: cs, endAngle: ce, clockwise: false)
+                    ctx.stroke(ghost, with: .color(isDark ? Color.white.opacity(0.12) : Color.black.opacity(0.15)),
                                style: StrokeStyle(lineWidth: 2, lineCap: .round))
-                }
 
-                let rad = (indicatorDeg - 90) * .pi / 180
-                let dotX = cx + r * CGFloat(cos(rad))
-                let dotY = cy + r * CGFloat(sin(rad))
-                let dotR: CGFloat = isHovered || dragging ? 3.5 : 2.5
-                ctx.fill(Path(ellipseIn: CGRect(x: dotX-dotR, y: dotY-dotR,
-                                                width: dotR*2, height: dotR*2)),
-                         with: .color(accent))
+                    if fraction > 0.005 {
+                        var active = Path()
+                        active.addArc(center: center, radius: r, startAngle: cs, endAngle: cc, clockwise: false)
+                        ctx.stroke(active, with: .color(accent),
+                                   style: StrokeStyle(lineWidth: 2, lineCap: .round))
+                    }
 
-                if isHovered || dragging {
-                    let lbl = freq >= 1000
-                        ? String(format: "%.1fk", freq/1000)
-                        : String(format: "%.0f", freq)
-                    ctx.draw(Text(lbl).font(.system(size: 6, weight: .semibold))
-                                      .foregroundColor(isDark ? .white : .black),
-                             at: center, anchor: .center)
+                    let rad  = (indicatorDeg - 90) * .pi / 180
+                    let dotX = center.x + r * CGFloat(cos(rad))
+                    let dotY = center.y + r * CGFloat(sin(rad))
+                    let dotR: CGFloat = isHovered || dragging ? 3.5 : 2.5
+                    ctx.fill(Path(ellipseIn: CGRect(x: dotX-dotR, y: dotY-dotR,
+                                                    width: dotR*2, height: dotR*2)),
+                             with: .color(accent))
+
+                    if isHovered || dragging {
+                        let lbl = freq >= 1000
+                            ? String(format: "%.1fk", freq/1000)
+                            : String(format: "%.0f", freq)
+                        ctx.draw(Text(lbl).font(.system(size: 6, weight: .semibold))
+                                          .foregroundColor(isDark ? .white : .black),
+                                 at: center, anchor: .center)
+                    }
                 }
+                .frame(width: 28, height: 28)
+                .position(x: cx, y: cy)
+                .contentShape(Circle())
+                // Circular drag — coordinateSpace: .local gives coords in the 28×28 canvas frame
+                .gesture(DragGesture(minimumDistance: 0, coordinateSpace: .local)
+                    .onChanged { drag in
+                        let dialCenter = CGPoint(x: 14, y: 14)
+                        if !dragging {
+                            dragging = true
+                            dragStartAngle = angleDeg(from: drag.startLocation, center: dialCenter)
+                            dragStartFreq  = freq
+                        }
+                        let currentAngle = angleDeg(from: drag.location, center: dialCenter)
+                        var deltaAngle = currentAngle - dragStartAngle
+                        if deltaAngle >  180 { deltaAngle -= 360 }
+                        if deltaAngle < -180 { deltaAngle += 360 }
+                        let deltaFrac = deltaAngle / Self.sweepDeg
+                        let startFrac = ((dragStartFreq - range.min) / max(1, range.max - range.min)).clamped(0, 1)
+                        let newFrac   = (startFrac + deltaFrac).clamped(0, 1)
+                        freq = (range.min + newFrac * (range.max - range.min)).clamped(range.min, range.max)
+                    }
+                    .onEnded { _ in dragging = false }
+                )
+                .onHover { isHovered = $0 }
             }
-            .frame(width: 24, height: 24)
-            .contentShape(Circle())
-            .gesture(DragGesture(minimumDistance: 0)
-                .onChanged { drag in
-                    if !dragging { dragging = true; startY = drag.startLocation.y; startFreq = freq }
-                    freq = (startFreq + Double(startY - drag.location.y) * (range.max - range.min) / 120)
-                        .clamped(range.min, range.max)
-                }
-                .onEnded { _ in dragging = false }
-            )
-            .onHover { isHovered = $0 }
+            .frame(width: 28, height: 28)
 
             Text(freqLabel)
                 .font(.system(size: 7))
@@ -710,6 +922,7 @@ private struct FXFreqDial: View {
                 .minimumScaleFactor(0.7)
         }
         .frame(maxWidth: .infinity)
+        .help(fxDialTooltip)
     }
 }
 

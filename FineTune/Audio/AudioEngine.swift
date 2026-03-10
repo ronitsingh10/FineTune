@@ -16,6 +16,12 @@ final class AudioEngine {
     // Global FX settings — stored property so @Observable tracks changes
     var fxSettings: FXSettings = FXSettings()
 
+    // Software volume/mute keyed by device UID — @Observable so the UI re-renders on change.
+    // This is the single source of truth for display; DeviceVolumeMonitor.softwareVolumes
+    // is a session-local AudioDeviceID cache used only by the audio render path.
+    var softwareVolumesByUID: [String: Float] = [:]
+    var softwareMutesByUID: [String: Bool] = [:]
+
     #if !APP_STORE
     let ddcController: DDCController
     #endif
@@ -61,10 +67,12 @@ final class AudioEngine {
     /// Devices without volume control still appear in the list but without slider/mute UI.
     func hasVolumeControl(for deviceID: AudioDeviceID) -> Bool {
         #if !APP_STORE
-        // Before DDC probe completes, assume all devices have volume control
-        // to avoid premature hiding of controls on monitors that may be DDC-backed
-        if !ddcController.probeCompleted { return true }
-        return deviceID.hasOutputVolumeControl() || ddcController.isDDCBacked(deviceID)
+        // If the device already has native hardware volume, always true.
+        if deviceID.hasOutputVolumeControl() { return true }
+        // If probe hasn't finished yet, a monitor *might* still be DDC-backed — wait.
+        if !ddcController.probeCompleted { return false }
+        // Probe done: true only if DDC-backed.
+        return ddcController.isDDCBacked(deviceID)
         #else
         return deviceID.hasOutputVolumeControl()
         #endif
@@ -196,6 +204,18 @@ final class AudioEngine {
             ddc.start()
             #endif
 
+            // Load persisted software volumes BEFORE deviceVolumeMonitor.start() so
+            // softwareVolumes is already seeded when the first SwiftUI render happens.
+            // deviceMonitor.start() (above) populates outputDevices synchronously,
+            // so this is safe to call here.
+            deviceVolumeMonitor.loadSoftwareVolumes(from: manager, deviceMonitor: deviceMonitor)
+
+            // Seed the UID-keyed observable dicts used by the UI
+            for device in deviceMonitor.outputDevices {
+                softwareVolumesByUID[device.uid] = manager.getSoftwareVolume(for: device.uid)
+                softwareMutesByUID[device.uid] = manager.getSoftwareMute(for: device.uid)
+            }
+
             // Start device volume monitor AFTER deviceMonitor.start() populates devices
             // This fixes the race condition where volumes were read before devices existed
             deviceVolumeMonitor.start()
@@ -227,9 +247,6 @@ final class AudioEngine {
 
             // Propagate software gain changes to all taps handled by SoftwareGainStore directly
 
-            // Load persisted software volumes for devices already present
-            deviceVolumeMonitor.loadSoftwareVolumes(from: manager, deviceMonitor: deviceMonitor)
-
             // Seed SoftwareGainStore from persisted values so the render callback
             // immediately has the right gain even before any UI interaction.
             // Apply to ALL devices that have a stored software volume — this covers both
@@ -245,8 +262,8 @@ final class AudioEngine {
                 }
             }
 
-            // Seed fxSettings from persisted value
-            fxSettings = manager.getFXSettings()
+            // Seed fxSettings from persisted value (System Audio slot)
+            fxSettings = manager.getFXSettings(for: nil)
 
             processMonitor.onAppsChanged = { [weak self] _ in
                 self?.cleanupStaleTaps()
@@ -294,10 +311,12 @@ final class AudioEngine {
 
             // Start volume key interceptor — redirects knob/F11/F12 to software gain
             // for HDMI devices that expose no hardware kAudioDevicePropertyVolumeScalar.
-            // No permissions required; falls back gracefully on hardware-volume devices.
+            // Uses CGEventTap (requires accessibility) to suppress the hollow system OSD;
+            // falls back to NSEvent monitors if accessibility is not granted.
             let interceptor = VolumeKeyInterceptor(audioEngine: self)
             interceptor.start()
             self.volumeKeyInterceptor = interceptor
+
         }
     }
 
@@ -507,15 +526,83 @@ final class AudioEngine {
     }
 
     /// Update EQ settings for an app
-    // MARK: - FX Settings (global, applied to all taps)
+    // MARK: - FX Settings (per-device)
 
-    /// Update global FX settings — persists and propagates to all active taps.
+    /// The device UID currently being edited in the FX panel (nil = System Audio).
+    var fxEditingUID: String? { settingsManager.getFXEditingUID() }
+
+    /// FX settings for the currently editing device — what the panel displays.
+    var fxSettingsForEditing: FXSettings { settingsManager.getFXSettings(for: fxEditingUID) }
+
+    /// Save edited FX settings for the current editing target and re-apply to matching taps.
+    /// In multi mode, writes to all selected device UIDs simultaneously.
     func setFXSettings(_ settings: FXSettings) {
-        fxSettings = settings
-        settingsManager.setFXSettings(settings)
-        for (_, tap) in taps {
-            tap.updateFXSettings(settings)
+        fxSettings = settings   // keep observable var in sync for spectrum view
+        if fxDeviceMode == .multi {
+            // Apply the same settings to every selected device
+            for uid in fxSelectedDeviceUIDs {
+                settingsManager.setFXSettings(settings, for: uid)
+            }
+        } else {
+            settingsManager.setFXSettings(settings, for: fxEditingUID)
         }
+        applyFXToAllTaps()
+    }
+
+    /// Apply the correct per-device FX settings to every active tap.
+    /// Each tap gets the settings for its own device UID; falls back to System Audio settings.
+    func applyFXToAllTaps() {
+        for (_, tap) in taps {
+            tap.updateFXSettings(fxSettingsForTap(tap))
+        }
+    }
+
+    /// Returns the FX settings that should be active on a given tap.
+    /// Uses the first device UID that has its own persisted slot; falls back to System Audio.
+    private func fxSettingsForTap(_ tap: ProcessTapController) -> FXSettings {
+        for uid in tap.currentDeviceUIDs {
+            if settingsManager.hasFXSettings(for: uid) {
+                return settingsManager.getFXSettings(for: uid)
+            }
+        }
+        return settingsManager.getFXSettings(for: nil)
+    }
+
+    // MARK: - FX Device Routing
+
+    var fxDeviceMode: DeviceSelectionMode { settingsManager.getFXDeviceMode() }
+    var fxDeviceUID: String?              { settingsManager.getFXDeviceUID() }
+    var fxSelectedDeviceUIDs: Set<String> { settingsManager.getFXSelectedDeviceUIDs() }
+    var fxFollowsDefault: Bool            { settingsManager.isFXFollowingDefault() }
+
+    /// Switch the editing target to a specific device and update routing.
+    func setFXDevice(_ uid: String) {
+        settingsManager.setFXEditingUID(uid)
+        settingsManager.setFXDeviceUID(uid)
+        settingsManager.setFXDeviceMode(.single)
+        fxSettings = settingsManager.getFXSettings(for: uid)
+    }
+
+    /// Switch back to System Audio editing and routing.
+    func setFXFollowDefault() {
+        settingsManager.setFXEditingUID(nil)
+        settingsManager.setFXDeviceUID(nil)
+        settingsManager.setFXDeviceMode(.single)
+        fxSettings = settingsManager.getFXSettings(for: nil)
+    }
+
+    /// Switch to multi-device mode.
+    func setFXDeviceMode(_ mode: DeviceSelectionMode) {
+        settingsManager.setFXDeviceMode(mode)
+        if mode == .single {
+            settingsManager.setFXEditingUID(fxDeviceUID)
+        }
+    }
+
+    /// Update selected device UIDs in multi mode.
+    func setFXSelectedDeviceUIDs(_ uids: Set<String>) {
+        settingsManager.setFXSelectedDeviceUIDs(uids)
+        applyFXToAllTaps()
     }
 
     func setEQSettings(_ settings: EQSettings, for app: AudioApp) {
@@ -532,8 +619,14 @@ final class AudioEngine {
     // MARK: - Software Volume (for devices without hardware volume control)
 
     /// Returns the current software volume (0.0–1.0) for a device.
+    /// Reads from the live in-memory dict first; falls back to persisted value so that
+    /// devices which haven't fired their reconnect callback yet still show correctly.
     func getSoftwareVolume(for device: AudioDevice) -> Float {
-        deviceVolumeMonitor.softwareVolumes[device.id] ?? 1.0
+        if let v = deviceVolumeMonitor.softwareVolumes[device.id] { return v }
+        // Fallback: seed from persisted value and update in-memory dict
+        let persisted = settingsManager.getSoftwareVolume(for: device.uid)
+        deviceVolumeMonitor.updateSoftwareVolume(persisted, for: device.id)
+        return persisted
     }
 
     /// Sets the device-level software gain. Writes to SoftwareGainStore (read at render
@@ -545,6 +638,8 @@ final class AudioEngine {
         deviceVolumeMonitor.updateSoftwareVolume(clamped, for: device.id)
         let isMuted = deviceVolumeMonitor.softwareMuteStates[device.id] ?? false
         SoftwareGainStore.setGain(isMuted ? 0.0 : clamped, for: device.uid)
+        softwareVolumesByUID[device.uid] = clamped   // triggers @Observable re-render
+        SoftwareVolumeHUD.shared.show(volume: clamped, isMuted: isMuted, deviceName: device.name)
     }
 
     /// Returns the software mute state for a device.
@@ -558,7 +653,11 @@ final class AudioEngine {
         deviceVolumeMonitor.updateSoftwareMute(muted, for: device.id)
         let vol = deviceVolumeMonitor.softwareVolumes[device.id] ?? 1.0
         SoftwareGainStore.setGain(muted ? 0.0 : vol, for: device.uid)
+        softwareMutesByUID[device.uid] = muted       // triggers @Observable re-render
+        SoftwareVolumeHUD.shared.show(volume: vol, isMuted: muted, deviceName: device.name)
     }
+
+
 
     /// Sets the output device for an app.
     /// - Parameters:
@@ -731,7 +830,7 @@ final class AudioEngine {
             // Load and apply persisted EQ settings
             let eqSettings = settingsManager.getEQSettings(for: app.persistenceIdentifier)
             tap.updateEQSettings(eqSettings)
-            tap.updateFXSettings(fxSettings)
+            tap.updateFXSettings(fxSettingsForTap(tap))
 
             logger.debug("Created tap for \(app.name) on \(deviceUIDs.count) device(s)")
         } catch {
@@ -850,7 +949,7 @@ final class AudioEngine {
             // Load and apply persisted EQ settings
             let eqSettings = settingsManager.getEQSettings(for: app.persistenceIdentifier)
             tap.updateEQSettings(eqSettings)
-            tap.updateFXSettings(fxSettings)
+            tap.updateFXSettings(fxSettingsForTap(tap))
 
             logger.debug("Created tap for \(app.name)")
         } catch {
@@ -1072,6 +1171,9 @@ final class AudioEngine {
     private func handleDefaultDeviceChanged(_ newDefaultUID: String) {
         let oldDefaultUID = lastKnownDefaultDeviceUID
         lastKnownDefaultDeviceUID = newDefaultUID
+
+        // Keep the SW-device flag current so the CGEventTap can read it without actor isolation
+        volumeKeyInterceptor?.updateSoftwareDeviceFlag()
 
         // Suppress echo from our own priority-based override (UID match only)
         if pendingPriorityOverrideUIDs.remove(newDefaultUID) != nil {

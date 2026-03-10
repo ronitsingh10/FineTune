@@ -10,7 +10,14 @@ private let logger = Logger(subsystem: "com.finetuneapp.FineTune", category: "Ap
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     var audioEngine: AudioEngine?
-    
+
+    func applicationWillTerminate(_ notification: Notification) {
+        // Flush settings synchronously so debounced saves aren't lost on quit.
+        // This is the single, authoritative flush path — driven by the delegate
+        // which holds the same AudioEngine instance that the UI writes through.
+        audioEngine?.settingsManager.flushSync()
+    }
+
     func application(_ application: NSApplication, open urls: [URL]) {
         guard let audioEngine = audioEngine else {
             return
@@ -118,14 +125,8 @@ struct FineTuneApp: App {
             // If not granted, notifications will silently not appear - acceptable behavior
         }
 
-        // Flush settings on app termination to prevent data loss from debounced saves
-        NotificationCenter.default.addObserver(
-            forName: NSApplication.willTerminateNotification,
-            object: nil,
-            queue: .main
-        ) { [settings] _ in
-            settings.flushSync()
-        }
+        // Settings flush on termination is handled by AppDelegate.applicationWillTerminate
+        // to avoid multiple observers firing if FineTuneApp.init() is called more than once.
     }
 }
 

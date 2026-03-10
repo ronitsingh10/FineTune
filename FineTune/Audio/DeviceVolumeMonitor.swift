@@ -394,8 +394,9 @@ final class DeviceVolumeMonitor {
     /// Loads persisted software volumes from SettingsManager for all currently known devices.
     /// Call after device list is populated.
     func loadSoftwareVolumes(from settingsManager: SettingsManager, deviceMonitor: AudioDeviceMonitor) {
+        // Seed ALL output devices so the UI always has an initial value to display.
+        // Hardware-volume devices default to 1.0 unless an explicit override was saved.
         for device in deviceMonitor.outputDevices {
-            guard !device.id.hasOutputVolumeControl() else { continue }
             let vol = settingsManager.getSoftwareVolume(for: device.uid)
             let muted = settingsManager.getSoftwareMute(for: device.uid)
             softwareVolumes[device.id] = vol
