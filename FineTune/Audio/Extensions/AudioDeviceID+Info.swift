@@ -53,11 +53,3 @@ extension AudioObjectID {
         try? readString(kAudioProcessPropertyBundleID)
     }
 }
-
-// MARK: - Audio Tap
-
-extension AudioObjectID {
-    func readAudioTapStreamBasicDescription() throws -> AudioStreamBasicDescription {
-        try read(kAudioTapPropertyFormat, defaultValue: AudioStreamBasicDescription())
-    }
-}

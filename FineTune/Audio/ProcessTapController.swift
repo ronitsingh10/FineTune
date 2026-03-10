@@ -906,12 +906,6 @@ final class ProcessTapController {
                 eq.process(input: outputSamples, output: outputSamples, frameCount: frameCount)
             }
 
-            // Per-device AutoEQ correction (after per-app EQ)
-            let autoEQ = autoEQProcessor
-            if let autoEQ, autoEQ.isEnabled, eqCanProcessStereoInterleaved, !crossfadeState.isActive {
-                autoEQ.process(input: outputSamples, output: outputSamples, frameCount: frameCount)
-            }
-
             let writtenSampleCount = frameCount * outputChannels
             SoftLimiter.processBuffer(outputSamples, sampleCount: writtenSampleCount)
         }
