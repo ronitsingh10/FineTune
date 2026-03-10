@@ -38,6 +38,8 @@ final class AudioProcessMonitor {
         "com.apple.CoreSpeech",
         "com.apple.VoiceControl",
         "com.apple.voicecontrol",
+        "com.apple.FaceTime",
+        "com.apple.avconference",
     ]
 
     /// Process names for system daemons (fallback when bundle ID is nil or different format)
@@ -49,6 +51,8 @@ final class AudioProcessMonitor {
         "speechrecognitiond",
         "dictationd",
         "corespeech",
+        "FaceTime",
+        "avconferenced",
     ]
 
     /// Returns true if the bundle ID or process name indicates a system daemon that should be filtered
