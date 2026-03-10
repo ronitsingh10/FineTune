@@ -13,40 +13,35 @@
 
 
 ## Features
-
+- **Device priority** — Set preferred output order; auto-fallback on disconnect
+- **Input device control** — Monitor and adjust microphone levels
+- **Pinned apps** — Pre-configure apps before they play
+- **Audio routing** — Send apps to different outputs or follow system default
 - **Per-app volume** — Individual sliders and mute for each application
 - **Multi-device output** — Route audio to multiple devices simultaneously
 - **SW Volume control for devices w/o HW control** — Monitor and adjust volume levels of devices w/o hardware mgmt, via SW
-- **Input device control** — Monitor and adjust microphone levels
+- **Monitor speaker control** — Adjust volume on external displays via DDC
+- **Volume boost** — Amplify up to 400%
 - **Sound Enhancements** — Per-device and system-wide Clarity, Ambience, Surround Sound, Dynamic Boost, Bass Boost with stackable layering
 - **Variable 9-band system-wide EQ** — 13 presets, stackable per-device
 - **Fixed 10-band per app EQ** — 20 presets across 5 categories
 - **Visualiser** — Sound activity monitor
-- **Pinned apps** — Pre-configure apps before they play
-- **Audio routing** — Send apps to different outputs or follow system default
-- **Monitor speaker control** — Adjust volume on external displays via DDC
-- **Device priority** — Set preferred output order; auto-fallback on disconnect
-- **Volume boost** — Amplify up to 400%
-- **Menu bar app** — Lightweight, always accessible
-- **URL schemes** — Automate volume, mute, device routing, and more from scripts
 - **Colour schemes** — Light mode, dark mode, hi/lo-contrast, primary colour picker
+- **URL schemes** — Automate volume, mute, device routing, and more from scripts
+- **Menu bar app** — Lightweight, always accessible
 
-## Install
-
-**Homebrew** (recommended)
-
-```bash
-brew install --cask finetune
-```
-
-## Why FineTune?
-
-macOS has no built-in per-app volume control. Your music is too loud while a podcast is too quiet. FineTune fixes that:
-
+## Why FineTuneFX?
+macOS has no built-in per-app volume control, and no way to shape how your system sounds. FineTuneFX fixes that:
 - Turn down notifications without touching your music
-- Play different apps on different speakers
+- Route different apps to different speakers
 - Boost quiet apps, tame loud ones
+- Control devices that macOS can't — like HDMI TVs with no hardware volume
+- Shape your sound with per-device and system-wide EQ, presets, and stackable effects
+- Visualise audio activity in real time
+- Fully themeable with light, dark, and high-contrast modes
 - Free forever, no subscriptions
+
+FineTuneFX is a fork of [FineTune](https://github.com/ronitsingh10/FineTune), extended and vibe-coded with Claude, with features from [fxSound](https://github.com/fxsound2/fxsound-app).
 
 ## Requirements
 
@@ -72,7 +67,8 @@ Grant microphone permission in System Settings → Privacy & Security → Microp
 
 ## URL Schemes
 
-Control FineTune from Terminal, shell scripts, [Shortcuts](https://support.apple.com/guide/shortcuts-mac), [Raycast](https://raycast.com), or any app that can open URLs.
+Control FineTuneFX from Terminal, shell scripts, [Shortcuts](https://support.apple.com/guide/shortcuts-mac), [Raycast](https://raycast.com), or any app that can open URLs.
+Editor's note: This is a legacy feature from FineTune and has not been tested for FineTuneFX
 
 ### Actions
 
@@ -130,16 +126,10 @@ osascript -e 'id of app "App Name"'
 **Device UIDs** — In FineTune, click the pencil icon to enter edit mode, then click the copy button next to a device name to copy its UID.
 </details>
 
-## Contributing
-
-- ⭐ **Star this repo** — Help others discover FineTune
-- 🐛 **Report bugs** — [Open an issue](https://github.com/ronitsingh10/FineTune/issues)
-- 💻 **Contribute code** — See [CONTRIBUTING.md](CONTRIBUTING.md)
-
 ## Build from Source
 
 ```bash
-git clone https://github.com/ronitsingh10/FineTune.git
+git clone https://github.com/theislampill/FineTuneFX.git
 cd FineTune
 open FineTune.xcodeproj
 ```
