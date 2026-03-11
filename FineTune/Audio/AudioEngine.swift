@@ -501,7 +501,6 @@ final class AudioEngine {
         processMonitor.start()
         deviceMonitor.start()
         applyPersistedSettings()
-        startHealthMonitor()
 
         // Restore locked input device if feature is enabled
         if settingsManager.appSettings.lockInputDevice {
@@ -512,7 +511,6 @@ final class AudioEngine {
     }
 
     func stop() {
-        stopHealthMonitor()
         processMonitor.stop()
         deviceMonitor.stop()
         for tap in taps.values {
