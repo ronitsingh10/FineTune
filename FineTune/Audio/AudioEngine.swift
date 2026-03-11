@@ -1155,7 +1155,6 @@ final class AudioEngine {
                         tap.currentDeviceVolume = self.deviceVolumeMonitor.volumes[device.id] ?? 1.0
                         tap.isDeviceMuted = self.deviceVolumeMonitor.muteStates[device.id] ?? false
                     }
-                    self.applyAutoEQToTap(tap)
                 } catch {
                     self.logger.error("Failed to switch \(app.name) to \(targetUID): \(error.localizedDescription)")
                 }
