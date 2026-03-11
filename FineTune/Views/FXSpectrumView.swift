@@ -85,8 +85,11 @@ final class SpectrumCoordinator {
 
         let ctx = Unmanaged.passRetained(self)
         CVDisplayLinkSetOutputCallback(dl, { _, _, _, _, _, raw in
-            Unmanaged<SpectrumCoordinator>.fromOpaque(raw!)
-                .takeUnretainedValue().tick()
+            let coordinator = Unmanaged<SpectrumCoordinator>.fromOpaque(raw!).takeUnretainedValue()
+            // Ensure we only touch @MainActor state (AudioEngine/@Observable) on main.
+            DispatchQueue.main.async {
+                coordinator.tickOnMain()
+            }
             return kCVReturnSuccess
         }, ctx.toOpaque())
 
@@ -102,7 +105,8 @@ final class SpectrumCoordinator {
 
     private var frameSkip = false
 
-    private func tick() {
+    @MainActor
+    private func tickOnMain() {
         guard isConfigured else { return }  // don't render before theme colour is set
         frameSkip.toggle()
         guard !frameSkip else { return }   // ~30 fps
@@ -115,15 +119,15 @@ final class SpectrumCoordinator {
 
         // FxSound scrolling-history update:
         // shift each half outward and insert newest sample at center.
-            for band in 0..<Self.numBands {
-                let base = band * N
-                let inVal = rawBands[band]
-                let newVal: Float
-                if inVal.isNaN || !inVal.isFinite {
-                    newVal = 0
-                } else {
-                    newVal = min(1, max(0, inVal))
-                }
+        for band in 0..<Self.numBands {
+            let base = band * N
+            let inVal = band < rawBands.count ? rawBands[band] : 0
+            let newVal: Float
+            if inVal.isNaN || !inVal.isFinite {
+                newVal = 0
+            } else {
+                newVal = min(1, max(0, inVal))
+            }
 
             for j in 0..<half {
                 let src = bandGraph[base + j + 1]
@@ -136,9 +140,7 @@ final class SpectrumCoordinator {
         let snap = bandGraph
         let r = cr; let g = cg; let b = cb
         let en = enabled
-        DispatchQueue.main.async { [weak view] in
-            view?.refresh(bandGraph: snap, r: r, g: g, b: b, enabled: en)
-        }
+        view?.refresh(bandGraph: snap, r: r, g: g, b: b, enabled: en)
     }
 }
 
