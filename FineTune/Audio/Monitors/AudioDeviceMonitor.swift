@@ -22,6 +22,11 @@ final class AudioDeviceMonitor {
     /// Called when an output device appears (passes UID and name)
     var onDeviceConnected: ((_ uid: String, _ name: String) -> Void)?
 
+    /// Called when an existing output device transitions from not-alive to alive (passes UID and name).
+    /// This handles devices like wireless headsets whose USB base station is present in CoreAudio
+    /// but only become alive when the headset powers on.
+    var onDeviceBecameAlive: ((_ uid: String, _ name: String) -> Void)?
+
     // MARK: - Input Devices
 
     private(set) var inputDevices: [AudioDevice] = []
@@ -37,6 +42,9 @@ final class AudioDeviceMonitor {
 
     /// Called when an input device appears (passes UID and name)
     var onInputDeviceConnected: ((_ uid: String, _ name: String) -> Void)?
+
+    /// Called when an existing input device transitions from not-alive to alive.
+    var onInputDeviceBecameAlive: ((_ uid: String, _ name: String) -> Void)?
 
     /// Returns current output device priority order (highest priority first) for deterministic callback ordering
     var outputPriorityOrder: (() -> [String])?
@@ -58,6 +66,18 @@ final class AudioDeviceMonitor {
 
     /// Listeners for kAudioDevicePropertyDataSource changes on built-in devices (headphone jack detection)
     @ObservationIgnored private var dataSourceListeners: [AudioDeviceID: AudioObjectPropertyListenerBlock] = [:]
+
+    /// Listeners for kAudioDevicePropertyDeviceIsAlive changes on output devices
+    @ObservationIgnored private var aliveListeners: [AudioDeviceID: AudioObjectPropertyListenerBlock] = [:]
+
+    /// Tracks which output devices were alive at last check, to detect not-alive → alive transitions
+    @ObservationIgnored private var aliveStateByDeviceID: [AudioDeviceID: Bool] = [:]
+
+    /// Listeners for kAudioDevicePropertyDeviceIsAlive changes on input devices
+    @ObservationIgnored private var inputAliveListeners: [AudioDeviceID: AudioObjectPropertyListenerBlock] = [:]
+
+    /// Tracks which input devices were alive at last check
+    @ObservationIgnored private var inputAliveStateByDeviceID: [AudioDeviceID: Bool] = [:]
 
     func start() {
         guard deviceListListenerBlock == nil else { return }
@@ -92,6 +112,8 @@ final class AudioDeviceMonitor {
             deviceListListenerBlock = nil
         }
         removeAllDataSourceListeners()
+        removeAllAliveListeners()
+        removeAllInputAliveListeners()
     }
 
     /// O(1) lookup by device UID (output devices)
@@ -182,6 +204,8 @@ final class AudioDeviceMonitor {
             inputDevicesByID = Dictionary(uniqueKeysWithValues: inputDevices.map { ($0.id, $0) })
 
             syncDataSourceListeners(outputDeviceIDs: outputDeviceList.map(\.id))
+            syncAliveListeners(outputDeviceIDs: outputDeviceList.map(\.id))
+            syncInputAliveListeners(inputDeviceIDs: inputDeviceList.map(\.id))
 
         } catch {
             logger.error("Failed to refresh device list: \(error.localizedDescription)")
@@ -234,6 +258,141 @@ final class AudioDeviceMonitor {
         for deviceID in dataSourceListeners.keys {
             removeDataSourceListener(for: deviceID)
         }
+    }
+
+    // MARK: - Device Alive State Listeners
+
+    /// Installs/removes kAudioDevicePropertyDeviceIsAlive listeners on output devices
+    /// so that devices which become alive after appearing (e.g., wireless headset base stations)
+    /// trigger a priority re-evaluation.
+    private func syncAliveListeners(outputDeviceIDs: [AudioDeviceID]) {
+        let currentDeviceIDs = Set(outputDeviceIDs)
+        let trackedIDs = Set(aliveListeners.keys)
+
+        // Remove listeners for devices no longer present
+        for deviceID in trackedIDs.subtracting(currentDeviceIDs) {
+            removeAliveListener(for: deviceID)
+            aliveStateByDeviceID.removeValue(forKey: deviceID)
+        }
+
+        // Add listeners for new devices and snapshot their alive state
+        for deviceID in currentDeviceIDs.subtracting(trackedIDs) {
+            aliveStateByDeviceID[deviceID] = deviceID.isDeviceAlive()
+
+            var address = AudioObjectPropertyAddress(
+                mSelector: kAudioDevicePropertyDeviceIsAlive,
+                mScope: kAudioObjectPropertyScopeGlobal,
+                mElement: kAudioObjectPropertyElementMain
+            )
+            let block: AudioObjectPropertyListenerBlock = { [weak self] inObjectID, _ in
+                Task { @MainActor [weak self] in
+                    self?.handleAliveStateChanged(for: inObjectID)
+                }
+            }
+            let status = AudioObjectAddPropertyListenerBlock(deviceID, &address, .main, block)
+            if status == noErr {
+                aliveListeners[deviceID] = block
+            } else {
+                logger.warning("Failed to add alive listener for device \(deviceID): \(status)")
+            }
+        }
+    }
+
+    private func handleAliveStateChanged(for deviceID: AudioDeviceID) {
+        let isAlive = deviceID.isDeviceAlive()
+        let wasAlive = aliveStateByDeviceID[deviceID] ?? false
+        aliveStateByDeviceID[deviceID] = isAlive
+
+        // Only act on not-alive → alive transitions
+        guard isAlive && !wasAlive else { return }
+
+        guard let uid = devicesByID[deviceID]?.uid,
+              let name = devicesByID[deviceID]?.name else { return }
+
+        logger.info("Output device became alive: \(name) (\(uid))")
+        onDeviceBecameAlive?(uid, name)
+    }
+
+    private func removeAliveListener(for deviceID: AudioDeviceID) {
+        guard let block = aliveListeners.removeValue(forKey: deviceID) else { return }
+        var address = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyDeviceIsAlive,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        AudioObjectRemovePropertyListenerBlock(deviceID, &address, .main, block)
+    }
+
+    private func removeAllAliveListeners() {
+        for deviceID in aliveListeners.keys {
+            removeAliveListener(for: deviceID)
+        }
+        aliveStateByDeviceID.removeAll()
+    }
+
+    // MARK: - Input Device Alive State Listeners
+
+    private func syncInputAliveListeners(inputDeviceIDs: [AudioDeviceID]) {
+        let currentDeviceIDs = Set(inputDeviceIDs)
+        let trackedIDs = Set(inputAliveListeners.keys)
+
+        for deviceID in trackedIDs.subtracting(currentDeviceIDs) {
+            removeInputAliveListener(for: deviceID)
+            inputAliveStateByDeviceID.removeValue(forKey: deviceID)
+        }
+
+        for deviceID in currentDeviceIDs.subtracting(trackedIDs) {
+            inputAliveStateByDeviceID[deviceID] = deviceID.isDeviceAlive()
+
+            var address = AudioObjectPropertyAddress(
+                mSelector: kAudioDevicePropertyDeviceIsAlive,
+                mScope: kAudioObjectPropertyScopeGlobal,
+                mElement: kAudioObjectPropertyElementMain
+            )
+            let block: AudioObjectPropertyListenerBlock = { [weak self] inObjectID, _ in
+                Task { @MainActor [weak self] in
+                    self?.handleInputAliveStateChanged(for: inObjectID)
+                }
+            }
+            let status = AudioObjectAddPropertyListenerBlock(deviceID, &address, .main, block)
+            if status == noErr {
+                inputAliveListeners[deviceID] = block
+            } else {
+                logger.warning("Failed to add input alive listener for device \(deviceID): \(status)")
+            }
+        }
+    }
+
+    private func handleInputAliveStateChanged(for deviceID: AudioDeviceID) {
+        let isAlive = deviceID.isDeviceAlive()
+        let wasAlive = inputAliveStateByDeviceID[deviceID] ?? false
+        inputAliveStateByDeviceID[deviceID] = isAlive
+
+        // Only act on not-alive → alive transitions
+        guard isAlive && !wasAlive else { return }
+
+        guard let uid = inputDevicesByID[deviceID]?.uid,
+              let name = inputDevicesByID[deviceID]?.name else { return }
+
+        logger.info("Input device became alive: \(name) (\(uid))")
+        onInputDeviceBecameAlive?(uid, name)
+    }
+
+    private func removeInputAliveListener(for deviceID: AudioDeviceID) {
+        guard let block = inputAliveListeners.removeValue(forKey: deviceID) else { return }
+        var address = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyDeviceIsAlive,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        AudioObjectRemovePropertyListenerBlock(deviceID, &address, .main, block)
+    }
+
+    private func removeAllInputAliveListeners() {
+        for deviceID in inputAliveListeners.keys {
+            removeInputAliveListener(for: deviceID)
+        }
+        inputAliveStateByDeviceID.removeAll()
     }
 
     /// Sorts UIDs by priority order: UIDs in the priority list come first (in priority order),
