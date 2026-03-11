@@ -100,6 +100,8 @@ final class DeviceVolumeMonitor {
     /// Flag to control the recursive observation loop
     private var isObservingDeviceList = false
     private var isObservingInputDeviceList = false
+    private var pendingBluetoothOutputConfirmTasks: [AudioDeviceID: Task<Void, Never>] = [:]
+    private var pendingBluetoothInputConfirmTasks: [AudioDeviceID: Task<Void, Never>] = [:]
 
     private var defaultDeviceAddress = AudioObjectPropertyAddress(
         mSelector: kAudioHardwarePropertyDefaultOutputDevice,
@@ -285,6 +287,8 @@ final class DeviceVolumeMonitor {
             removeInputMuteListener(for: deviceID)
         }
 
+        cancelAllBluetoothConfirmationTasks()
+
         volumes.removeAll()
         muteStates.removeAll()
         systemDeviceID = .unknown
@@ -322,17 +326,20 @@ final class DeviceVolumeMonitor {
     }
 
     /// Sets a device as the macOS system default output device
-    func setDefaultDevice(_ deviceID: AudioDeviceID) {
+    @discardableResult
+    func setDefaultDevice(_ deviceID: AudioDeviceID) -> Bool {
         guard deviceID.isValid else {
             logger.warning("Cannot set default device: invalid device ID")
-            return
+            return false
         }
 
         do {
             try AudioDeviceID.setDefaultOutputDevice(deviceID)
             logger.debug("Set default output device to \(deviceID)")
+            return true
         } catch {
             logger.error("Failed to set default device: \(error.localizedDescription)")
+            return false
         }
     }
 
@@ -437,17 +444,20 @@ final class DeviceVolumeMonitor {
     }
 
     /// Sets a device as the macOS system default input device
-    func setDefaultInputDevice(_ deviceID: AudioDeviceID) {
+    @discardableResult
+    func setDefaultInputDevice(_ deviceID: AudioDeviceID) -> Bool {
         guard deviceID.isValid else {
             logger.warning("Cannot set default input device: invalid device ID")
-            return
+            return false
         }
 
         do {
             try AudioDeviceID.setDefaultInputDevice(deviceID)
             logger.debug("Set default input device to \(deviceID)")
+            return true
         } catch {
             logger.error("Failed to set default input device: \(error.localizedDescription)")
+            return false
         }
     }
 
@@ -614,6 +624,7 @@ final class DeviceVolumeMonitor {
         for deviceID in staleVolumeIDs {
             removeVolumeListener(for: deviceID)
             volumes.removeValue(forKey: deviceID)
+            cancelBluetoothOutputConfirmation(for: deviceID)
         }
 
         let staleMuteIDs = trackedMuteIDs.subtracting(currentDeviceIDs)
@@ -792,16 +803,7 @@ final class DeviceVolumeMonitor {
             // Schedule a delayed re-read to get the actual volume.
             let transportType = device.id.readTransportType()
             if transportType == .bluetooth || transportType == .bluetoothLE {
-                let deviceID = device.id
-                Task { @MainActor [weak self] in
-                    try? await Task.sleep(for: .milliseconds(300))
-                    guard let self, self.volumes.keys.contains(deviceID) else { return }
-                    let confirmedVolume = deviceID.readOutputVolumeScalar()
-                    let confirmedMute = deviceID.readMuteState()
-                    self.volumes[deviceID] = confirmedVolume
-                    self.muteStates[deviceID] = confirmedMute
-                    self.logger.debug("Bluetooth device \(deviceID) confirmed volume: \(confirmedVolume), muted: \(confirmedMute)")
-                }
+                scheduleBluetoothOutputConfirmation(for: device.id)
             }
         }
     }
@@ -878,6 +880,7 @@ final class DeviceVolumeMonitor {
         for deviceID in staleVolumeIDs {
             removeInputVolumeListener(for: deviceID)
             inputVolumes.removeValue(forKey: deviceID)
+            cancelBluetoothInputConfirmation(for: deviceID)
         }
 
         let staleMuteIDs = trackedMuteIDs.subtracting(currentDeviceIDs)
@@ -986,16 +989,7 @@ final class DeviceVolumeMonitor {
             // Bluetooth devices may not have valid volume immediately after appearing
             let transportType = device.id.readTransportType()
             if transportType == .bluetooth || transportType == .bluetoothLE {
-                let deviceID = device.id
-                Task { @MainActor [weak self] in
-                    try? await Task.sleep(for: .milliseconds(300))
-                    guard let self, self.inputVolumes.keys.contains(deviceID) else { return }
-                    let confirmedVolume = deviceID.readInputVolumeScalar()
-                    let confirmedMute = deviceID.readInputMuteState()
-                    self.inputVolumes[deviceID] = confirmedVolume
-                    self.inputMuteStates[deviceID] = confirmedMute
-                    self.logger.debug("Bluetooth input device \(deviceID) confirmed volume: \(confirmedVolume), muted: \(confirmedMute)")
-                }
+                scheduleBluetoothInputConfirmation(for: device.id)
             }
         }
     }
@@ -1021,91 +1015,55 @@ final class DeviceVolumeMonitor {
         observe()
     }
 
-    nonisolated deinit {
-        // HAL C functions don't require actor isolation
+    // MARK: - Bluetooth Confirmation Tasks
 
-        // Remove default output device listener
-        if let block = defaultDeviceListenerBlock {
-            var addr = AudioObjectPropertyAddress(
-                mSelector: kAudioHardwarePropertyDefaultOutputDevice,
-                mScope: kAudioObjectPropertyScopeGlobal,
-                mElement: kAudioObjectPropertyElementMain
-            )
-            AudioObjectRemovePropertyListenerBlock(.system, &addr, .main, block)
+    /// Schedules a delayed re-read of volume/mute for a Bluetooth output device.
+    /// Cancels any existing task for the same device to avoid stale reads.
+    private func scheduleBluetoothOutputConfirmation(for deviceID: AudioDeviceID) {
+        pendingBluetoothOutputConfirmTasks[deviceID]?.cancel()
+        pendingBluetoothOutputConfirmTasks[deviceID] = Task { @MainActor [weak self] in
+            defer { self?.pendingBluetoothOutputConfirmTasks.removeValue(forKey: deviceID) }
+            try? await Task.sleep(for: .milliseconds(300))
+            guard let self, !Task.isCancelled, self.volumes.keys.contains(deviceID) else { return }
+            let confirmedVolume = deviceID.readOutputVolumeScalar()
+            let confirmedMute = deviceID.readMuteState()
+            self.volumes[deviceID] = confirmedVolume
+            self.muteStates[deviceID] = confirmedMute
+            self.logger.debug("Bluetooth device \(deviceID) confirmed volume: \(confirmedVolume), muted: \(confirmedMute)")
         }
+    }
 
-        // Remove system output device listener
-        if let block = systemDeviceListenerBlock {
-            var addr = AudioObjectPropertyAddress(
-                mSelector: kAudioHardwarePropertyDefaultSystemOutputDevice,
-                mScope: kAudioObjectPropertyScopeGlobal,
-                mElement: kAudioObjectPropertyElementMain
-            )
-            AudioObjectRemovePropertyListenerBlock(.system, &addr, .main, block)
-        }
+    /// Cancels a pending Bluetooth output confirmation task for a specific device.
+    private func cancelBluetoothOutputConfirmation(for deviceID: AudioDeviceID) {
+        pendingBluetoothOutputConfirmTasks.removeValue(forKey: deviceID)?.cancel()
+    }
 
-        // Remove default input device listener
-        if let block = defaultInputDeviceListenerBlock {
-            var addr = AudioObjectPropertyAddress(
-                mSelector: kAudioHardwarePropertyDefaultInputDevice,
-                mScope: kAudioObjectPropertyScopeGlobal,
-                mElement: kAudioObjectPropertyElementMain
-            )
-            AudioObjectRemovePropertyListenerBlock(.system, &addr, .main, block)
+    /// Schedules a delayed re-read of volume/mute for a Bluetooth input device.
+    /// Cancels any existing task for the same device to avoid stale reads.
+    private func scheduleBluetoothInputConfirmation(for deviceID: AudioDeviceID) {
+        pendingBluetoothInputConfirmTasks[deviceID]?.cancel()
+        pendingBluetoothInputConfirmTasks[deviceID] = Task { @MainActor [weak self] in
+            defer { self?.pendingBluetoothInputConfirmTasks.removeValue(forKey: deviceID) }
+            try? await Task.sleep(for: .milliseconds(300))
+            guard let self, !Task.isCancelled, self.inputVolumes.keys.contains(deviceID) else { return }
+            let confirmedVolume = deviceID.readInputVolumeScalar()
+            let confirmedMute = deviceID.readInputMuteState()
+            self.inputVolumes[deviceID] = confirmedVolume
+            self.inputMuteStates[deviceID] = confirmedMute
+            self.logger.debug("Bluetooth input device \(deviceID) confirmed volume: \(confirmedVolume), muted: \(confirmedMute)")
         }
+    }
 
-        // Remove all output volume listeners
-        do {
-            var addr = AudioObjectPropertyAddress(
-                mSelector: kAudioHardwareServiceDeviceProperty_VirtualMainVolume,
-                mScope: kAudioDevicePropertyScopeOutput,
-                mElement: kAudioObjectPropertyElementMain
-            )
-            for (deviceID, block) in volumeListeners {
-                // Check if a fallback address was registered for this device
-                if let registeredAddr = registeredVolumeAddresses[deviceID] {
-                    var fallbackAddr = registeredAddr
-                    AudioObjectRemovePropertyListenerBlock(deviceID, &fallbackAddr, .main, block)
-                } else {
-                    AudioObjectRemovePropertyListenerBlock(deviceID, &addr, .main, block)
-                }
-            }
-        }
+    /// Cancels a pending Bluetooth input confirmation task for a specific device.
+    private func cancelBluetoothInputConfirmation(for deviceID: AudioDeviceID) {
+        pendingBluetoothInputConfirmTasks.removeValue(forKey: deviceID)?.cancel()
+    }
 
-        // Remove all output mute listeners
-        do {
-            var addr = AudioObjectPropertyAddress(
-                mSelector: kAudioDevicePropertyMute,
-                mScope: kAudioDevicePropertyScopeOutput,
-                mElement: kAudioObjectPropertyElementMain
-            )
-            for (deviceID, block) in muteListeners {
-                AudioObjectRemovePropertyListenerBlock(deviceID, &addr, .main, block)
-            }
-        }
-
-        // Remove all input volume listeners
-        do {
-            var addr = AudioObjectPropertyAddress(
-                mSelector: kAudioHardwareServiceDeviceProperty_VirtualMainVolume,
-                mScope: kAudioDevicePropertyScopeInput,
-                mElement: kAudioObjectPropertyElementMain
-            )
-            for (deviceID, block) in inputVolumeListeners {
-                AudioObjectRemovePropertyListenerBlock(deviceID, &addr, .main, block)
-            }
-        }
-
-        // Remove all input mute listeners
-        do {
-            var addr = AudioObjectPropertyAddress(
-                mSelector: kAudioDevicePropertyMute,
-                mScope: kAudioDevicePropertyScopeInput,
-                mElement: kAudioObjectPropertyElementMain
-            )
-            for (deviceID, block) in inputMuteListeners {
-                AudioObjectRemovePropertyListenerBlock(deviceID, &addr, .main, block)
-            }
-        }
+    /// Cancels all pending Bluetooth confirmation tasks (called from stop()).
+    private func cancelAllBluetoothConfirmationTasks() {
+        for (_, task) in pendingBluetoothOutputConfirmTasks { task.cancel() }
+        pendingBluetoothOutputConfirmTasks.removeAll()
+        for (_, task) in pendingBluetoothInputConfirmTasks { task.cancel() }
+        pendingBluetoothInputConfirmTasks.removeAll()
     }
 }

@@ -67,6 +67,12 @@ final class ProcessTapController {
     private nonisolated(unsafe) var _primaryPreferredStereoRightChannel: Int = 1
     private nonisolated(unsafe) var _secondaryPreferredStereoLeftChannel: Int = 0
     private nonisolated(unsafe) var _secondaryPreferredStereoRightChannel: Int = 1
+    /// Monotonic host tick of the last audio callback execution.
+    private nonisolated(unsafe) var _lastRenderHostTime: UInt64 = 0
+    /// Monotonic host tick of successful activation.
+    private nonisolated(unsafe) var _activationHostTime: UInt64 = 0
+    /// Set once any audio callback has rendered at least one buffer.
+    private nonisolated(unsafe) var _hasRenderedAudio: Bool = false
 
     /// Crossfade state machine (RT-safe).
     /// During device switch, we run two taps simultaneously with complementary gain curves:
@@ -112,6 +118,31 @@ final class ProcessTapController {
     // MARK: - Public Properties
 
     var audioLevel: Float { crossfadeState.isActive ? max(_peakLevel, _secondaryPeakLevel) : _peakLevel }
+
+    private static let hostTimeNanosScale: Double = {
+        var info = mach_timebase_info_data_t()
+        mach_timebase_info(&info)
+        guard info.denom != 0 else { return 1.0 }
+        return Double(info.numer) / Double(info.denom)
+    }()
+
+    /// Returns true when the audio callback has run within the requested interval.
+    func hasRecentAudioCallback(within seconds: Double) -> Bool {
+        let last = _lastRenderHostTime
+        guard last != 0 else { return false }
+        let now = mach_absolute_time()
+        let deltaNanos = Double(now &- last) * Self.hostTimeNanosScale
+        return deltaNanos <= (seconds * 1_000_000_000.0)
+    }
+
+    /// Health checks should only run after activation has settled and at least one callback occurred.
+    func isHealthCheckEligible(minActiveSeconds: Double) -> Bool {
+        guard _hasRenderedAudio else { return false }
+        let started = _activationHostTime
+        guard started != 0 else { return false }
+        let deltaNanos = Double(mach_absolute_time() &- started) * Self.hostTimeNanosScale
+        return deltaNanos >= (minActiveSeconds * 1_000_000_000.0)
+    }
 
     var currentDeviceVolume: Float {
         get { _currentDeviceVolume }
@@ -258,7 +289,7 @@ final class ProcessTapController {
 
         if let deviceUID = preferredDeviceUID {
             if let outputStream = outputStreamIndex(for: deviceUID) {
-                let streamTap = CATapDescription(processes: [app.objectID], deviceUID: deviceUID, stream: outputStream)
+                let streamTap = CATapDescription(processes: app.processObjectIDs, deviceUID: deviceUID, stream: outputStream)
                 streamTap.uuid = UUID()
                 streamTap.muteBehavior = .mutedWhenTapped
 
@@ -277,7 +308,7 @@ final class ProcessTapController {
             }
         }
 
-        let mixdownTap = CATapDescription(stereoMixdownOfProcesses: [app.objectID])
+        let mixdownTap = CATapDescription(stereoMixdownOfProcesses: app.processObjectIDs)
         mixdownTap.uuid = UUID()
         mixdownTap.muteBehavior = .mutedWhenTapped
 
@@ -304,6 +335,11 @@ final class ProcessTapController {
         guard !activated else { return }
 
         logger.debug("Activating tap for \(self.app.name)")
+
+        // Reset health tracking for fresh activation
+        _lastRenderHostTime = 0
+        _activationHostTime = mach_absolute_time()
+        _hasRenderedAudio = false
 
         // Create process tap. Prefer stream-specific tap for multichannel devices to avoid
         // stereo matrix attenuation on interfaces with many output channels.
@@ -451,6 +487,11 @@ final class ProcessTapController {
         _invalidating = true
         defer { _invalidating = false }
         activated = false
+
+        // Reset health tracking
+        _lastRenderHostTime = 0
+        _activationHostTime = 0
+        _hasRenderedAudio = false
 
         // Cancel any in-flight crossfade task
         crossfadeTask?.cancel()
@@ -923,6 +964,9 @@ final class ProcessTapController {
     /// - Call print/logging functions
     /// - Perform file/network I/O
     private func processAudio(_ inputBufferList: UnsafePointer<AudioBufferList>, to outputBufferList: UnsafeMutablePointer<AudioBufferList>) {
+        _lastRenderHostTime = mach_absolute_time()
+        _hasRenderedAudio = true
+
         let outputBuffers = UnsafeMutableAudioBufferListPointer(outputBufferList)
         // SAFETY: Mutable cast required by UnsafeMutableAudioBufferListPointer API,
         // but we only read through this pointer. Input buffer data is owned by CoreAudio
@@ -1071,6 +1115,9 @@ final class ProcessTapController {
 
     /// Audio processing callback for SECONDARY tap during crossfade.
     private func processAudioSecondary(_ inputBufferList: UnsafePointer<AudioBufferList>, to outputBufferList: UnsafeMutablePointer<AudioBufferList>) {
+        _lastRenderHostTime = mach_absolute_time()
+        _hasRenderedAudio = true
+
         let outputBuffers = UnsafeMutableAudioBufferListPointer(outputBufferList)
         // SAFETY: Mutable cast required by UnsafeMutableAudioBufferListPointer API,
         // but we only read through this pointer. Input buffer data is owned by CoreAudio

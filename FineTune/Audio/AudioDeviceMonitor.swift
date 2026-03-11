@@ -38,6 +38,12 @@ final class AudioDeviceMonitor {
     /// Called when an input device appears (passes UID and name)
     var onInputDeviceConnected: ((_ uid: String, _ name: String) -> Void)?
 
+    /// Returns current output device priority order (highest priority first) for deterministic callback ordering
+    var outputPriorityOrder: (() -> [String])?
+
+    /// Returns current input device priority order (highest priority first) for deterministic callback ordering
+    var inputPriorityOrder: (() -> [String])?
+
     private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "FineTune", category: "AudioDeviceMonitor")
 
     private nonisolated(unsafe) var deviceListListenerBlock: AudioObjectPropertyListenerBlock?
@@ -49,6 +55,7 @@ final class AudioDeviceMonitor {
 
     private var knownDeviceUIDs: Set<String> = []
     private var knownInputDeviceUIDs: Set<String> = []
+    @ObservationIgnored private var dataSourceListeners: [AudioDeviceID: AudioObjectPropertyListenerBlock] = [:]
 
     func start() {
         guard deviceListListenerBlock == nil else { return }
@@ -82,6 +89,7 @@ final class AudioDeviceMonitor {
             AudioObjectRemovePropertyListenerBlock(.system, &deviceListAddress, .main, block)
             deviceListListenerBlock = nil
         }
+        removeAllDataSourceListeners()
     }
 
     /// O(1) lookup by device UID (output devices)
@@ -162,6 +170,7 @@ final class AudioDeviceMonitor {
             knownDeviceUIDs = Set(outputDeviceList.map(\.uid))
             devicesByUID = Dictionary(uniqueKeysWithValues: outputDevices.map { ($0.uid, $0) })
             devicesByID = Dictionary(uniqueKeysWithValues: outputDevices.map { ($0.id, $0) })
+            syncDataSourceListeners(outputDeviceIDs: outputDeviceList.map(\.id))
 
             // Update input devices
             inputDevices = inputDeviceList.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
@@ -174,6 +183,66 @@ final class AudioDeviceMonitor {
         }
     }
 
+    /// Installs/removes kAudioDevicePropertyDataSource listeners on built-in output devices
+    /// so headphone jack plug/unplug triggers a refresh.
+    private func syncDataSourceListeners(outputDeviceIDs: [AudioDeviceID]) {
+        let builtInIDs = Set(outputDeviceIDs.filter { $0.readTransportType() == .builtIn })
+        let currentIDs = Set(dataSourceListeners.keys)
+
+        // Remove listeners for devices no longer present
+        for deviceID in currentIDs.subtracting(builtInIDs) {
+            removeDataSourceListener(for: deviceID)
+        }
+
+        // Add listeners for new built-in devices
+        for deviceID in builtInIDs.subtracting(currentIDs) {
+            var address = AudioObjectPropertyAddress(
+                mSelector: kAudioDevicePropertyDataSource,
+                mScope: kAudioObjectPropertyScopeOutput,
+                mElement: kAudioObjectPropertyElementMain
+            )
+            let block: AudioObjectPropertyListenerBlock = { [weak self] _, _ in
+                Task { @MainActor [weak self] in
+                    self?.handleDeviceListChanged()
+                }
+            }
+            let status = AudioObjectAddPropertyListenerBlock(deviceID, &address, .main, block)
+            if status == noErr {
+                dataSourceListeners[deviceID] = block
+            } else {
+                logger.warning("Failed to add data source listener for device \(deviceID): \(status)")
+            }
+        }
+    }
+
+    private func removeDataSourceListener(for deviceID: AudioDeviceID) {
+        guard let block = dataSourceListeners.removeValue(forKey: deviceID) else { return }
+        var address = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyDataSource,
+            mScope: kAudioObjectPropertyScopeOutput,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        AudioObjectRemovePropertyListenerBlock(deviceID, &address, .main, block)
+    }
+
+    private func removeAllDataSourceListeners() {
+        for deviceID in dataSourceListeners.keys {
+            removeDataSourceListener(for: deviceID)
+        }
+    }
+
+    /// Sorts UIDs by priority order: UIDs in the priority list come first (in priority order),
+    /// followed by any remaining UIDs sorted alphabetically for determinism.
+    private func sortByPriority(uids: Set<String>, priorityOrder: [String]) -> [String] {
+        guard uids.count > 1 else { return Array(uids) }
+        var sorted: [String] = []
+        for uid in priorityOrder where uids.contains(uid) {
+            sorted.append(uid)
+        }
+        let remaining = uids.subtracting(sorted).sorted()
+        sorted.append(contentsOf: remaining)
+        return sorted
+    }
     private func handleDeviceListChanged() {
         let previousOutputUIDs = knownDeviceUIDs
         let previousInputUIDs = knownInputDeviceUIDs
@@ -199,7 +268,8 @@ final class AudioDeviceMonitor {
             onDeviceDisconnected?(uid, name)
         }
         let connectedOutputUIDs = currentOutputUIDs.subtracting(previousOutputUIDs)
-        for uid in connectedOutputUIDs {
+        let sortedConnectedOutput = sortByPriority(uids: connectedOutputUIDs, priorityOrder: outputPriorityOrder?() ?? [])
+        for uid in sortedConnectedOutput {
             if let device = devicesByUID[uid] {
                 logger.info("Output device connected: \(device.name) (\(uid))")
                 onDeviceConnected?(uid, device.name)
@@ -215,7 +285,8 @@ final class AudioDeviceMonitor {
             onInputDeviceDisconnected?(uid, name)
         }
         let connectedInputUIDs = currentInputUIDs.subtracting(previousInputUIDs)
-        for uid in connectedInputUIDs {
+        let sortedConnectedInput = sortByPriority(uids: connectedInputUIDs, priorityOrder: inputPriorityOrder?() ?? [])
+        for uid in sortedConnectedInput {
             if let device = inputDevicesByUID[uid] {
                 logger.info("Input device connected: \(device.name) (\(uid))")
                 onInputDeviceConnected?(uid, device.name)
