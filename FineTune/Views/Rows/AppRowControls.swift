@@ -15,6 +15,7 @@ struct AppRowControls: View {
     let deviceSelectionMode: DeviceSelectionMode
     let maxVolumeBoost: Float
     let isEQExpanded: Bool
+    var showEQButton: Bool = true
     let onVolumeChange: (Float) -> Void
     let onMuteChange: (Bool) -> Void
     let onDeviceSelected: (String) -> Void
@@ -112,7 +113,8 @@ struct AppRowControls: View {
                 showModeToggle: true
             )
 
-            // EQ button
+            // EQ button (hidden on Playback tab — lives on FX tab instead)
+            if showEQButton {
             Button {
                 onEQToggle()
             } label: {
@@ -139,6 +141,7 @@ struct AppRowControls: View {
             .help(isEQExpanded ? "Close Equalizer" : "Equalizer")
             .animation(.spring(response: 0.3, dampingFraction: 0.75), value: isEQExpanded)
             .animation(DesignTokens.Animation.hover, value: isEQButtonHovered)
+            } // end if showEQButton
         }
         .frame(width: DesignTokens.Dimensions.controlsWidth)
     }

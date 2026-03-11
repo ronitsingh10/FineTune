@@ -9,27 +9,25 @@ struct DeviceRow: View {
     let volume: Float
     let isMuted: Bool
     let hasVolumeControl: Bool
+    // Software volume (for HDMI/devices without hardware volume)
+    let softwareVolume: Float
+    let isSoftwareMuted: Bool
     let onSetDefault: () -> Void
     let onVolumeChange: (Float) -> Void
     let onMuteToggle: () -> Void
-
-    // AutoEQ (all optional — existing call sites work without them)
-    let autoEQProfileName: String?
-    let autoEQEnabled: Bool
-    let onAutoEQToggle: (() -> Void)?
-    let autoEQProfileManager: AutoEQProfileManager?
-    let autoEQSelection: AutoEQSelection?
-    let autoEQFavoriteIDs: Set<String>
-    let onAutoEQSelect: ((AutoEQProfile?) -> Void)?
-    let onAutoEQImport: (() -> Void)?
-    let onAutoEQToggleFavorite: ((String) -> Void)?
-    let autoEQImportError: String?
+    let onSoftwareVolumeChange: (Float) -> Void
+    let onSoftwareMuteToggle: () -> Void
+    let trailingAccessoryPadding: CGFloat
 
     @State private var sliderValue: Double
+    @State private var softwareSliderValue: Double
     @State private var isEditing = false
+    @Environment(ThemeManager.self) private var theme
 
     /// Show muted icon when system muted OR volume is 0
     private var showMutedIcon: Bool { isMuted || sliderValue == 0 }
+    /// Show software muted icon when software muted OR software volume is 0
+    private var showSoftwareMutedIcon: Bool { isSoftwareMuted || softwareSliderValue == 0 }
 
     /// Default volume to restore when unmuting from 0 (50%)
     private let defaultUnmuteVolume: Double = 0.5
@@ -40,49 +38,33 @@ struct DeviceRow: View {
         volume: Float,
         isMuted: Bool,
         hasVolumeControl: Bool = true,
+        softwareVolume: Float = 1.0,
+        isSoftwareMuted: Bool = false,
         onSetDefault: @escaping () -> Void,
         onVolumeChange: @escaping (Float) -> Void,
         onMuteToggle: @escaping () -> Void,
-        autoEQProfileName: String? = nil,
-        autoEQEnabled: Bool = false,
-        onAutoEQToggle: (() -> Void)? = nil,
-        autoEQProfileManager: AutoEQProfileManager? = nil,
-        autoEQSelection: AutoEQSelection? = nil,
-        autoEQFavoriteIDs: Set<String> = [],
-        onAutoEQSelect: ((AutoEQProfile?) -> Void)? = nil,
-        onAutoEQImport: (() -> Void)? = nil,
-        onAutoEQToggleFavorite: ((String) -> Void)? = nil,
-        autoEQImportError: String? = nil
+        onSoftwareVolumeChange: @escaping (Float) -> Void = { _ in },
+        onSoftwareMuteToggle: @escaping () -> Void = {},
+        trailingAccessoryPadding: CGFloat = 0
     ) {
         self.device = device
         self.isDefault = isDefault
         self.volume = volume
         self.isMuted = isMuted
         self.hasVolumeControl = hasVolumeControl
+        self.softwareVolume = softwareVolume
+        self.isSoftwareMuted = isSoftwareMuted
         self.onSetDefault = onSetDefault
         self.onVolumeChange = onVolumeChange
         self.onMuteToggle = onMuteToggle
-        self.autoEQProfileName = autoEQProfileName
-        self.autoEQEnabled = autoEQEnabled
-        self.onAutoEQToggle = onAutoEQToggle
-        self.autoEQProfileManager = autoEQProfileManager
-        self.autoEQSelection = autoEQSelection
-        self.autoEQFavoriteIDs = autoEQFavoriteIDs
-        self.onAutoEQSelect = onAutoEQSelect
-        self.onAutoEQImport = onAutoEQImport
-        self.onAutoEQToggleFavorite = onAutoEQToggleFavorite
-        self.autoEQImportError = autoEQImportError
+        self.onSoftwareVolumeChange = onSoftwareVolumeChange
+        self.onSoftwareMuteToggle = onSoftwareMuteToggle
+        self.trailingAccessoryPadding = trailingAccessoryPadding
         self._sliderValue = State(initialValue: Double(volume))
+        self._softwareSliderValue = State(initialValue: Double(softwareVolume))
     }
 
     var body: some View {
-        deviceHeader
-            .hoverableRow()
-    }
-
-    // MARK: - Device Header
-
-    private var deviceHeader: some View {
         HStack(spacing: DesignTokens.Spacing.sm) {
             // Default device selector
             RadioButton(isSelected: isDefault, action: onSetDefault)
@@ -101,61 +83,28 @@ struct DeviceRow: View {
             }
             .frame(width: DesignTokens.Dimensions.iconSize, height: DesignTokens.Dimensions.iconSize)
 
-            // Device name + optional AutoEQ profile subtitle + AutoEQ picker
-            HStack(spacing: DesignTokens.Spacing.xs) {
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(device.name)
-                        .font(isDefault ? DesignTokens.Typography.rowNameBold : DesignTokens.Typography.rowName)
-                        .lineLimit(1)
-                        .help(device.name)
-
-                    if let profileName = autoEQProfileName, autoEQEnabled {
-                        Text(profileName)
-                            .font(.system(size: 9))
-                            .foregroundStyle(DesignTokens.Colors.textTertiary)
-                            .lineLimit(1)
-                    }
-                }
-
-                Spacer(minLength: 0)
-
-                // AutoEQ picker inside the name area so slider length stays consistent
-                if device.supportsAutoEQ,
-                   let profileManager = autoEQProfileManager,
-                   let onSelect = onAutoEQSelect,
-                   let onImport = onAutoEQImport {
-                    AutoEQPicker(
-                        profileManager: profileManager,
-                        profileName: autoEQProfileName,
-                        selection: autoEQSelection,
-                        favoriteIDs: autoEQFavoriteIDs,
-                        onSelect: onSelect,
-                        onImport: onImport,
-                        onToggleFavorite: { id in onAutoEQToggleFavorite?(id) },
-                        importError: autoEQImportError
-                    )
-                }
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
+            // Device name
+            Text(device.name)
+                .font(isDefault ? DesignTokens.Typography.rowNameBold : DesignTokens.Typography.rowName)
+                .lineLimit(1)
+                .help(device.name)
+                .frame(maxWidth: .infinity, alignment: .leading)
 
             if hasVolumeControl {
-                // Mute button
+                // ── Hardware volume controls (existing path) ──────────────────
                 MuteButton(isMuted: showMutedIcon) {
                     if showMutedIcon {
-                        // Unmute: restore to default if at 0
                         if sliderValue == 0 {
                             sliderValue = defaultUnmuteVolume
                         }
                         if isMuted {
-                            onMuteToggle()  // Toggle system mute
+                            onMuteToggle()
                         }
                     } else {
-                        // Mute
-                        onMuteToggle()  // Toggle system mute
+                        onMuteToggle()
                     }
                 }
 
-                // Volume slider (Liquid Glass)
                 LiquidGlassSlider(
                     value: $sliderValue,
                     onEditingChanged: { editing in
@@ -165,13 +114,11 @@ struct DeviceRow: View {
                 .opacity(showMutedIcon ? 0.5 : 1.0)
                 .onChange(of: sliderValue) { _, newValue in
                     onVolumeChange(Float(newValue))
-                    // Auto-unmute when slider moved while muted
                     if isMuted && newValue > 0 {
                         onMuteToggle()
                     }
                 }
 
-                // Editable volume percentage
                 EditablePercentage(
                     percentage: Binding(
                         get: { Int(round(sliderValue * 100)) },
@@ -179,13 +126,75 @@ struct DeviceRow: View {
                     ),
                     range: 0...100
                 )
+            } else {
+                // ── Software volume controls (HDMI / no hardware volume) ───────
+                // "SW" badge signals this is a software gain stage
+                Text("SW")
+                    .font(.system(size: 8, weight: .bold, design: .rounded))
+                    .foregroundStyle(DesignTokens.Colors.textTertiary)
+                    .padding(.horizontal, 3)
+                    .padding(.vertical, 1)
+                    .background(
+                        Capsule()
+                            .strokeBorder(DesignTokens.Colors.textTertiary.opacity(0.4), lineWidth: 0.5)
+                    )
+                    .help("Software volume — this device has no hardware volume control")
+
+                MuteButton(isMuted: showSoftwareMutedIcon) {
+                    if showSoftwareMutedIcon {
+                        if softwareSliderValue == 0 {
+                            softwareSliderValue = defaultUnmuteVolume
+                            onSoftwareVolumeChange(Float(defaultUnmuteVolume))
+                        }
+                        if isSoftwareMuted {
+                            onSoftwareMuteToggle()
+                        }
+                    } else {
+                        onSoftwareMuteToggle()
+                    }
+                }
+
+                LiquidGlassSlider(
+                    value: $softwareSliderValue,
+                    onEditingChanged: { editing in
+                        isEditing = editing
+                    }
+                )
+                .opacity(showSoftwareMutedIcon ? 0.5 : 1.0)
+                .onChange(of: softwareSliderValue) { _, newValue in
+                    onSoftwareVolumeChange(Float(newValue))
+                    if isSoftwareMuted && newValue > 0 {
+                        onSoftwareMuteToggle()
+                    }
+                }
+
+                EditablePercentage(
+                    percentage: Binding(
+                        get: { Int(round(softwareSliderValue * 100)) },
+                        set: { softwareSliderValue = Double($0) / 100.0 }
+                    ),
+                    range: 0...100
+                )
             }
         }
+        .padding(.trailing, trailingAccessoryPadding)
         .frame(height: DesignTokens.Dimensions.rowContentHeight)
+        .hoverableRow()
+        .onAppear {
+            // Force-sync @State from the prop on every appearance.
+            // @State only initialises from the init argument on first creation,
+            // so if the row is recreated (DDC probe, device list refresh, etc.)
+            // while the prop already has the correct value, .onChange never fires.
+            sliderValue = Double(volume)
+            softwareSliderValue = Double(softwareVolume)
+        }
         .onChange(of: volume) { _, newValue in
-            // Only sync from external changes when user is NOT dragging
             guard !isEditing else { return }
             sliderValue = Double(newValue)
+        }
+        .onChange(of: softwareVolume) { _, newValue in
+            guard !isEditing else { return }
+            softwareSliderValue = Double(newValue)
         }
     }
 }
@@ -215,14 +224,20 @@ struct DeviceRow: View {
                 onMuteToggle: {}
             )
 
+            // Software volume row (simulating HDMI TV)
             DeviceRow(
                 device: MockData.sampleDevices[2],
                 isDefault: false,
-                volume: 0.5,
-                isMuted: true,
+                volume: 1.0,
+                isMuted: false,
+                hasVolumeControl: false,
+                softwareVolume: 0.7,
+                isSoftwareMuted: false,
                 onSetDefault: {},
                 onVolumeChange: { _ in },
-                onMuteToggle: {}
+                onMuteToggle: {},
+                onSoftwareVolumeChange: { _ in },
+                onSoftwareMuteToggle: {}
             )
         }
     }

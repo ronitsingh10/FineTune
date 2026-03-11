@@ -1,4 +1,4 @@
-// FineTune/Audio/Monitors/AudioDeviceMonitor.swift
+// FineTune/Audio/AudioDeviceMonitor.swift
 import AppKit
 import AudioToolbox
 import os
@@ -46,7 +46,7 @@ final class AudioDeviceMonitor {
 
     private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "FineTune", category: "AudioDeviceMonitor")
 
-    private var deviceListListenerBlock: AudioObjectPropertyListenerBlock?
+    private nonisolated(unsafe) var deviceListListenerBlock: AudioObjectPropertyListenerBlock?
     private var deviceListAddress = AudioObjectPropertyAddress(
         mSelector: kAudioHardwarePropertyDevices,
         mScope: kAudioObjectPropertyScopeGlobal,
@@ -55,8 +55,6 @@ final class AudioDeviceMonitor {
 
     private var knownDeviceUIDs: Set<String> = []
     private var knownInputDeviceUIDs: Set<String> = []
-
-    /// Listeners for kAudioDevicePropertyDataSource changes on built-in devices (headphone jack detection)
     @ObservationIgnored private var dataSourceListeners: [AudioDeviceID: AudioObjectPropertyListenerBlock] = [:]
 
     func start() {
@@ -139,8 +137,7 @@ final class AudioDeviceMonitor {
                         id: deviceID,
                         uid: uid,
                         name: name,
-                        icon: icon,
-                        supportsAutoEQ: deviceID.supportsAutoEQ()
+                        icon: icon
                     )
                     outputDeviceList.append(device)
                 }
@@ -162,8 +159,7 @@ final class AudioDeviceMonitor {
                         id: deviceID,
                         uid: uid,
                         name: name,
-                        icon: icon,
-                        supportsAutoEQ: false
+                        icon: icon
                     )
                     inputDeviceList.append(device)
                 }
@@ -174,14 +170,13 @@ final class AudioDeviceMonitor {
             knownDeviceUIDs = Set(outputDeviceList.map(\.uid))
             devicesByUID = Dictionary(uniqueKeysWithValues: outputDevices.map { ($0.uid, $0) })
             devicesByID = Dictionary(uniqueKeysWithValues: outputDevices.map { ($0.id, $0) })
+            syncDataSourceListeners(outputDeviceIDs: outputDeviceList.map(\.id))
 
             // Update input devices
             inputDevices = inputDeviceList.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
             knownInputDeviceUIDs = Set(inputDeviceList.map(\.uid))
             inputDevicesByUID = Dictionary(uniqueKeysWithValues: inputDevices.map { ($0.uid, $0) })
             inputDevicesByID = Dictionary(uniqueKeysWithValues: inputDevices.map { ($0.id, $0) })
-
-            syncDataSourceListeners(outputDeviceIDs: outputDeviceList.map(\.id))
 
         } catch {
             logger.error("Failed to refresh device list: \(error.localizedDescription)")
@@ -248,7 +243,6 @@ final class AudioDeviceMonitor {
         sorted.append(contentsOf: remaining)
         return sorted
     }
-
     private func handleDeviceListChanged() {
         let previousOutputUIDs = knownDeviceUIDs
         let previousInputUIDs = knownInputDeviceUIDs
@@ -300,4 +294,15 @@ final class AudioDeviceMonitor {
         }
     }
 
+    nonisolated deinit {
+        // HAL C functions don't require actor isolation
+        if let block = deviceListListenerBlock {
+            var addr = AudioObjectPropertyAddress(
+                mSelector: kAudioHardwarePropertyDevices,
+                mScope: kAudioObjectPropertyScopeGlobal,
+                mElement: kAudioObjectPropertyElementMain
+            )
+            AudioObjectRemovePropertyListenerBlock(.system, &addr, .main, block)
+        }
+    }
 }

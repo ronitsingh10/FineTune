@@ -1,4 +1,4 @@
-// FineTune/Audio/Monitors/AudioProcessMonitor.swift
+// FineTune/Audio/AudioProcessMonitor.swift
 import AppKit
 import AudioToolbox
 import os
@@ -76,8 +76,8 @@ final class AudioProcessMonitor {
     }
 
     // Property listeners
-    private var processListListenerBlock: AudioObjectPropertyListenerBlock?
-    private var processListenerBlocks: [AudioObjectID: AudioObjectPropertyListenerBlock] = [:]
+    private nonisolated(unsafe) var processListListenerBlock: AudioObjectPropertyListenerBlock?
+    private nonisolated(unsafe) var processListenerBlocks: [AudioObjectID: AudioObjectPropertyListenerBlock] = [:]
     private var monitoredProcesses: Set<AudioObjectID> = []
     private var periodicRefreshTask: Task<Void, Never>?
 

@@ -30,6 +30,7 @@ struct InactiveAppRow: View {
     let onEQChange: (EQSettings) -> Void
     let isEQExpanded: Bool
     let onEQToggle: () -> Void
+    let showEQButton: Bool
 
     @State private var isPinButtonHovered = false
     @State private var localEQSettings: EQSettings
@@ -65,7 +66,8 @@ struct InactiveAppRow: View {
         eqSettings: EQSettings = EQSettings(),
         onEQChange: @escaping (EQSettings) -> Void = { _ in },
         isEQExpanded: Bool = false,
-        onEQToggle: @escaping () -> Void = {}
+        onEQToggle: @escaping () -> Void = {},
+        showEQButton: Bool = false
     ) {
         self.appInfo = appInfo
         self.icon = icon
@@ -89,6 +91,7 @@ struct InactiveAppRow: View {
         self.onEQChange = onEQChange
         self.isEQExpanded = isEQExpanded
         self.onEQToggle = onEQToggle
+        self.showEQButton = showEQButton
         self._localEQSettings = State(initialValue: eqSettings)
     }
 
@@ -145,6 +148,7 @@ struct InactiveAppRow: View {
                     deviceSelectionMode: deviceSelectionMode,
                     maxVolumeBoost: maxVolumeBoost,
                     isEQExpanded: isEQExpanded,
+                    showEQButton: showEQButton,
                     onVolumeChange: onVolumeChange,
                     onMuteChange: onMuteChange,
                     onDeviceSelected: onDeviceSelected,

@@ -7,7 +7,6 @@ struct AudioDevice: Identifiable, Hashable {
     let uid: String
     let name: String
     let icon: NSImage?
-    let supportsAutoEQ: Bool
 
     func hash(into hasher: inout Hasher) {
         hasher.combine(uid)

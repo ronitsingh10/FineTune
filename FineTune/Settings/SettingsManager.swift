@@ -66,7 +66,7 @@ final class SettingsManager {
     private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "FineTune", category: "SettingsManager")
 
     struct Settings: Codable {
-        var version: Int = 8
+        var version: Int = 7
         var appVolumes: [String: Float] = [:]
         var appDeviceRouting: [String: String] = [:]  // bundleID → deviceUID
         var appMutes: [String: Bool] = [:]  // bundleID → isMuted
@@ -88,34 +88,24 @@ final class SettingsManager {
         var outputDevicePriority: [String] = []
         var inputDevicePriority: [String] = []
 
-        // Per-device AutoEQ headphone correction
-        var deviceAutoEQ: [String: AutoEQSelection] = [:]  // deviceUID → selection
-        var favoriteAutoEQProfiles: Set<String> = []  // profile IDs
+        // Software volume for devices without hardware volume control (keyed by device UID)
+        // Scalar 0.0–1.0. Applied as a digital gain stage in the render callback.
+        var softwareDeviceVolumes: [String: Float] = [:]
+        var softwareDeviceMutes: [String: Bool] = [:]
 
-        init() {}
+        // FX settings — "System Audio" slot (follow default)
+        var fxSettings: FXSettings = FXSettings()
+        // Global FX power toggle (applies to all device/system FX processing)
+        var fxGlobalEnabled: Bool = true
 
-        init(from decoder: Decoder) throws {
-            let c = try decoder.container(keyedBy: CodingKeys.self)
-            version = try c.decodeIfPresent(Int.self, forKey: .version) ?? 8
-            appVolumes = try c.decodeIfPresent([String: Float].self, forKey: .appVolumes) ?? [:]
-            appDeviceRouting = try c.decodeIfPresent([String: String].self, forKey: .appDeviceRouting) ?? [:]
-            appMutes = try c.decodeIfPresent([String: Bool].self, forKey: .appMutes) ?? [:]
-            appEQSettings = try c.decodeIfPresent([String: EQSettings].self, forKey: .appEQSettings) ?? [:]
-            appSettings = try c.decodeIfPresent(AppSettings.self, forKey: .appSettings) ?? AppSettings()
-            systemSoundsFollowsDefault = try c.decodeIfPresent(Bool.self, forKey: .systemSoundsFollowsDefault) ?? true
-            appDeviceSelectionMode = try c.decodeIfPresent([String: DeviceSelectionMode].self, forKey: .appDeviceSelectionMode) ?? [:]
-            appSelectedDeviceUIDs = try c.decodeIfPresent([String: [String]].self, forKey: .appSelectedDeviceUIDs) ?? [:]
-            lockedInputDeviceUID = try c.decodeIfPresent(String.self, forKey: .lockedInputDeviceUID)
-            pinnedApps = try c.decodeIfPresent(Set<String>.self, forKey: .pinnedApps) ?? []
-            pinnedAppInfo = try c.decodeIfPresent([String: PinnedAppInfo].self, forKey: .pinnedAppInfo) ?? [:]
-            ddcVolumes = try c.decodeIfPresent([String: Int].self, forKey: .ddcVolumes) ?? [:]
-            ddcMuteStates = try c.decodeIfPresent([String: Bool].self, forKey: .ddcMuteStates) ?? [:]
-            ddcSavedVolumes = try c.decodeIfPresent([String: Int].self, forKey: .ddcSavedVolumes) ?? [:]
-            outputDevicePriority = try c.decodeIfPresent([String].self, forKey: .outputDevicePriority) ?? []
-            inputDevicePriority = try c.decodeIfPresent([String].self, forKey: .inputDevicePriority) ?? []
-            deviceAutoEQ = try c.decodeIfPresent([String: AutoEQSelection].self, forKey: .deviceAutoEQ) ?? [:]
-            favoriteAutoEQProfiles = try c.decodeIfPresent(Set<String>.self, forKey: .favoriteAutoEQProfiles) ?? []
-        }
+        // Per-device FX settings — keyed by device UID
+        var fxSettingsPerDevice: [String: FXSettings] = [:]
+
+        // FX device picker state
+        var fxEditingUID:         String?             = nil   // nil = editing System Audio
+        var fxDeviceMode:         DeviceSelectionMode = .single
+        var fxDeviceUID:          String?             = nil   // nil = follow system default
+        var fxSelectedDeviceUIDs: [String]            = []    // for multi mode
     }
 
     init(directory: URL? = nil) {
@@ -179,6 +169,47 @@ final class SettingsManager {
     func getEQSettings(for appIdentifier: String) -> EQSettings {
         return settings.appEQSettings[appIdentifier] ?? EQSettings.flat
     }
+
+    // MARK: - FX Settings (per-device)
+
+    /// Get FX settings for a specific device UID, or System Audio if uid is nil.
+    func getFXSettings(for uid: String? = nil) -> FXSettings {
+        if let uid { return settings.fxSettingsPerDevice[uid] ?? FXPreset.defaultPreset.settings }
+        return settings.fxSettings
+    }
+
+    /// Save FX settings for a specific device UID, or System Audio if uid is nil.
+    func setFXSettings(_ s: FXSettings, for uid: String? = nil) {
+        if let uid { settings.fxSettingsPerDevice[uid] = s }
+        else        { settings.fxSettings = s }
+        scheduleSave()
+    }
+
+    func isFXGlobalEnabled() -> Bool { settings.fxGlobalEnabled }
+
+    func setFXGlobalEnabled(_ enabled: Bool) {
+        settings.fxGlobalEnabled = enabled
+        scheduleSave()
+    }
+
+    // MARK: - FX Device Routing
+
+    func getFXEditingUID() -> String? { settings.fxEditingUID }
+    func setFXEditingUID(_ uid: String?) { settings.fxEditingUID = uid; scheduleSave() }
+
+    func getFXDeviceMode() -> DeviceSelectionMode { settings.fxDeviceMode }
+    func setFXDeviceMode(_ mode: DeviceSelectionMode) { settings.fxDeviceMode = mode; scheduleSave() }
+
+    func getFXDeviceUID() -> String? { settings.fxDeviceUID }
+    func setFXDeviceUID(_ uid: String?) { settings.fxDeviceUID = uid; scheduleSave() }
+
+    func getFXSelectedDeviceUIDs() -> Set<String> { Set(settings.fxSelectedDeviceUIDs) }
+    func setFXSelectedDeviceUIDs(_ uids: Set<String>) { settings.fxSelectedDeviceUIDs = Array(uids); scheduleSave() }
+
+    func isFXFollowingDefault() -> Bool { settings.fxDeviceUID == nil && settings.fxDeviceMode == .single }
+
+    /// True if a specific per-device FX settings slot exists (vs falling back to System Audio).
+    func hasFXSettings(for uid: String) -> Bool { settings.fxSettingsPerDevice[uid] != nil }
 
     func setEQSettings(_ eqSettings: EQSettings, for appIdentifier: String) {
         settings.appEQSettings[appIdentifier] = eqSettings
@@ -303,33 +334,52 @@ final class SettingsManager {
         scheduleSave()
     }
 
-    // MARK: - Per-Device AutoEQ
+    // MARK: - Software Device Volume (for devices without hardware volume control)
 
-    func getAutoEQSelection(for deviceUID: String) -> AutoEQSelection? {
-        settings.deviceAutoEQ[deviceUID]
+    /// Returns the persisted software volume (0.0–1.0) for a device UID, defaulting to 1.0.
+    // MARK: - Software Volume (UserDefaults-backed for atomicity)
+    //
+    // We use UserDefaults as the primary store for software volumes and mutes.
+    // UserDefaults.synchronize() (or its automatic equivalent) writes are atomic and
+    // immediate — unlike our debounced JSON path which has a 500 ms window where a
+    // quit or crash can drop the value. The JSON store is kept in sync for portability
+    // but is NOT the authoritative source on read.
+
+    private func udVolKey(_ uid: String) -> String { "swvol_\(uid)" }
+    private func udMuteKey(_ uid: String) -> String { "swmute_\(uid)" }
+
+    func getSoftwareVolume(for deviceUID: String) -> Float {
+        let ud = UserDefaults.standard
+        if ud.object(forKey: udVolKey(deviceUID)) != nil {
+            return Float(ud.double(forKey: udVolKey(deviceUID)))
+        }
+        // Fallback to JSON store (migration path for existing installs)
+        return settings.softwareDeviceVolumes[deviceUID] ?? 1.0
     }
 
-    func setAutoEQSelection(for deviceUID: String, to selection: AutoEQSelection?) {
-        settings.deviceAutoEQ[deviceUID] = selection
+    func setSoftwareVolume(for deviceUID: String, to volume: Float) {
+        let clamped = max(0.0, min(1.0, volume))
+        // Primary: UserDefaults — atomic and immediate
+        UserDefaults.standard.set(Double(clamped), forKey: udVolKey(deviceUID))
+        // Mirror to JSON store so the data stays in sync
+        settings.softwareDeviceVolumes[deviceUID] = clamped
         scheduleSave()
     }
 
-    func favoriteAutoEQProfile(id: String) {
-        settings.favoriteAutoEQProfiles.insert(id)
+    func getSoftwareMute(for deviceUID: String) -> Bool {
+        let ud = UserDefaults.standard
+        if ud.object(forKey: udMuteKey(deviceUID)) != nil {
+            return ud.bool(forKey: udMuteKey(deviceUID))
+        }
+        return settings.softwareDeviceMutes[deviceUID] ?? false
+    }
+
+    func setSoftwareMute(for deviceUID: String, to muted: Bool) {
+        // Primary: UserDefaults — atomic and immediate
+        UserDefaults.standard.set(muted, forKey: udMuteKey(deviceUID))
+        // Mirror to JSON store
+        settings.softwareDeviceMutes[deviceUID] = muted
         scheduleSave()
-    }
-
-    func unfavoriteAutoEQProfile(id: String) {
-        settings.favoriteAutoEQProfiles.remove(id)
-        scheduleSave()
-    }
-
-    func isAutoEQFavorite(id: String) -> Bool {
-        settings.favoriteAutoEQProfiles.contains(id)
-    }
-
-    var favoriteAutoEQProfileIDs: Set<String> {
-        settings.favoriteAutoEQProfiles
     }
 
     // MARK: - App-Wide Settings
@@ -384,10 +434,8 @@ final class SettingsManager {
         settings.ddcSavedVolumes.removeAll()
         settings.outputDevicePriority.removeAll()
         settings.inputDevicePriority.removeAll()
-        settings.deviceAutoEQ.removeAll()
-        settings.favoriteAutoEQProfiles.removeAll()
-        settings.appDeviceSelectionMode.removeAll()
-        settings.appSelectedDeviceUIDs.removeAll()
+        settings.softwareDeviceVolumes.removeAll()
+        settings.softwareDeviceMutes.removeAll()
 
         // Also unregister from launch at login
         try? SMAppService.mainApp.unregister()
@@ -442,7 +490,7 @@ final class SettingsManager {
         writeToDisk()
     }
 
-    private func writeToDisk() {
+    func writeToDisk() {
         do {
             let data = try JSONEncoder().encode(settings)
             try Self.writeData(data, to: settingsURL)

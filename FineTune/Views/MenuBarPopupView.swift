@@ -1,6 +1,5 @@
 // FineTune/Views/MenuBarPopupView.swift
 import SwiftUI
-import UniformTypeIdentifiers
 
 struct MenuBarPopupView: View {
     @Bindable var audioEngine: AudioEngine
@@ -10,29 +9,33 @@ struct MenuBarPopupView: View {
     /// Icon style that was applied at app launch (for restart-required detection)
     let launchIconStyle: MenuBarIconStyle
 
+    @Environment(ThemeManager.self) private var theme
+
+    /// Track whether colour palette editor is open (FX tab only)
+    @State private var isColorPaletteOpen = false
+
     /// Memoized sorted output devices - only recomputed when device list or default changes
     @State private var sortedDevices: [AudioDevice] = []
 
     /// Memoized sorted input devices
     @State private var sortedInputDevices: [AudioDevice] = []
 
-    /// Which device tab is selected (false = output, true = input)
-    @State private var showingInputDevices = false
+    enum ActiveTab { case output, input, fx }
+    @State private var activeTab: ActiveTab = .output
+
+    // Computed shims so all existing logic using showingInputDevices still works
+    private var showingInputDevices: Bool { activeTab == .input }
 
     /// Track which app has its EQ panel expanded (only one at a time)
     /// Uses DisplayableApp.id (String) to work with both active and inactive apps
-    @State private var expandedRowID: String?
+    @State private var expandedEQAppID: String?    // Playback tab EQ
+    @State private var fxExpandedEQAppID: String?   // FX tab EQ (separate)
 
     /// Debounce EQ toggle to prevent rapid clicks during animation
     @State private var isEQAnimating = false
 
     /// Track popup visibility to pause VU meter polling when hidden
     @State private var isPopupVisible = true
-
-    /// Error message shown when AutoEQ profile import fails
-    @State private var autoEQImportError: String?
-    /// Task that auto-clears the import error after 3 seconds
-    @State private var importErrorClearTask: Task<Void, Never>?
 
     /// Track whether settings panel is open
     @State private var isSettingsOpen = false
@@ -43,15 +46,8 @@ struct MenuBarPopupView: View {
     /// Local copy of app settings for binding
     @State private var localAppSettings: AppSettings = AppSettings()
 
-    /// Memoized paired Bluetooth devices
-    @State private var pairedDevices: [PairedBluetoothDevice] = []
-
-    /// Whether Bluetooth hardware is powered on
-    @State private var isBluetoothOn = false
-
     /// Whether device priority edit mode is active
     @State private var isEditingDevicePriority = false
-
     /// Tracks which tab was active when edit mode started (for correct save on exit)
     @State private var wasEditingInputDevices = false
 
@@ -107,7 +103,6 @@ struct MenuBarPopupView: View {
                     onResetAll: {
                         audioEngine.settingsManager.resetAllSettings()
                         localAppSettings = audioEngine.settingsManager.appSettings
-                        // Sync Core Audio: system sounds should follow default after reset
                         deviceVolumeMonitor.setSystemFollowDefault()
                     },
                     deviceVolumeMonitor: deviceVolumeMonitor,
@@ -117,6 +112,22 @@ struct MenuBarPopupView: View {
                     insertion: .move(edge: .trailing).combined(with: .opacity),
                     removal: .move(edge: .trailing).combined(with: .opacity)
                 ))
+            } else if isColorPaletteOpen {
+                ColorPaletteEditor(onCancel: {
+                    withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+                        isColorPaletteOpen = false
+                    }
+                })
+                .transition(.asymmetric(
+                    insertion: .move(edge: .trailing).combined(with: .opacity),
+                    removal: .move(edge: .trailing).combined(with: .opacity)
+                ))
+            } else if activeTab == .fx {
+                fxTabContent
+                    .transition(.asymmetric(
+                        insertion: .move(edge: .trailing).combined(with: .opacity),
+                        removal: .move(edge: .trailing).combined(with: .opacity)
+                    ))
             } else {
                 mainContent
                     .transition(.asymmetric(
@@ -128,44 +139,29 @@ struct MenuBarPopupView: View {
         .padding(DesignTokens.Spacing.lg)
         .frame(width: DesignTokens.Dimensions.popupWidth)
         .darkGlassBackground()
-        .environment(\.colorScheme, .dark)
+        .environment(\.colorScheme, theme.colorScheme)
         .onAppear {
             updateSortedDevices()
             updateSortedInputDevices()
-            pairedDevices = audioEngine.bluetoothDeviceMonitor.pairedDevices
-            isBluetoothOn = audioEngine.bluetoothDeviceMonitor.isBluetoothOn
             localAppSettings = audioEngine.settingsManager.appSettings
         }
         .onChange(of: audioEngine.outputDevices) { _, _ in
-            if isEditingDevicePriority && !wasEditingInputDevices {
-                mergeDeviceChanges(from: audioEngine.outputDevices)
-            }
+            exitEditModeSaving()
             updateSortedDevices()
         }
         .onChange(of: audioEngine.inputDevices) { _, _ in
-            if isEditingDevicePriority && wasEditingInputDevices {
-                mergeDeviceChanges(from: audioEngine.inputDevices)
-            }
+            exitEditModeSaving()
             updateSortedInputDevices()
         }
-        .onChange(of: showingInputDevices) { _, _ in
+        .onChange(of: activeTab) { _, _ in
             exitEditModeSaving()
+            if isColorPaletteOpen { isColorPaletteOpen = false }
         }
         .onChange(of: localAppSettings) { _, newValue in
             audioEngine.settingsManager.updateAppSettings(newValue)
         }
-        .onChange(of: audioEngine.bluetoothDeviceMonitor.pairedDevices) { _, newValue in
-            pairedDevices = newValue
-        }
-        .onChange(of: audioEngine.bluetoothDeviceMonitor.isBluetoothOn) { _, newValue in
-            isBluetoothOn = newValue
-        }
-        .onChange(of: deviceVolumeMonitor.defaultDeviceID) { _, _ in
-            updateSortedDevices()
-        }
         .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { _ in
             isPopupVisible = true
-            audioEngine.bluetoothDeviceMonitor.refresh()
         }
         .onReceive(NotificationCenter.default.publisher(for: NSWindow.didResignKeyNotification)) { _ in
             isPopupVisible = false
@@ -185,24 +181,44 @@ struct MenuBarPopupView: View {
 
     // MARK: - Edit Priority Button
 
-    /// Edit priority button — pencil ↔ checkmark, styled to match settingsButton
+    /// On the FX tab: opens the colour palette editor (paintpalette icon).
+    /// On all other tabs: pencil ↔ checkmark for device priority reorder.
     private var editPriorityButton: some View {
-        Button {
-            toggleDevicePriorityEdit()
-        } label: {
-            Image(systemName: isEditingDevicePriority ? "checkmark" : "pencil")
-                .font(.system(size: 12, weight: isEditingDevicePriority ? .bold : .regular))
-                .symbolRenderingMode(.hierarchical)
-                .foregroundStyle(DesignTokens.Colors.interactiveDefault)
-                .frame(
-                    minWidth: DesignTokens.Dimensions.minTouchTarget,
-                    minHeight: DesignTokens.Dimensions.minTouchTarget
-                )
-                .contentShape(Rectangle())
+        Group {
+            if activeTab == .fx {
+                Button {
+                    withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+                        isColorPaletteOpen.toggle()
+                    }
+                } label: {
+                    Image(systemName: isColorPaletteOpen ? "checkmark" : "paintpalette")
+                        .font(.system(size: 12, weight: isColorPaletteOpen ? .bold : .regular))
+                        .symbolRenderingMode(.hierarchical)
+                        .foregroundStyle(DesignTokens.Colors.interactiveDefault)
+                        .frame(minWidth: DesignTokens.Dimensions.minTouchTarget,
+                               minHeight: DesignTokens.Dimensions.minTouchTarget)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .animation(.spring(response: 0.3, dampingFraction: 0.75), value: isColorPaletteOpen)
+                .help(isColorPaletteOpen ? "Done" : "Colour Palette")
+            } else {
+                Button {
+                    toggleDevicePriorityEdit()
+                } label: {
+                    Image(systemName: isEditingDevicePriority ? "checkmark" : "pencil")
+                        .font(.system(size: 12, weight: isEditingDevicePriority ? .bold : .regular))
+                        .symbolRenderingMode(.hierarchical)
+                        .foregroundStyle(DesignTokens.Colors.interactiveDefault)
+                        .frame(minWidth: DesignTokens.Dimensions.minTouchTarget,
+                               minHeight: DesignTokens.Dimensions.minTouchTarget)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .animation(.spring(response: 0.3, dampingFraction: 0.75), value: isEditingDevicePriority)
+                .help(isEditingDevicePriority ? "Done reordering" : "Reorder devices")
+            }
         }
-        .buttonStyle(.plain)
-        .animation(.spring(response: 0.3, dampingFraction: 0.75), value: isEditingDevicePriority)
-        .help(isEditingDevicePriority ? "Done reordering" : "Reorder devices")
     }
 
     // MARK: - Settings Button
@@ -231,10 +247,9 @@ struct MenuBarPopupView: View {
     private func handleEscape() {
         if isSettingsOpen {
             toggleSettings()
-        } else if expandedRowID != nil {
-            // Collapse any expanded app EQ panel
+        } else if expandedEQAppID != nil {
             withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
-                expandedRowID = nil
+                expandedEQAppID = nil
             }
         } else {
             NSApp.keyWindow?.resignKey()
@@ -255,6 +270,57 @@ struct MenuBarPopupView: View {
         }
     }
 
+    // MARK: - FX Tab Content
+
+    @ViewBuilder
+    private var fxTabContent: some View {
+        let _ = theme.themeVersion  // force re-render when derived colours change
+        FXPanelView(
+            settings: audioEngine.fxSettingsForEditing,
+            onSettingsChanged: { audioEngine.setFXSettings($0) },
+            isFXPowerEnabled: audioEngine.isFXEnabled(),
+            onFXPowerToggled: { audioEngine.setFXEnabled($0) },
+            outputDevices: audioEngine.prioritySortedOutputDevices,
+            defaultDeviceUID: audioEngine.deviceVolumeMonitor.defaultDeviceUID,
+            fxDeviceMode: audioEngine.fxDeviceMode,
+            fxDeviceUID: audioEngine.fxDeviceUID,
+            fxSelectedDeviceUIDs: audioEngine.fxSelectedDeviceUIDs,
+            fxFollowsDefault: audioEngine.fxFollowsDefault,
+            onFXDeviceModeChange: { audioEngine.setFXDeviceMode($0) },
+            onFXDeviceSelected: { audioEngine.setFXDevice($0) },
+            onFXDevicesSelected: { audioEngine.setFXSelectedDeviceUIDs($0) },
+            onFXFollowDefault:   { audioEngine.setFXFollowDefault() },
+            displayableApps: audioEngine.displayableApps,
+            expandedEQAppID: fxExpandedEQAppID,
+            onEQToggle: { appID in
+                guard !isEQAnimating else { return }
+                isEQAnimating = true
+                withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+                    fxExpandedEQAppID = (fxExpandedEQAppID == appID) ? nil : appID
+                }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { isEQAnimating = false }
+            },
+            audioEngine: audioEngine
+        )
+        .padding(.top, 4)
+
+        theme.separatorAccentColor
+            .frame(height: 0.5)
+            .padding(.horizontal, 2)
+            .padding(.vertical, DesignTokens.Spacing.xs)
+
+        HStack {
+            Spacer()
+            Button("Quit FineTune") {
+                NSApplication.shared.terminate(nil)
+            }
+            .buttonStyle(.plain)
+            .font(DesignTokens.Typography.caption)
+            .foregroundStyle(DesignTokens.Colors.textSecondary)
+            .glassButtonStyle()
+        }
+    }
+
     // MARK: - Main Content
 
     @ViewBuilder
@@ -262,18 +328,24 @@ struct MenuBarPopupView: View {
         // Devices section (tabbed: Output / Input)
         devicesSection
 
-        Divider()
+        theme.separatorAccentColor
+            .frame(height: 0.5)
+            .padding(.horizontal, 2)
             .padding(.vertical, DesignTokens.Spacing.xs)
 
-        // Apps section (active + pinned inactive)
-        if audioEngine.displayableApps.isEmpty {
-            emptyStateView
-        } else {
-            appsSection
+        // Apps section — only on Playback (output) tab
+        if !showingInputDevices {
+            if audioEngine.displayableApps.isEmpty {
+                emptyStateView
+            } else {
+                appsSection
+            }
+
+            theme.separatorAccentColor
+                .frame(height: 0.5)
+                .padding(.horizontal, 2)
+                .padding(.vertical, DesignTokens.Spacing.xs)
         }
-
-        Divider()
-            .padding(.vertical, DesignTokens.Spacing.xs)
 
         // Quit button
         HStack {
@@ -346,17 +418,15 @@ struct MenuBarPopupView: View {
         return HStack(spacing: 2) {
             // Output (speaker) button
             Button {
-                withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) {
-                    showingInputDevices = false
-                }
+                withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) { activeTab = .output }
             } label: {
                 Image(systemName: "speaker.wave.2.fill")
                     .font(.system(size: iconSize, weight: .medium))
                     .symbolRenderingMode(.hierarchical)
-                    .foregroundStyle(showingInputDevices ? DesignTokens.Colors.textTertiary : DesignTokens.Colors.textPrimary)
+                    .foregroundStyle(activeTab == .output ? DesignTokens.Colors.textPrimary : DesignTokens.Colors.textTertiary)
                     .frame(width: buttonSize, height: buttonSize)
                     .background {
-                        if !showingInputDevices {
+                        if activeTab == .output {
                             RoundedRectangle(cornerRadius: DesignTokens.Dimensions.buttonRadius)
                                 .fill(.white.opacity(0.1))
                                 .matchedGeometryEffect(id: "deviceToggle", in: deviceToggleNamespace)
@@ -369,17 +439,15 @@ struct MenuBarPopupView: View {
 
             // Input (mic) button
             Button {
-                withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) {
-                    showingInputDevices = true
-                }
+                withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) { activeTab = .input }
             } label: {
                 Image(systemName: "mic.fill")
                     .font(.system(size: iconSize, weight: .medium))
                     .symbolRenderingMode(.hierarchical)
-                    .foregroundStyle(showingInputDevices ? DesignTokens.Colors.textPrimary : DesignTokens.Colors.textTertiary)
+                    .foregroundStyle(activeTab == .input ? DesignTokens.Colors.textPrimary : DesignTokens.Colors.textTertiary)
                     .frame(width: buttonSize, height: buttonSize)
                     .background {
-                        if showingInputDevices {
+                        if activeTab == .input {
                             RoundedRectangle(cornerRadius: DesignTokens.Dimensions.buttonRadius)
                                 .fill(.white.opacity(0.1))
                                 .matchedGeometryEffect(id: "deviceToggle", in: deviceToggleNamespace)
@@ -389,6 +457,26 @@ struct MenuBarPopupView: View {
             }
             .buttonStyle(.plain)
             .help("Input Devices")
+
+            // FX tab button
+            Button {
+                withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) { activeTab = .fx }
+            } label: {
+                Text("FX")
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundStyle(activeTab == .fx ? DesignTokens.Colors.textPrimary : DesignTokens.Colors.textTertiary)
+                    .frame(width: buttonSize, height: buttonSize)
+                    .background {
+                        if activeTab == .fx {
+                            RoundedRectangle(cornerRadius: DesignTokens.Dimensions.buttonRadius)
+                                .fill(.white.opacity(0.1))
+                                .matchedGeometryEffect(id: "deviceToggle", in: deviceToggleNamespace)
+                        }
+                    }
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help("Special Effects (FX)")
         }
         .padding(3)
         .background(
@@ -461,36 +549,6 @@ struct MenuBarPopupView: View {
                         return true
                     }
                 }
-
-                // Paired Bluetooth devices (output tab only)
-                if !showingInputDevices {
-                    if !isBluetoothOn {
-                        Text("Turn on Bluetooth to connect devices")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .padding(.top, DesignTokens.Spacing.xs)
-                    } else {
-                        // Filter out any device already in the output list (handles
-                        // IOBluetooth/CoreAudio timing desync where both report the device).
-                        let connectedNames = Set(editableDeviceOrder.map(\.name))
-                        let filteredPaired = pairedDevices.filter { !connectedNames.contains($0.name) }
-                        if !filteredPaired.isEmpty {
-                            SectionHeader(title: "Paired")
-                                .padding(.top, DesignTokens.Spacing.xs)
-
-                            ForEach(filteredPaired) { device in
-                                PairedDeviceRow(
-                                    device: device,
-                                    isConnecting: audioEngine.bluetoothDeviceMonitor.connectingIDs.contains(device.id),
-                                    errorMessage: audioEngine.bluetoothDeviceMonitor.connectionErrors[device.id],
-                                    onConnect: {
-                                        audioEngine.bluetoothDeviceMonitor.connect(device: device)
-                                    }
-                                )
-                            }
-                        }
-                    }
-                }
             } else if showingInputDevices {
                 ForEach(sortedInputDevices) { device in
                     InputDeviceRow(
@@ -512,18 +570,15 @@ struct MenuBarPopupView: View {
                 }
             } else {
                 ForEach(sortedDevices) { device in
-                    let selection = audioEngine.getAutoEQSelection(for: device.uid)
-                    let profileName: String? = {
-                        guard let sel = selection else { return nil }
-                        return audioEngine.autoEQProfileManager.profile(for: sel.profileID)?.name
-                    }()
-
+                    let fxEnabled = audioEngine.isFXEnabled()
                     DeviceRow(
                         device: device,
                         isDefault: device.id == deviceVolumeMonitor.defaultDeviceID,
                         volume: deviceVolumeMonitor.volumes[device.id] ?? 1.0,
                         isMuted: deviceVolumeMonitor.muteStates[device.id] ?? false,
                         hasVolumeControl: audioEngine.hasVolumeControl(for: device.id),
+                        softwareVolume: audioEngine.softwareVolumesByUID[device.uid] ?? 1.0,
+                        isSoftwareMuted: audioEngine.softwareMutesByUID[device.uid] ?? false,
                         onSetDefault: {
                             deviceVolumeMonitor.setDefaultDevice(device.id)
                         },
@@ -534,31 +589,33 @@ struct MenuBarPopupView: View {
                             let currentMute = deviceVolumeMonitor.muteStates[device.id] ?? false
                             deviceVolumeMonitor.setMute(for: device.id, to: !currentMute)
                         },
-                        autoEQProfileName: profileName,
-                        autoEQEnabled: selection?.isEnabled ?? false,
-                        onAutoEQToggle: {
-                            audioEngine.setAutoEQEnabled(for: device.uid, enabled: !(selection?.isEnabled ?? false))
+                        onSoftwareVolumeChange: { volume in
+                            audioEngine.setSoftwareVolume(for: device, to: volume)
                         },
-                        autoEQProfileManager: audioEngine.autoEQProfileManager,
-                        autoEQSelection: selection,
-                        autoEQFavoriteIDs: audioEngine.settingsManager.favoriteAutoEQProfileIDs,
-                        onAutoEQSelect: { profile in
-                            audioEngine.setAutoEQProfile(for: device.uid, profileID: profile?.id)
+                        onSoftwareMuteToggle: {
+                            let currentMute = audioEngine.getSoftwareMute(for: device)
+                            audioEngine.setSoftwareMute(for: device, to: !currentMute)
                         },
-                        onAutoEQImport: {
-                            importAutoEQFile(for: device.uid)
-                        },
-                        onAutoEQToggleFavorite: { id in
-                            if audioEngine.settingsManager.isAutoEQFavorite(id: id) {
-                                audioEngine.settingsManager.unfavoriteAutoEQProfile(id: id)
-                            } else {
-                                audioEngine.settingsManager.favoriteAutoEQProfile(id: id)
-                            }
-                        },
-                        autoEQImportError: autoEQImportError
+                        trailingAccessoryPadding: fxEnabled ? 52 : 0
                     )
+                    .overlay(alignment: .trailing) {
+                        if fxEnabled {
+                            FXDeviceTab(
+                                isActive: !audioEngine.isFXAtDefaultPreset(forDeviceUID: device.uid),
+                                onLeftClick: {
+                                    audioEngine.setFXDevice(device.uid)
+                                    withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) {
+                                        activeTab = .fx
+                                    }
+                                },
+                                onRightClick: {
+                                    audioEngine.resetFXForDevice(device.uid)
+                                }
+                            )
+                            .padding(.trailing, 6)
+                        }
+                    }
                 }
-
             }
         }
     }
@@ -664,7 +721,7 @@ struct MenuBarPopupView: View {
                 onEQChange: { settings in
                     audioEngine.setEQSettings(settings, for: app)
                 },
-                isEQExpanded: expandedRowID == displayableApp.id,
+                isEQExpanded: expandedEQAppID == displayableApp.id,
                 onEQToggle: {
                     toggleEQ(for: displayableApp.id, scrollProxy: scrollProxy)
                 }
@@ -714,7 +771,7 @@ struct MenuBarPopupView: View {
             onEQChange: { settings in
                 audioEngine.setEQSettingsForInactive(settings, identifier: identifier)
             },
-            isEQExpanded: expandedRowID == displayableApp.id,
+            isEQExpanded: expandedEQAppID == displayableApp.id,
             onEQToggle: {
                 toggleEQ(for: displayableApp.id, scrollProxy: scrollProxy)
             }
@@ -727,12 +784,12 @@ struct MenuBarPopupView: View {
         guard !isEQAnimating else { return }
         isEQAnimating = true
 
-        let isExpanding = expandedRowID != appID
+        let isExpanding = expandedEQAppID != appID
         withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
-            if expandedRowID == appID {
-                expandedRowID = nil
+            if expandedEQAppID == appID {
+                expandedEQAppID = nil
             } else {
-                expandedRowID = appID
+                expandedEQAppID = appID
             }
             if isExpanding {
                 scrollProxy.scrollTo(appID, anchor: .top)
@@ -781,30 +838,6 @@ struct MenuBarPopupView: View {
         isEditingDevicePriority = false
     }
 
-    /// Merges device list changes into `editableDeviceOrder` while preserving the user's reordering.
-    /// Existing devices are refreshed (CoreAudio may reassign AudioDeviceIDs), removed devices are
-    /// dropped, and new devices are appended at the end.
-    private func mergeDeviceChanges(from latest: [AudioDevice]) {
-        let latestByUID = Dictionary(latest.map { ($0.uid, $0) }, uniquingKeysWith: { _, new in new })
-
-        withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
-            // Remove devices that disappeared
-            editableDeviceOrder.removeAll { latestByUID[$0.uid] == nil }
-
-            // Refresh existing devices in case AudioDeviceID changed
-            for i in editableDeviceOrder.indices {
-                if let updated = latestByUID[editableDeviceOrder[i].uid] {
-                    editableDeviceOrder[i] = updated
-                }
-            }
-
-            // Append newly appeared devices
-            let existingUIDs = Set(editableDeviceOrder.map(\.uid))
-            let newDevices = latest.filter { !existingUIDs.contains($0.uid) }
-            editableDeviceOrder.append(contentsOf: newDevices)
-        }
-    }
-
     // MARK: - Helpers
 
     /// Recomputes sorted output devices using priority order
@@ -815,36 +848,6 @@ struct MenuBarPopupView: View {
     /// Recomputes sorted input devices using priority order
     private func updateSortedInputDevices() {
         sortedInputDevices = audioEngine.prioritySortedInputDevices
-    }
-
-    /// Opens a file panel to import a ParametricEQ.txt for a device
-    private func importAutoEQFile(for deviceUID: String) {
-        // Dismiss the main popup so the file picker isn't obscured
-        NSApp.keyWindow?.resignKey()
-
-        let panel = NSOpenPanel()
-        panel.allowedContentTypes = [UTType.plainText]
-        panel.allowsMultipleSelection = false
-        panel.canChooseDirectories = false
-        panel.message = "Select an AutoEQ ParametricEQ.txt file"
-        panel.begin { response in
-            guard response == .OK, let url = panel.url else { return }
-            let name = url.deletingPathExtension().lastPathComponent
-            Task { @MainActor in
-                if let profile = audioEngine.autoEQProfileManager.importProfile(from: url, name: name) {
-                    audioEngine.setAutoEQProfile(for: deviceUID, profileID: profile.id)
-                    autoEQImportError = nil
-                } else {
-                    autoEQImportError = "Could not read profile — check file format"
-                    importErrorClearTask?.cancel()
-                    importErrorClearTask = Task {
-                        try? await Task.sleep(for: .seconds(3))
-                        guard !Task.isCancelled else { return }
-                        withAnimation { autoEQImportError = nil }
-                    }
-                }
-            }
-        }
     }
 
     /// Activates an app, bringing it to foreground and restoring minimized windows

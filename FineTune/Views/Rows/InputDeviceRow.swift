@@ -126,8 +126,7 @@ struct InputDeviceRow: View {
                     id: 1,
                     uid: "built-in-mic",
                     name: "MacBook Pro Microphone",
-                    icon: nil,
-                    supportsAutoEQ: false
+                    icon: nil
                 ),
                 isDefault: true,
                 volume: 0.75,
@@ -142,8 +141,7 @@ struct InputDeviceRow: View {
                     id: 2,
                     uid: "usb-mic",
                     name: "Blue Yeti",
-                    icon: nil,
-                    supportsAutoEQ: false
+                    icon: nil
                 ),
                 isDefault: false,
                 volume: 1.0,
@@ -158,8 +156,7 @@ struct InputDeviceRow: View {
                     id: 3,
                     uid: "airpods-mic",
                     name: "AirPods Pro",
-                    icon: nil,
-                    supportsAutoEQ: false
+                    icon: nil
                 ),
                 isDefault: false,
                 volume: 0.5,

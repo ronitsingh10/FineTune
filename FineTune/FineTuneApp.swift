@@ -10,7 +10,14 @@ private let logger = Logger(subsystem: "com.finetuneapp.FineTune", category: "Ap
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     var audioEngine: AudioEngine?
-    
+
+    func applicationWillTerminate(_ notification: Notification) {
+        // Flush settings synchronously so debounced saves aren't lost on quit.
+        // This is the single, authoritative flush path — driven by the delegate
+        // which holds the same AudioEngine instance that the UI writes through.
+        audioEngine?.settingsManager.flushSync()
+    }
+
     func application(_ application: NSApplication, open urls: [URL]) {
         guard let audioEngine = audioEngine else {
             return
@@ -29,6 +36,7 @@ struct FineTuneApp: App {
     @State private var audioEngine: AudioEngine
     @StateObject private var updateManager = UpdateManager()
     @State private var showMenuBarExtra = true
+    @State private var themeManager = ThemeManager()
 
     /// Icon style captured at launch (doesn't change during runtime)
     private let launchIconStyle: MenuBarIconStyle
@@ -71,12 +79,13 @@ struct FineTuneApp: App {
 
     @ViewBuilder
     private var menuBarContent: some View {
-        MenuBarPopupView(
+        ThemedContainer(
             audioEngine: audioEngine,
             deviceVolumeMonitor: audioEngine.deviceVolumeMonitor,
             updateManager: updateManager,
             launchIconStyle: launchIconStyle
         )
+        .environment(themeManager)
     }
 
     init() {
@@ -86,8 +95,7 @@ struct FineTuneApp: App {
         OrphanedTapCleanup.destroyOrphanedDevices()
 
         let settings = SettingsManager()
-        let profileManager = AutoEQProfileManager()
-        let engine = AudioEngine(settingsManager: settings, autoEQProfileManager: profileManager)
+        let engine = AudioEngine(settingsManager: settings)
         _audioEngine = State(initialValue: engine)
 
         // Pass engine to AppDelegate
@@ -117,13 +125,31 @@ struct FineTuneApp: App {
             // If not granted, notifications will silently not appear - acceptable behavior
         }
 
-        // Flush settings on app termination to prevent data loss from debounced saves
-        NotificationCenter.default.addObserver(
-            forName: NSApplication.willTerminateNotification,
-            object: nil,
-            queue: .main
-        ) { [settings] _ in
-            settings.flushSync()
-        }
+        // Settings flush on termination is handled by AppDelegate.applicationWillTerminate
+        // to avoid multiple observers firing if FineTuneApp.init() is called more than once.
+    }
+}
+
+// MARK: - ThemedContainer
+// A dedicated View so that @Observable ThemeManager changes trigger re-renders of
+// .tint() and .preferredColorScheme(). An App's @ViewBuilder body doesn't re-evaluate
+// on @Observable changes, so we need a real View body to track them.
+private struct ThemedContainer: View {
+    let audioEngine: AudioEngine
+    let deviceVolumeMonitor: DeviceVolumeMonitor
+    let updateManager: UpdateManager
+    let launchIconStyle: MenuBarIconStyle
+
+    @Environment(ThemeManager.self) private var theme
+
+    var body: some View {
+        MenuBarPopupView(
+            audioEngine: audioEngine,
+            deviceVolumeMonitor: deviceVolumeMonitor,
+            updateManager: updateManager,
+            launchIconStyle: launchIconStyle
+        )
+        .tint(theme.accentColor)
+        .preferredColorScheme(theme.colorScheme)
     }
 }

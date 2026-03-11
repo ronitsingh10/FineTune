@@ -1,4 +1,4 @@
-// FineTune/Audio/Engine/SoftLimiter.swift
+// FineTune/Audio/SoftLimiter.swift
 import Accelerate
 
 /// RT-safe soft-knee limiter using asymptotic compression.
