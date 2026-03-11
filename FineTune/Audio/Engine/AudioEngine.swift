@@ -241,6 +241,16 @@ final class AudioEngine {
                 self?.bluetoothDeviceMonitor.notifyDeviceAppearedInCoreAudio()
             }
 
+            deviceMonitor.onDeviceBecameAlive = { [weak self] deviceUID, deviceName in
+                self?.handleDeviceBecameAlive(deviceUID, name: deviceName)
+                self?.bluetoothDeviceMonitor.notifyDeviceAppearedInCoreAudio()
+            }
+
+            deviceMonitor.onInputDeviceBecameAlive = { [weak self] deviceUID, deviceName in
+                self?.settingsManager.ensureInputDeviceInPriority(deviceUID)
+                self?.handleInputDeviceBecameAlive(deviceUID, name: deviceName)
+            }
+
             deviceMonitor.onInputDeviceDisconnected = { [weak self] deviceUID, deviceName in
                 self?.logger.info("Input device disconnected: \(deviceName) (\(deviceUID))")
                 self?.handleInputDeviceDisconnected(deviceUID)
@@ -1174,6 +1184,20 @@ final class AudioEngine {
             )
             logger.debug("Entered PENDING_AUTOSWITCH for \(deviceName) (\(timeout)s grace)")
         }
+    }
+
+    /// Called when an existing device transitions from not-alive to alive.
+    /// This handles devices like wireless headsets whose USB base station is present
+    /// but only become alive when the headset powers on — the device list doesn't change,
+    /// so handleDeviceConnected never fires. Re-run the same logic as device connect.
+    private func handleDeviceBecameAlive(_ deviceUID: String, name deviceName: String) {
+        logger.info("Device became alive: \(deviceName) (\(deviceUID)), re-evaluating priority")
+        handleDeviceConnected(deviceUID, name: deviceName)
+    }
+
+    private func handleInputDeviceBecameAlive(_ deviceUID: String, name deviceName: String) {
+        logger.info("Input device became alive: \(deviceName) (\(deviceUID)), re-evaluating input priority")
+        handleInputDeviceConnected(deviceUID, name: deviceName)
     }
 
     private func showReconnectNotification(deviceName: String, affectedApps: [AudioApp]) {
