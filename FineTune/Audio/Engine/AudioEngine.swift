@@ -689,14 +689,17 @@ final class AudioEngine {
         }
     }
 
-    /// Sets the system default output device and registers an echo so the resulting
-    /// CoreAudio callback is consumed rather than treated as an external change.
+    /// Sets the system default output device, routes followsDefault apps, and registers
+    /// an echo so the resulting CoreAudio callback is consumed rather than treated as
+    /// an external change.
     /// UI code should call this instead of `deviceVolumeMonitor.setDefaultDevice` directly.
     @discardableResult
     func setDefaultOutputDevice(_ deviceID: AudioDeviceID) -> Bool {
         guard deviceVolumeMonitor.setDefaultDevice(deviceID) else { return false }
         if let uid = deviceMonitor.outputDevices.first(where: { $0.id == deviceID })?.uid {
             outputEchoTracker.increment(uid)
+            lastConfirmedDefaultUID = uid
+            routeFollowsDefaultApps(to: uid)
         }
         return true
     }

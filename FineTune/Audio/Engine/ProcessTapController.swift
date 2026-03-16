@@ -12,9 +12,10 @@ import os
 //    - Property writes to nonisolated(unsafe) vars (_volume, _isMuted, etc.)
 //    - This class is NOT @MainActor itself because the HAL I/O callback is not on main.
 //
-// 2. **HAL I/O thread (real-time)**: Audio processing callbacks.
-//    - processAudio(), processAudioSecondary()
-//    - Only reads nonisolated(unsafe) vars — never writes except _peakLevel/_secondaryPeakLevel
+// 2. **HAL I/O thread (real-time)**: Audio processing callback.
+//    - processAudioCallback() — unified callback with runtime role via callbackID
+//    - Reads nonisolated(unsafe) vars; writes _peakLevel/_secondaryPeakLevel,
+//      _primaryCurrentVolume/_secondaryCurrentVolume, _lastRenderHostTime, _hasRenderedAudio
 //    - MUST NOT allocate, lock, log, or call ObjC. See .claude/rules/rt-safety.md
 //
 // The nonisolated(unsafe) annotation marks variables that cross the thread boundary.
@@ -70,6 +71,16 @@ final class ProcessTapController: ProcessTapControlling {
     private nonisolated(unsafe) var _activationHostTime: UInt64 = 0
     /// Set once any audio callback has rendered at least one buffer.
     private nonisolated(unsafe) var _hasRenderedAudio: Bool = false
+
+    /// Callback role identification — RT-safe via atomic UInt32 reads.
+    /// Each IO proc closure captures an immutable callbackID at creation.
+    /// The callback compares against these to determine primary/secondary role.
+    /// After promotion, _primaryCallbackID is reassigned so the promoted callback
+    /// seamlessly switches to primary-role behavior on its next invocation.
+    private nonisolated(unsafe) var _primaryCallbackID: UInt32 = 0
+    private nonisolated(unsafe) var _secondaryCallbackID: UInt32 = 0
+    /// Monotonic counter for unique callback IDs. Only written from main thread.
+    private var nextCallbackID: UInt32 = 0
 
     /// Crossfade state machine (RT-safe).
     /// During device switch, we run two taps simultaneously with complementary gain curves:
@@ -406,6 +417,9 @@ final class ProcessTapController: ProcessTapControlling {
         autoEQProcessor = AutoEQProcessor(sampleRate: sampleRate)
 
         // Create IO proc with gain processing
+        nextCallbackID += 1
+        _primaryCallbackID = nextCallbackID
+        let activateCallbackID = nextCallbackID
         err = AudioDeviceCreateIOProcIDWithBlock(&primaryResources.deviceProcID, primaryResources.aggregateDeviceID, queue) { [weak self] _, inInputData, _, outOutputData, _ in
             guard let self else {
                 // Zero output to prevent garbage audio if controller is deallocated
@@ -415,7 +429,7 @@ final class ProcessTapController: ProcessTapControlling {
                 }
                 return
             }
-            self.processAudio(inInputData, to: outOutputData)
+            self.processAudioCallback(inInputData, to: outOutputData, callbackID: activateCallbackID)
         }
         guard err == noErr else {
             cleanupPartialActivation()
@@ -520,6 +534,8 @@ final class ProcessTapController: ProcessTapControlling {
         logger.debug("Invalidating tap for \(self.app.name)")
 
         crossfadeState.complete()
+        _primaryCallbackID = 0
+        _secondaryCallbackID = 0
 
         // destroyAsync() captures IDs, clears instance state immediately,
         // then dispatches blocking teardown to a background queue.
@@ -691,6 +707,9 @@ final class ProcessTapController: ProcessTapControlling {
         }
         secondaryAutoEQProcessor = secAutoEQ
 
+        nextCallbackID += 1
+        _secondaryCallbackID = nextCallbackID
+        let secondaryCallbackID = nextCallbackID
         err = AudioDeviceCreateIOProcIDWithBlock(&secondaryResources.deviceProcID, secondaryResources.aggregateDeviceID, queue) { [weak self] _, inInputData, _, outOutputData, _ in
             guard let self else {
                 // Zero output to prevent garbage audio if controller is deallocated
@@ -700,7 +719,7 @@ final class ProcessTapController: ProcessTapControlling {
                 }
                 return
             }
-            self.processAudioSecondary(inInputData, to: outOutputData)
+            self.processAudioCallback(inInputData, to: outOutputData, callbackID: secondaryCallbackID)
         }
         guard err == noErr else {
             secondaryResources.destroy()
@@ -723,6 +742,7 @@ final class ProcessTapController: ProcessTapControlling {
     /// Tears down any in-progress secondary tap (used by re-entrant crossfade guard).
     private func cleanupSecondaryTap() {
         guard secondaryResources.isActive else { return }
+        _secondaryCallbackID = 0
         secondaryResources.destroy()
         secondaryEQProcessor = nil
         secondaryAutoEQProcessor = nil
@@ -761,6 +781,14 @@ final class ProcessTapController: ProcessTapControlling {
         _secondaryCurrentVolume = 0
         _primaryPreferredStereoLeftChannel = _secondaryPreferredStereoLeftChannel
         _primaryPreferredStereoRightChannel = _secondaryPreferredStereoRightChannel
+
+        // Reassign callback role AFTER all state is swapped.
+        // The barrier ensures the HAL I/O thread sees the updated EQ processors,
+        // volume, ramp coefficient, and stereo channels BEFORE it sees the new
+        // _primaryCallbackID and switches to primary-role behavior.
+        OSMemoryBarrier()  // Flush all prior state stores before publishing new role
+        _primaryCallbackID = _secondaryCallbackID
+        _secondaryCallbackID = 0
 
         // CrossfadeState reset is handled by the caller (performCrossfadeSwitch calls complete())
     }
@@ -810,8 +838,10 @@ final class ProcessTapController: ProcessTapControlling {
         let (newTapDesc, tapID) = try createProcessTap(preferredDeviceUID: preferredTapSourceDeviceUID)
         newResources.tapDescription = newTapDesc
         // SAFETY: _forceSilence must be true before reaching here (set by performDestructiveDeviceSwitch).
-        // The old IO proc is still running until primaryResources.destroy() below, but _forceSilence
-        // causes processAudio() to return early, so these writes won't race with processMappedBuffers().
+        // The old IO proc is still running until primaryResources.destroy() below, but both
+        // _forceSilence (primary role zeros output) and the stale callbackID (after reassignment
+        // below, old callback no longer matches _primaryCallbackID → zeros output) prevent races
+        // with processMappedBuffers().
         let preferred = preferredStereoChannels(for: outputUIDs.first)
         _primaryPreferredStereoLeftChannel = preferred.left
         _primaryPreferredStereoRightChannel = preferred.right
@@ -840,6 +870,9 @@ final class ProcessTapController: ProcessTapControlling {
             throw CrossfadeError.deviceNotReady
         }
 
+        nextCallbackID += 1
+        _primaryCallbackID = nextCallbackID
+        let switchCallbackID = nextCallbackID
         err = AudioDeviceCreateIOProcIDWithBlock(&newResources.deviceProcID, newResources.aggregateDeviceID, queue) { [weak self] _, inInputData, _, outOutputData, _ in
             guard let self else {
                 // Zero output to prevent garbage audio if controller is deallocated
@@ -849,7 +882,7 @@ final class ProcessTapController: ProcessTapControlling {
                 }
                 return
             }
-            self.processAudio(inInputData, to: outOutputData)
+            self.processAudioCallback(inInputData, to: outOutputData, callbackID: switchCallbackID)
         }
         guard err == noErr else {
             newResources.destroy()
@@ -1024,96 +1057,60 @@ final class ProcessTapController: ProcessTapControlling {
         }
     }
 
-    // MARK: - RT-Safe Audio Callbacks (DO NOT MODIFY WITHOUT RT-SAFETY REVIEW)
-    // These callbacks run on CoreAudio's real-time HAL I/O thread.
+    // MARK: - RT-Safe Audio Callback (DO NOT MODIFY WITHOUT RT-SAFETY REVIEW)
+    // This callback runs on CoreAudio's real-time HAL I/O thread.
     // See .claude/rules/rt-safety.md for constraints.
 
-    /// Audio processing callback for PRIMARY tap.
-    /// **RT SAFETY CONSTRAINTS - DO NOT:**
+    /// Unified audio processing callback for both primary and secondary taps.
+    /// Role is determined at runtime via callbackID comparison (atomic UInt32 read).
+    ///
+    /// After crossfade promotion, the promoted IO proc's callbackID is reassigned
+    /// to match _primaryCallbackID, so it seamlessly switches to primary-role
+    /// state (correct peak level, EQ processors, volume variable, crossfade curve).
+    ///
+    /// **RT SAFETY CONSTRAINTS — DO NOT:**
     /// - Allocate memory (malloc, Array append, String operations)
     /// - Acquire locks/mutexes
     /// - Use Objective-C messaging
     /// - Call print/logging functions
     /// - Perform file/network I/O
-    private func processAudio(_ inputBufferList: UnsafePointer<AudioBufferList>, to outputBufferList: UnsafeMutablePointer<AudioBufferList>) {
+    private func processAudioCallback(
+        _ inputBufferList: UnsafePointer<AudioBufferList>,
+        to outputBufferList: UnsafeMutablePointer<AudioBufferList>,
+        callbackID: UInt32
+    ) {
         _lastRenderHostTime = mach_absolute_time()
         _hasRenderedAudio = true
 
+        let isPrimary = (callbackID == _primaryCallbackID)
+        let isSecondary = !isPrimary && (callbackID == _secondaryCallbackID)
+
         let outputBuffers = UnsafeMutableAudioBufferListPointer(outputBufferList)
+
+        // Stale callback from a previous generation (e.g., old promoted tap after
+        // a second crossfade reassigned _primaryCallbackID) — zero output safely.
+        guard isPrimary || isSecondary else {
+            for buf in outputBuffers {
+                if let data = buf.mData { memset(data, 0, Int(buf.mDataByteSize)) }
+            }
+            return
+        }
+
         // SAFETY: Mutable cast required by UnsafeMutableAudioBufferListPointer API,
         // but we only read through this pointer. Input buffer data is owned by CoreAudio
         // and valid for callback duration.
         let inputBuffers = UnsafeMutableAudioBufferListPointer(UnsafeMutablePointer(mutating: inputBufferList))
 
-        if _forceSilence {
-            for outputBuffer in outputBuffers {
-                guard let outputData = outputBuffer.mData else { continue }
-                memset(outputData, 0, Int(outputBuffer.mDataByteSize))
+        // Force silence — primary only. During destructive device switch,
+        // _forceSilence is set before the old IO proc is torn down.
+        if isPrimary && _forceSilence {
+            for buf in outputBuffers {
+                if let data = buf.mData { memset(data, 0, Int(buf.mDataByteSize)) }
             }
             return
         }
 
         // Track peak level for VU meter
-        var maxPeak: Float = 0.0
-        for inputBuffer in inputBuffers {
-            guard let inputData = inputBuffer.mData else { continue }
-            let inputSamples = inputData.assumingMemoryBound(to: Float.self)
-            let channels = max(1, Int(inputBuffer.mNumberChannels))
-            let sampleCount = Int(inputBuffer.mDataByteSize) / MemoryLayout<Float>.size
-            for i in stride(from: 0, to: sampleCount, by: channels) {
-                let absSample = abs(inputSamples[i])
-                if absSample > maxPeak {
-                    maxPeak = absSample
-                }
-            }
-        }
-        let rawPeak = min(maxPeak, 1.0)
-        _peakLevel = _peakLevel + levelSmoothingFactor * (rawPeak - _peakLevel)
-
-        if _isMuted {
-            for outputBuffer in outputBuffers {
-                guard let outputData = outputBuffer.mData else { continue }
-                memset(outputData, 0, Int(outputBuffer.mDataByteSize))
-            }
-            return
-        }
-
-        let targetVol = _volume
-        var currentVol = _primaryCurrentVolume
-
-        // Equal-power crossfade: primary uses cosine curve (1→0), secondary uses sine curve (0→1)
-        // cos²(x) + sin²(x) = 1, so total power remains constant throughout transition.
-        // CrossfadeState.primaryMultiplier handles all phase logic including the race condition
-        // guard (returns 0.0 when progress >= 1.0 in idle phase after crossfade completes).
-        let crossfadeMultiplier = crossfadeState.primaryMultiplier
-
-        processMappedBuffers(
-            inputBuffers: inputBuffers,
-            outputBuffers: outputBuffers,
-            targetVol: targetVol,
-            crossfadeMultiplier: crossfadeMultiplier,
-            rampCoefficient: rampCoefficient,
-            preferredStereoLeft: _primaryPreferredStereoLeftChannel,
-            preferredStereoRight: _primaryPreferredStereoRightChannel,
-            currentVol: &currentVol,
-            eqProc: eqProcessor,
-            autoEQProc: autoEQProcessor
-        )
-
-        _primaryCurrentVolume = currentVol
-    }
-
-    /// Audio processing callback for SECONDARY tap during crossfade.
-    private func processAudioSecondary(_ inputBufferList: UnsafePointer<AudioBufferList>, to outputBufferList: UnsafeMutablePointer<AudioBufferList>) {
-        _lastRenderHostTime = mach_absolute_time()
-        _hasRenderedAudio = true
-
-        let outputBuffers = UnsafeMutableAudioBufferListPointer(outputBufferList)
-        // SAFETY: Mutable cast required by UnsafeMutableAudioBufferListPointer API,
-        // but we only read through this pointer. Input buffer data is owned by CoreAudio
-        // and valid for callback duration.
-        let inputBuffers = UnsafeMutableAudioBufferListPointer(UnsafeMutablePointer(mutating: inputBufferList))
-
         var maxPeak: Float = 0.0
         var totalSamplesThisBuffer: Int = 0
         for inputBuffer in inputBuffers {
@@ -1126,45 +1123,75 @@ final class ProcessTapController: ProcessTapControlling {
             }
             for i in stride(from: 0, to: sampleCount, by: channels) {
                 let absSample = abs(inputSamples[i])
-                if absSample > maxPeak {
-                    maxPeak = absSample
-                }
+                if absSample > maxPeak { maxPeak = absSample }
             }
         }
         let rawPeak = min(maxPeak, 1.0)
-        _secondaryPeakLevel = _secondaryPeakLevel + levelSmoothingFactor * (rawPeak - _secondaryPeakLevel)
 
-        // Update crossfade progress via state machine (handles sample counting + phase logic)
-        _ = crossfadeState.updateProgress(samples: totalSamplesThisBuffer)
+        if isPrimary {
+            _peakLevel = _peakLevel + levelSmoothingFactor * (rawPeak - _peakLevel)
+        } else {
+            _secondaryPeakLevel = _secondaryPeakLevel + levelSmoothingFactor * (rawPeak - _secondaryPeakLevel)
+            // Only the secondary callback advances crossfade progress (single-writer pattern).
+            _ = crossfadeState.updateProgress(samples: totalSamplesThisBuffer)
+        }
 
         if _isMuted {
-            for outputBuffer in outputBuffers {
-                guard let outputData = outputBuffer.mData else { continue }
-                memset(outputData, 0, Int(outputBuffer.mDataByteSize))
+            for buf in outputBuffers {
+                if let data = buf.mData { memset(data, 0, Int(buf.mDataByteSize)) }
             }
             return
         }
 
         let targetVol = _volume
-        var currentVol = _secondaryCurrentVolume
+        var currentVol: Float
+        let crossfadeMultiplier: Float
+        let rampCoeff: Float
+        let stereoLeft: Int
+        let stereoRight: Int
+        let eqProc: EQProcessor?
+        let autoEQProc: AutoEQProcessor?
 
-        // CrossfadeState.secondaryMultiplier handles all phase logic:
-        // .warmingUp → 0.0 (muted), .crossfading → sin(progress*π/2), .idle → 1.0
-        let crossfadeMultiplier = crossfadeState.secondaryMultiplier
+        if isPrimary {
+            currentVol = _primaryCurrentVolume
+            // Equal-power crossfade: primary uses cosine curve (1→0).
+            // CrossfadeState.primaryMultiplier handles all phase logic including the
+            // race condition guard (returns 0.0 when progress >= 1.0 in idle phase).
+            crossfadeMultiplier = crossfadeState.primaryMultiplier
+            rampCoeff = rampCoefficient
+            stereoLeft = _primaryPreferredStereoLeftChannel
+            stereoRight = _primaryPreferredStereoRightChannel
+            eqProc = eqProcessor
+            autoEQProc = autoEQProcessor
+        } else {
+            currentVol = _secondaryCurrentVolume
+            // Secondary uses sine curve (0→1).
+            // .warmingUp → 0.0 (muted), .crossfading → sin(progress*π/2), .idle → 1.0
+            crossfadeMultiplier = crossfadeState.secondaryMultiplier
+            rampCoeff = secondaryRampCoefficient
+            stereoLeft = _secondaryPreferredStereoLeftChannel
+            stereoRight = _secondaryPreferredStereoRightChannel
+            eqProc = secondaryEQProcessor
+            autoEQProc = secondaryAutoEQProcessor
+        }
 
         processMappedBuffers(
             inputBuffers: inputBuffers,
             outputBuffers: outputBuffers,
             targetVol: targetVol,
             crossfadeMultiplier: crossfadeMultiplier,
-            rampCoefficient: secondaryRampCoefficient,
-            preferredStereoLeft: _secondaryPreferredStereoLeftChannel,
-            preferredStereoRight: _secondaryPreferredStereoRightChannel,
+            rampCoefficient: rampCoeff,
+            preferredStereoLeft: stereoLeft,
+            preferredStereoRight: stereoRight,
             currentVol: &currentVol,
-            eqProc: secondaryEQProcessor,
-            autoEQProc: secondaryAutoEQProcessor
+            eqProc: eqProc,
+            autoEQProc: autoEQProc
         )
 
-        _secondaryCurrentVolume = currentVol
+        if isPrimary {
+            _primaryCurrentVolume = currentVol
+        } else {
+            _secondaryCurrentVolume = currentVol
+        }
     }
 }
