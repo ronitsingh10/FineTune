@@ -1,7 +1,13 @@
-// FineTune/Audio/AudioProcessMonitor.swift
+// FineTune/Audio/Monitors/AudioProcessMonitor.swift
 import AppKit
 import AudioToolbox
 import os
+
+/// Lightweight value for detecting process list changes without comparing icons/names.
+private struct AppFingerprint: Hashable {
+    let pid: pid_t
+    let objectIDs: [AudioObjectID]
+}
 
 @Observable
 @MainActor
@@ -31,6 +37,13 @@ final class AudioProcessMonitor {
         "com.apple.NotificationCenter",
         "com.apple.UserNotifications",
         "com.apple.usernotifications",
+        "com.apple.SpeechRecognitionCore",
+        "com.apple.speech",
+        "com.apple.dictation",
+        "com.apple.corespeech",
+        "com.apple.CoreSpeech",
+        "com.apple.VoiceControl",
+        "com.apple.voicecontrol",
     ]
 
     /// Process names for system daemons (fallback when bundle ID is nil or different format)
@@ -39,6 +52,9 @@ final class AudioProcessMonitor {
         "systemsoundserv",
         "coreaudiod",
         "audiomxd",
+        "speechrecognitiond",
+        "dictationd",
+        "corespeech",
     ]
 
     /// Returns true if the bundle ID or process name indicates a system daemon that should be filtered
@@ -60,9 +76,10 @@ final class AudioProcessMonitor {
     }
 
     // Property listeners
-    private nonisolated(unsafe) var processListListenerBlock: AudioObjectPropertyListenerBlock?
-    private nonisolated(unsafe) var processListenerBlocks: [AudioObjectID: AudioObjectPropertyListenerBlock] = [:]
+    private var processListListenerBlock: AudioObjectPropertyListenerBlock?
+    private var processListenerBlocks: [AudioObjectID: AudioObjectPropertyListenerBlock] = [:]
     private var monitoredProcesses: Set<AudioObjectID> = []
+    private var periodicRefreshTask: Task<Void, Never>?
 
     private var processListAddress = AudioObjectPropertyAddress(
         mSelector: kAudioHardwarePropertyProcessObjectList,
@@ -85,10 +102,13 @@ final class AudioProcessMonitor {
 
     /// Finds the responsible application for a helper/XPC process.
     /// Uses Apple's responsibility API first, falls back to process tree walking.
-    private func findResponsibleApp(for pid: pid_t, in runningApps: [NSRunningApplication]) -> NSRunningApplication? {
+    private func findResponsibleApp(
+        for pid: pid_t,
+        in runningAppsByPID: [pid_t: NSRunningApplication]
+    ) -> NSRunningApplication? {
         // First try Apple's responsibility API (works for XPC services like Safari's WebKit processes)
         if let responsiblePID = getResponsiblePID(for: pid),
-           let app = runningApps.first(where: { $0.processIdentifier == responsiblePID }),
+           let app = runningAppsByPID[responsiblePID],
            app.bundleURL?.pathExtension == "app" {
             return app
         }
@@ -101,7 +121,7 @@ final class AudioProcessMonitor {
             visited.insert(currentPID)
 
             // Check if this PID is a proper app bundle (.app, not .xpc service)
-            if let app = runningApps.first(where: { $0.processIdentifier == currentPID }),
+            if let app = runningAppsByPID[currentPID],
                app.bundleURL?.pathExtension == "app" {
                 return app
             }
@@ -129,7 +149,6 @@ final class AudioProcessMonitor {
         // Set up listener first
         processListListenerBlock = { [weak self] numberAddresses, addresses in
             Task { @MainActor [weak self] in
-                self?.logger.debug("[DIAG] kAudioHardwarePropertyProcessObjectList fired")
                 self?.refresh()
             }
         }
@@ -147,10 +166,17 @@ final class AudioProcessMonitor {
 
         // Initial refresh
         refresh()
+
+        // Periodic refresh as safety net — CoreAudio property listeners can miss
+        // notifications during rapid process lifecycle changes (quit + relaunch).
+        startPeriodicRefresh()
     }
 
     func stop() {
         logger.debug("Stopping audio process monitor")
+
+        periodicRefreshTask?.cancel()
+        periodicRefreshTask = nil
 
         // Remove process list listener
         if let block = processListListenerBlock {
@@ -162,24 +188,41 @@ final class AudioProcessMonitor {
         removeAllProcessListeners()
     }
 
+    private func startPeriodicRefresh() {
+        periodicRefreshTask?.cancel()
+        periodicRefreshTask = Task { @MainActor [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(3))
+                guard !Task.isCancelled, let self else { return }
+                self.refresh()
+            }
+        }
+    }
+
     private func refresh() {
         do {
             let processIDs = try AudioObjectID.readProcessList()
             let runningApps = NSWorkspace.shared.runningApplications
+            let runningAppsByPID = Dictionary(
+                runningApps.map { ($0.processIdentifier, $0) },
+                uniquingKeysWith: { _, latest in latest }
+            )
             let myPID = ProcessInfo.processInfo.processIdentifier
 
-            var apps: [AudioApp] = []
+            var appsByPID: [pid_t: AudioApp] = [:]
 
             for objectID in processIDs {
-                guard objectID.readProcessIsRunning() else { continue }
                 guard let pid = try? objectID.readProcessPID(), pid != myPID else { continue }
+                guard objectID.readProcessIsRunning() else { continue }
 
                 // Try to find the parent app (for helper processes like Safari Graphics and Media)
-                let directApp = runningApps.first { $0.processIdentifier == pid }
+                let directApp = runningAppsByPID[pid]
 
                 // Check if it's a real app bundle (.app), not an XPC service (.xpc)
                 let isRealApp = directApp?.bundleURL?.pathExtension == "app"
-                let resolvedApp = isRealApp ? directApp : findResponsibleApp(for: pid, in: runningApps)
+                let resolvedApp = isRealApp ? directApp : findResponsibleApp(for: pid, in: runningAppsByPID)
+                let parentPID = resolvedApp?.processIdentifier ?? pid
+                let isHelper = parentPID != pid
 
                 // Use resolved app's info, fall back to Core Audio bundle ID
                 let name = resolvedApp?.localizedName
@@ -193,21 +236,46 @@ final class AudioProcessMonitor {
                 // Skip system daemons (siri, coreaudio, etc.) - they shouldn't appear in the apps list
                 if isSystemDaemon(bundleID: bundleID, name: name) { continue }
 
-                let app = AudioApp(
-                    id: pid,
-                    objectID: objectID,
-                    name: name,
-                    icon: icon,
-                    bundleID: bundleID
-                )
-                apps.append(app)
+                // Merge helper process objectIDs into parent app entry
+                if let existing = appsByPID[parentPID] {
+                    if !existing.processObjectIDs.contains(objectID) {
+                        var mergedIDs = existing.processObjectIDs
+                        mergedIDs.append(objectID)
+                        mergedIDs.sort()
+                        appsByPID[parentPID] = AudioApp(
+                            id: existing.id,
+                            processObjectIDs: mergedIDs,
+                            name: existing.name,
+                            icon: existing.icon,
+                            bundleID: existing.bundleID,
+                            isHelperBacked: existing.isHelperBacked || isHelper
+                        )
+                    }
+                } else {
+                    appsByPID[parentPID] = AudioApp(
+                        id: parentPID,
+                        processObjectIDs: [objectID],
+                        name: name,
+                        icon: icon,
+                        bundleID: bundleID,
+                        isHelperBacked: isHelper
+                    )
+                }
             }
 
             // Update per-process listeners
             updateProcessListeners(for: processIDs)
 
-            activeApps = apps.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
-            onAppsChanged?(activeApps)
+            let sorted = appsByPID.values.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+
+            // Only fire callback if the app list actually changed (avoids churn from periodic refresh)
+            let oldSet = Set(activeApps.map { AppFingerprint(pid: $0.id, objectIDs: $0.processObjectIDs) })
+            let newSet = Set(sorted.map { AppFingerprint(pid: $0.id, objectIDs: $0.processObjectIDs) })
+
+            activeApps = sorted
+            if oldSet != newSet {
+                onAppsChanged?(activeApps)
+            }
 
         } catch {
             logger.error("Failed to refresh process list: \(error.localizedDescription)")
@@ -274,25 +342,4 @@ final class AudioProcessMonitor {
         processListenerBlocks.removeAll()
     }
 
-    nonisolated deinit {
-        // HAL C functions don't require actor isolation
-        if let block = processListListenerBlock {
-            var addr = AudioObjectPropertyAddress(
-                mSelector: kAudioHardwarePropertyProcessObjectList,
-                mScope: kAudioObjectPropertyScopeGlobal,
-                mElement: kAudioObjectPropertyElementMain
-            )
-            AudioObjectRemovePropertyListenerBlock(.system, &addr, .main, block)
-        }
-
-        // Remove all per-process listeners
-        for (objectID, block) in processListenerBlocks {
-            var addr = AudioObjectPropertyAddress(
-                mSelector: kAudioProcessPropertyIsRunning,
-                mScope: kAudioObjectPropertyScopeGlobal,
-                mElement: kAudioObjectPropertyElementMain
-            )
-            AudioObjectRemovePropertyListenerBlock(objectID, &addr, .main, block)
-        }
-    }
 }

@@ -41,18 +41,4 @@ extension AudioObjectID {
 
         return false
     }
-
-    /// Check if device has valid output streams configured.
-    /// Use after waitUntilReady() for extra verification on aggregate devices.
-    /// - Returns: `true` if device has at least one output stream.
-    func hasValidOutputStreams() -> Bool {
-        var address = AudioObjectPropertyAddress(
-            mSelector: kAudioDevicePropertyStreamConfiguration,
-            mScope: kAudioDevicePropertyScopeOutput,
-            mElement: kAudioObjectPropertyElementMain
-        )
-        var size: UInt32 = 0
-        let status = AudioObjectGetPropertyDataSize(self, &address, 0, nil, &size)
-        return status == noErr && size >= UInt32(MemoryLayout<AudioBufferList>.size)
-    }
 }

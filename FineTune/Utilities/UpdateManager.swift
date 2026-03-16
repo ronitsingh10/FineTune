@@ -1,4 +1,4 @@
-// FineTune/Settings/UpdateManager.swift
+// FineTune/Utilities/UpdateManager.swift
 import Foundation
 import Combine
 import Sparkle

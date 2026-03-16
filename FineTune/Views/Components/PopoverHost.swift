@@ -34,6 +34,12 @@ struct PopoverHost<Content: View>: NSViewRepresentable {
         Coordinator(isPresented: $isPresented)
     }
 
+    /// Borderless panels return `canBecomeKey == false` by default,
+    /// which prevents text fields from receiving focus/keyboard input.
+    private class KeyablePanel: NSPanel {
+        override var canBecomeKey: Bool { true }
+    }
+
     class Coordinator: NSObject {
         @Binding var isPresented: Bool
         var panel: NSPanel?
@@ -41,6 +47,7 @@ struct PopoverHost<Content: View>: NSViewRepresentable {
         var localEventMonitor: Any?
         var globalEventMonitor: Any?
         var appDeactivateObserver: NSObjectProtocol?
+        weak var parentWindow: NSWindow?
 
         init(isPresented: Binding<Bool>) {
             self._isPresented = isPresented
@@ -48,9 +55,10 @@ struct PopoverHost<Content: View>: NSViewRepresentable {
 
         func showPanel<V: View>(from parentView: NSView, content: () -> V) {
             guard let parentWindow = parentView.window else { return }
+            self.parentWindow = parentWindow
 
-            // Create borderless panel that doesn't steal focus
-            let panel = NSPanel(
+            // Create borderless panel that can become key for text field input
+            let panel = KeyablePanel(
                 contentRect: .zero,
                 styleMask: [.borderless, .nonactivatingPanel],
                 backing: .buffered,
@@ -62,7 +70,7 @@ struct PopoverHost<Content: View>: NSViewRepresentable {
             panel.hasShadow = true
             panel.collectionBehavior = [.fullScreenAuxiliary]
 
-            panel.becomesKeyOnlyIfNeeded = true
+            panel.becomesKeyOnlyIfNeeded = false
 
             // Create hosting view with content, forcing dark color scheme
             // Use AnyView to allow rootView updates without replacing the hosting view
@@ -81,9 +89,17 @@ struct PopoverHost<Content: View>: NSViewRepresentable {
             )
             panel.setFrameOrigin(panelOrigin)
 
-            // KEY: Add as child window - links to parent's event stream
+            // Add as child window - links to parent's event stream
             parentWindow.addChildWindow(panel, ordered: .above)
-            panel.orderFront(nil)
+
+            // Make panel key so text fields can receive focus.
+            // Temporarily suppress the parent's delegate to prevent
+            // FluidMenuBarExtra from dismissing the popup on resign-key.
+            let savedDelegate = parentWindow.delegate
+            parentWindow.delegate = nil
+            panel.makeKeyAndOrderFront(nil)
+            parentWindow.delegate = savedDelegate
+
             self.panel = panel
 
             // Get trigger button frame in screen coordinates
@@ -103,9 +119,9 @@ struct PopoverHost<Content: View>: NSViewRepresentable {
                 return event  // Don't consume
             }
 
-            // Global monitor: clicks in OTHER apps (dismisses panel)
+            // Global monitor: clicks in OTHER apps (dismisses panel + parent)
             globalEventMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] _ in
-                self?.dismissPanel()
+                self?.dismissPanel(reKeyParent: false)
             }
 
             // Dismiss when app loses focus (Command-Tab, click other app, quit, etc.)
@@ -114,7 +130,7 @@ struct PopoverHost<Content: View>: NSViewRepresentable {
                 object: nil,
                 queue: .main
             ) { [weak self] _ in
-                self?.dismissPanel()
+                self?.dismissPanel(reKeyParent: false)
             }
         }
 
@@ -130,7 +146,11 @@ struct PopoverHost<Content: View>: NSViewRepresentable {
             }
         }
 
-        func dismissPanel() {
+        /// - Parameter reKeyParent: When `true`, restores key status to the parent
+        ///   window (normal dismiss, e.g. user selected a profile). When `false`,
+        ///   re-keys then resigns the parent so FluidMenuBarExtra dismisses it too
+        ///   (external click or app deactivation).
+        func dismissPanel(reKeyParent: Bool = true) {
             if let monitor = localEventMonitor {
                 NSEvent.removeMonitor(monitor)
                 localEventMonitor = nil
@@ -150,6 +170,20 @@ struct PopoverHost<Content: View>: NSViewRepresentable {
             panel?.orderOut(nil)
             panel = nil
             hostingView = nil
+
+            if let parentWindow = parentWindow {
+                if reKeyParent {
+                    // Restore key status — parent popup stays visible
+                    parentWindow.makeKey()
+                } else {
+                    // External dismiss — re-key then resign so FluidMenuBarExtra
+                    // runs its standard dismiss animation
+                    parentWindow.makeKey()
+                    parentWindow.resignKey()
+                }
+            }
+            parentWindow = nil
+
             if isPresented {
                 isPresented = false
             }

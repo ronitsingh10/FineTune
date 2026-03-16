@@ -1,4 +1,4 @@
-// FineTune/Audio/CrossfadeOrchestrator.swift
+// FineTune/Audio/Engine/CrossfadeOrchestrator.swift
 import AudioToolbox
 import os
 
@@ -7,7 +7,6 @@ enum CrossfadeError: LocalizedError {
     case tapCreationFailed(OSStatus)
     case aggregateCreationFailed(OSStatus)
     case deviceNotReady
-    case timeout
     case secondaryTapFailed
     case noTapDescription
 
@@ -19,8 +18,6 @@ enum CrossfadeError: LocalizedError {
             return "Failed to create aggregate device: \(status)"
         case .deviceNotReady:
             return "Device not ready within timeout"
-        case .timeout:
-            return "Crossfade timed out"
         case .secondaryTapFailed:
             return "Secondary tap invalid after timeout"
         case .noTapDescription:
@@ -47,9 +44,3 @@ enum CrossfadeConfig {
         Int64(sampleRate * duration)
     }
 }
-
-/// Utility namespace for tap management types.
-/// The main crossfade orchestration stays in ProcessTapController to maintain
-/// direct access to RT-safe state without introducing virtual dispatch.
-/// Teardown is handled by TapResources.destroy() / destroyAsync().
-enum CrossfadeOrchestrator {}

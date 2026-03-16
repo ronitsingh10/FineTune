@@ -25,7 +25,7 @@ final class DDCController {
     private var deviceUIDs: [AudioDeviceID: String] = [:]  // For persistence keying
     private var debounceTimers: [AudioDeviceID: DispatchWorkItem] = [:]
     private var probeWorkItem: DispatchWorkItem?
-    private nonisolated(unsafe) var displayChangeObserver: NSObjectProtocol?
+    private var displayChangeObserver: NSObjectProtocol?
 
     private let ddcQueue = DispatchQueue(label: "com.finetune.ddc", qos: .utility)
     private let settingsManager: SettingsManager
@@ -36,12 +36,6 @@ final class DDCController {
 
     init(settingsManager: SettingsManager) {
         self.settingsManager = settingsManager
-    }
-
-    nonisolated deinit {
-        if let obs = displayChangeObserver {
-            NotificationCenter.default.removeObserver(obs)
-        }
     }
 
     // MARK: - Lifecycle
@@ -136,12 +130,13 @@ final class DDCController {
         // TODO(Swift 6): This closure captures @MainActor self and runs on ddcQueue.
         // Currently safe because accessed properties are nonisolated or dispatched
         // to @MainActor via Task { @MainActor in }.
-        ddcQueue.async { [weak self] in
+        let logger = self.logger
+        ddcQueue.async { [weak self, logger] in
             guard let self else { return }
 
             // 1. Discover all DCPAVServiceProxy entries and create DDC services
             let discovered = DDCService.discoverServices()
-            self.logger.info("DDC probe: found \(discovered.count) DCPAVServiceProxy entries")
+            logger.info("DDC probe: found \(discovered.count) DCPAVServiceProxy entries")
             guard !discovered.isEmpty else {
                 Task { @MainActor [weak self] in
                     self?.ddcBackedDevices = []
@@ -156,18 +151,18 @@ final class DDCController {
             var audioCapable: [(entry: io_service_t, service: DDCService, displayName: String)] = []
             for (index, (entry, service)) in discovered.enumerated() {
                 let name = Self.getDisplayName(for: entry)
-                self.logger.info("DDC probe: checking display \(index + 1) '\(name)' for VCP 0x62...")
+                logger.info("DDC probe: checking display \(index + 1) '\(name)' for VCP 0x62...")
                 if service.supportsAudioVolume() {
                     audioCapable.append((entry: entry, service: service, displayName: name))
-                    self.logger.info("DDC audio-capable display: '\(name)'")
+                    logger.info("DDC audio-capable display: '\(name)'")
                 } else {
-                    self.logger.info("DDC probe: '\(name)' does not support VCP 0x62")
+                    logger.info("DDC probe: '\(name)' does not support VCP 0x62")
                     IOObjectRelease(entry)
                 }
             }
 
             guard !audioCapable.isEmpty else {
-                self.logger.info("DDC probe: no audio-capable displays found")
+                logger.info("DDC probe: no audio-capable displays found")
                 // Entries that failed supportsAudioVolume() were already released above
                 Task { @MainActor [weak self] in
                     self?.ddcBackedDevices = []
@@ -181,7 +176,7 @@ final class DDCController {
             // 3. Get all CoreAudio output devices (candidates for DDC matching)
             let coreAudioDevices = self.getCoreAudioOutputDevices()
             for ca in coreAudioDevices {
-                self.logger.info("DDC probe: CoreAudio candidate: '\(ca.name)' (uid: \(ca.uid))")
+                logger.info("DDC probe: CoreAudio candidate: '\(ca.name)' (uid: \(ca.uid))")
             }
 
             // 4. Match DDC displays to CoreAudio devices
@@ -202,7 +197,7 @@ final class DDCController {
                             volumes[caDevice.id] = vol.current
                         }
 
-                        self.logger.info("Matched CoreAudio '\(caDevice.name)' → DDC '\(ddcDisplay.displayName)' (by name)")
+                        logger.info("Matched CoreAudio '\(caDevice.name)' → DDC '\(ddcDisplay.displayName)' (by name)")
                         break
                     }
                 }
@@ -226,7 +221,7 @@ final class DDCController {
                         volumes[caDevice.id] = vol.current
                     }
 
-                    self.logger.info("Matched CoreAudio '\(caDevice.name)' → DDC '\(ddcDisplay.displayName)' (by transport: \(caDevice.transport))")
+                    logger.info("Matched CoreAudio '\(caDevice.name)' → DDC '\(ddcDisplay.displayName)' (by transport: \(caDevice.transport))")
                     break
                 }
             }
@@ -237,27 +232,30 @@ final class DDCController {
             }
 
             // 5. Publish results on main thread
+            let matchedSnapshot = matched
+            let matchedUIDsSnapshot = matchedUIDs
+            let volumesSnapshot = volumes
             Task { @MainActor [weak self] in
                 guard let self else { return }
-                self.services = matched
-                self.deviceUIDs = matchedUIDs
-                self.ddcBackedDevices = Set(matched.keys)
+                self.services = matchedSnapshot
+                self.deviceUIDs = matchedUIDsSnapshot
+                self.ddcBackedDevices = Set(matchedSnapshot.keys)
 
                 // Use persisted volumes if available, otherwise use read values
-                for (deviceID, uid) in matchedUIDs {
+                for (deviceID, uid) in matchedUIDsSnapshot {
                     if let savedVolume = self.settingsManager.getDDCVolume(for: uid) {
                         self.cachedVolumes[deviceID] = savedVolume
                         // Restore saved volume to the display
-                        let service = matched[deviceID]
+                        let service = matchedSnapshot[deviceID]
                         self.ddcQueue.async {
                             try? service?.setAudioVolume(savedVolume)
                         }
-                    } else if let readVolume = volumes[deviceID] {
+                    } else if let readVolume = volumesSnapshot[deviceID] {
                         self.cachedVolumes[deviceID] = readVolume
                     }
                 }
 
-                self.logger.info("DDC probe complete: \(matched.count) display(s) matched")
+                self.logger.info("DDC probe complete: \(matchedSnapshot.count) display(s) matched")
                 self.probeCompleted = true
                 self.onProbeCompleted?()
             }
@@ -360,16 +358,19 @@ final class DDCController {
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            guard let self else { return }
-            self.probeWorkItem?.cancel()
-            let item = DispatchWorkItem { [weak self] in
-                Task { @MainActor in
-                    self?.logger.debug("Display configuration changed, re-probing DDC (after delay)")
-                    self?.probe()
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                self.probeWorkItem?.cancel()
+                let item = DispatchWorkItem { [weak self] in
+                    Task { @MainActor [weak self] in
+                        guard let self else { return }
+                        self.logger.debug("Display configuration changed, re-probing DDC (after delay)")
+                        self.probe()
+                    }
                 }
+                self.probeWorkItem = item
+                DispatchQueue.main.asyncAfter(deadline: .now() + 3.0, execute: item)
             }
-            self.probeWorkItem = item
-            DispatchQueue.main.asyncAfter(deadline: .now() + 3.0, execute: item)
         }
     }
 }

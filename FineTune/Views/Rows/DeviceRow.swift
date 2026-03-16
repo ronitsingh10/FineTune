@@ -13,6 +13,18 @@ struct DeviceRow: View {
     let onVolumeChange: (Float) -> Void
     let onMuteToggle: () -> Void
 
+    // AutoEQ (all optional — existing call sites work without them)
+    let autoEQProfileName: String?
+    let autoEQEnabled: Bool
+    let onAutoEQToggle: (() -> Void)?
+    let autoEQProfileManager: AutoEQProfileManager?
+    let autoEQSelection: AutoEQSelection?
+    let autoEQFavoriteIDs: Set<String>
+    let onAutoEQSelect: ((AutoEQProfile?) -> Void)?
+    let onAutoEQImport: (() -> Void)?
+    let onAutoEQToggleFavorite: ((String) -> Void)?
+    let autoEQImportError: String?
+
     @State private var sliderValue: Double
     @State private var isEditing = false
 
@@ -30,7 +42,17 @@ struct DeviceRow: View {
         hasVolumeControl: Bool = true,
         onSetDefault: @escaping () -> Void,
         onVolumeChange: @escaping (Float) -> Void,
-        onMuteToggle: @escaping () -> Void
+        onMuteToggle: @escaping () -> Void,
+        autoEQProfileName: String? = nil,
+        autoEQEnabled: Bool = false,
+        onAutoEQToggle: (() -> Void)? = nil,
+        autoEQProfileManager: AutoEQProfileManager? = nil,
+        autoEQSelection: AutoEQSelection? = nil,
+        autoEQFavoriteIDs: Set<String> = [],
+        onAutoEQSelect: ((AutoEQProfile?) -> Void)? = nil,
+        onAutoEQImport: (() -> Void)? = nil,
+        onAutoEQToggleFavorite: ((String) -> Void)? = nil,
+        autoEQImportError: String? = nil
     ) {
         self.device = device
         self.isDefault = isDefault
@@ -40,10 +62,27 @@ struct DeviceRow: View {
         self.onSetDefault = onSetDefault
         self.onVolumeChange = onVolumeChange
         self.onMuteToggle = onMuteToggle
+        self.autoEQProfileName = autoEQProfileName
+        self.autoEQEnabled = autoEQEnabled
+        self.onAutoEQToggle = onAutoEQToggle
+        self.autoEQProfileManager = autoEQProfileManager
+        self.autoEQSelection = autoEQSelection
+        self.autoEQFavoriteIDs = autoEQFavoriteIDs
+        self.onAutoEQSelect = onAutoEQSelect
+        self.onAutoEQImport = onAutoEQImport
+        self.onAutoEQToggleFavorite = onAutoEQToggleFavorite
+        self.autoEQImportError = autoEQImportError
         self._sliderValue = State(initialValue: Double(volume))
     }
 
     var body: some View {
+        deviceHeader
+            .hoverableRow()
+    }
+
+    // MARK: - Device Header
+
+    private var deviceHeader: some View {
         HStack(spacing: DesignTokens.Spacing.sm) {
             // Default device selector
             RadioButton(isSelected: isDefault, action: onSetDefault)
@@ -62,12 +101,42 @@ struct DeviceRow: View {
             }
             .frame(width: DesignTokens.Dimensions.iconSize, height: DesignTokens.Dimensions.iconSize)
 
-            // Device name
-            Text(device.name)
-                .font(isDefault ? DesignTokens.Typography.rowNameBold : DesignTokens.Typography.rowName)
-                .lineLimit(1)
-                .help(device.name)
-                .frame(maxWidth: .infinity, alignment: .leading)
+            // Device name + optional AutoEQ profile subtitle + AutoEQ picker
+            HStack(spacing: DesignTokens.Spacing.xs) {
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(device.name)
+                        .font(isDefault ? DesignTokens.Typography.rowNameBold : DesignTokens.Typography.rowName)
+                        .lineLimit(1)
+                        .help(device.name)
+
+                    if let profileName = autoEQProfileName, autoEQEnabled {
+                        Text(profileName)
+                            .font(.system(size: 9))
+                            .foregroundStyle(DesignTokens.Colors.textTertiary)
+                            .lineLimit(1)
+                    }
+                }
+
+                Spacer(minLength: 0)
+
+                // AutoEQ picker inside the name area so slider length stays consistent
+                if device.supportsAutoEQ,
+                   let profileManager = autoEQProfileManager,
+                   let onSelect = onAutoEQSelect,
+                   let onImport = onAutoEQImport {
+                    AutoEQPicker(
+                        profileManager: profileManager,
+                        profileName: autoEQProfileName,
+                        selection: autoEQSelection,
+                        favoriteIDs: autoEQFavoriteIDs,
+                        onSelect: onSelect,
+                        onImport: onImport,
+                        onToggleFavorite: { id in onAutoEQToggleFavorite?(id) },
+                        importError: autoEQImportError
+                    )
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
 
             if hasVolumeControl {
                 // Mute button
@@ -113,7 +182,6 @@ struct DeviceRow: View {
             }
         }
         .frame(height: DesignTokens.Dimensions.rowContentHeight)
-        .hoverableRow()
         .onChange(of: volume) { _, newValue in
             // Only sync from external changes when user is NOT dragging
             guard !isEditing else { return }

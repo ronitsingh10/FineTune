@@ -69,7 +69,7 @@ final class SettingsManager {
     private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "FineTune", category: "SettingsManager")
 
     struct Settings: Codable {
-        var version: Int = 7
+        var version: Int = 8
         var appVolumes: [String: Float] = [:]
         var appDeviceRouting: [String: String] = [:]  // bundleID → deviceUID
         var appMutes: [String: Bool] = [:]  // bundleID → isMuted
@@ -90,6 +90,35 @@ final class SettingsManager {
         // Device priority (ordered device UIDs, highest priority first)
         var outputDevicePriority: [String] = []
         var inputDevicePriority: [String] = []
+
+        // Per-device AutoEQ headphone correction
+        var deviceAutoEQ: [String: AutoEQSelection] = [:]  // deviceUID → selection
+        var favoriteAutoEQProfiles: Set<String> = []  // profile IDs
+
+        init() {}
+
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            version = try c.decodeIfPresent(Int.self, forKey: .version) ?? 8
+            appVolumes = try c.decodeIfPresent([String: Float].self, forKey: .appVolumes) ?? [:]
+            appDeviceRouting = try c.decodeIfPresent([String: String].self, forKey: .appDeviceRouting) ?? [:]
+            appMutes = try c.decodeIfPresent([String: Bool].self, forKey: .appMutes) ?? [:]
+            appEQSettings = try c.decodeIfPresent([String: EQSettings].self, forKey: .appEQSettings) ?? [:]
+            appSettings = try c.decodeIfPresent(AppSettings.self, forKey: .appSettings) ?? AppSettings()
+            systemSoundsFollowsDefault = try c.decodeIfPresent(Bool.self, forKey: .systemSoundsFollowsDefault) ?? true
+            appDeviceSelectionMode = try c.decodeIfPresent([String: DeviceSelectionMode].self, forKey: .appDeviceSelectionMode) ?? [:]
+            appSelectedDeviceUIDs = try c.decodeIfPresent([String: [String]].self, forKey: .appSelectedDeviceUIDs) ?? [:]
+            lockedInputDeviceUID = try c.decodeIfPresent(String.self, forKey: .lockedInputDeviceUID)
+            pinnedApps = try c.decodeIfPresent(Set<String>.self, forKey: .pinnedApps) ?? []
+            pinnedAppInfo = try c.decodeIfPresent([String: PinnedAppInfo].self, forKey: .pinnedAppInfo) ?? [:]
+            ddcVolumes = try c.decodeIfPresent([String: Int].self, forKey: .ddcVolumes) ?? [:]
+            ddcMuteStates = try c.decodeIfPresent([String: Bool].self, forKey: .ddcMuteStates) ?? [:]
+            ddcSavedVolumes = try c.decodeIfPresent([String: Int].self, forKey: .ddcSavedVolumes) ?? [:]
+            outputDevicePriority = try c.decodeIfPresent([String].self, forKey: .outputDevicePriority) ?? []
+            inputDevicePriority = try c.decodeIfPresent([String].self, forKey: .inputDevicePriority) ?? []
+            deviceAutoEQ = try c.decodeIfPresent([String: AutoEQSelection].self, forKey: .deviceAutoEQ) ?? [:]
+            favoriteAutoEQProfiles = try c.decodeIfPresent(Set<String>.self, forKey: .favoriteAutoEQProfiles) ?? []
+        }
     }
 
     init(directory: URL? = nil) {
@@ -277,6 +306,35 @@ final class SettingsManager {
         scheduleSave()
     }
 
+    // MARK: - Per-Device AutoEQ
+
+    func getAutoEQSelection(for deviceUID: String) -> AutoEQSelection? {
+        settings.deviceAutoEQ[deviceUID]
+    }
+
+    func setAutoEQSelection(for deviceUID: String, to selection: AutoEQSelection?) {
+        settings.deviceAutoEQ[deviceUID] = selection
+        scheduleSave()
+    }
+
+    func favoriteAutoEQProfile(id: String) {
+        settings.favoriteAutoEQProfiles.insert(id)
+        scheduleSave()
+    }
+
+    func unfavoriteAutoEQProfile(id: String) {
+        settings.favoriteAutoEQProfiles.remove(id)
+        scheduleSave()
+    }
+
+    func isAutoEQFavorite(id: String) -> Bool {
+        settings.favoriteAutoEQProfiles.contains(id)
+    }
+
+    var favoriteAutoEQProfileIDs: Set<String> {
+        settings.favoriteAutoEQProfiles
+    }
+
     // MARK: - App-Wide Settings
 
     var appSettings: AppSettings {
@@ -340,6 +398,10 @@ final class SettingsManager {
         settings.ddcSavedVolumes.removeAll()
         settings.outputDevicePriority.removeAll()
         settings.inputDevicePriority.removeAll()
+        settings.deviceAutoEQ.removeAll()
+        settings.favoriteAutoEQProfiles.removeAll()
+        settings.appDeviceSelectionMode.removeAll()
+        settings.appSelectedDeviceUIDs.removeAll()
 
         // Also unregister from launch at login
         try? SMAppService.mainApp.unregister()
@@ -371,7 +433,18 @@ final class SettingsManager {
         saveTask = Task {
             try? await Task.sleep(for: .milliseconds(500))
             guard !Task.isCancelled else { return }
-            writeToDisk()
+            let snapshot = settings
+            let url = settingsURL
+            let data = try? JSONEncoder().encode(snapshot)
+            guard let data else { return }
+            Task.detached(priority: .utility) {
+                do {
+                    try Self.writeData(data, to: url)
+                } catch {
+                    // Avoid actor hops/logging on audio-critical paths; failures are
+                    // non-fatal and will retry on the next settings mutation.
+                }
+            }
         }
     }
 
@@ -385,15 +458,18 @@ final class SettingsManager {
 
     private func writeToDisk() {
         do {
-            let directory = settingsURL.deletingLastPathComponent()
-            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-
             let data = try JSONEncoder().encode(settings)
-            try data.write(to: settingsURL, options: .atomic)
+            try Self.writeData(data, to: settingsURL)
 
             logger.debug("Saved settings")
         } catch {
             logger.error("Failed to save settings: \(error.localizedDescription)")
         }
+    }
+
+    private nonisolated static func writeData(_ data: Data, to url: URL) throws {
+        let directory = url.deletingLastPathComponent()
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try data.write(to: url, options: .atomic)
     }
 }
