@@ -65,6 +65,9 @@ struct EQPanelView: View {
                     .frame(width: 26, height: 100)
                 }
             }
+            .opacity(settings.isEnabled ? 1.0 : 0.3)
+            .allowsHitTesting(settings.isEnabled)
+            .animation(.easeInOut(duration: 0.2), value: settings.isEnabled)
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
