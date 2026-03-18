@@ -39,12 +39,12 @@
 - **Audio routing** — Send apps to different outputs or follow system default
 - **Monitor speaker control** — Adjust volume on external displays via DDC
 - **Device priority** — Set preferred output order; auto-fallback on disconnect
-- **Volume boost** — Amplify up to 400%
+- **Volume boost** — 1x / 2x / 3x / 4x gain presets per app
 - **Menu bar app** — Lightweight, always accessible
 - **URL schemes** — Automate volume, mute, device routing, and more from scripts
 
 <p align="center">
-  <img src="assets/screenshot-input.png" alt="FineTune input device control" width="400">
+  <img src="assets/screenshot-edit-mode.png" alt="FineTune edit mode with Bluetooth paired devices, pin and ignore toggles" width="400">
   <img src="assets/screenshot-settings.png" alt="FineTune settings panel" width="400">
 </p>
 
@@ -91,32 +91,22 @@ Supported filter types: `PK`/`PEQ` (peaking), `LS`/`LSC` (low shelf), `HS`/`HSC`
 
 You can download ParametricEQ.txt files from [autoeq.app](https://www.autoeq.app/) — select **EqualizerAPO ParametricEq** as the equalizer app — or create your own in any text editor.
 
-## FAQ
+## Troubleshooting
 
-<details>
-<summary><strong>No sound / audio stops working?</strong></summary>
-FineTune needs the <strong>System Audio Recording</strong> permission. Go to System Settings → Privacy & Security → Screen & System Audio Recording and make sure FineTune is enabled. If it was just installed, you may need to restart the app after granting permission.
-</details>
+**No sound / audio stops working?**
+Grant **Screen & System Audio Recording** permission in System Settings → Privacy & Security. Restart FineTune after granting.
 
-<details>
-<summary><strong>App not appearing?</strong></summary>
-Only apps actively playing audio show up. Start playback first. If an app still doesn't appear, check that it isn't hidden — open edit mode (pencil icon) and look for the eye icon.
-</details>
+**App not appearing?**
+Only apps actively playing audio show up. Start playback first. If an app is hidden, open edit mode (pencil icon) and look for the eye icon.
 
-<details>
-<summary><strong>App causing audio issues?</strong></summary>
-Some apps (like audio processors or VoIP tools) don't work well with process taps. Open edit mode and click the eye icon to ignore the app — this tears down its tap entirely.
-</details>
+**App causing audio issues?**
+Some apps (audio processors, VoIP tools) don't work well with process taps. Use edit mode to ignore the app — this tears down its tap entirely.
 
-<details>
-<summary><strong>Volume slider not working?</strong></summary>
+**Volume slider not working?**
 Some apps use helper processes. Try restarting the app.
-</details>
 
-<details>
-<summary><strong>Input devices not showing?</strong></summary>
+**Input devices not showing?**
 Grant microphone permission in System Settings → Privacy & Security → Microphone.
-</details>
 
 ## URL Schemes
 
@@ -155,28 +145,9 @@ open "finetune://set-device?app=com.spotify.client&device=YOUR_DEVICE_UID"
 open "finetune://reset"
 ```
 
-<p align="center">
-  <img src="assets/screenshot-edit-mode.png" alt="FineTune device priority edit mode with copy UID button" width="400">
-</p>
+**Finding bundle IDs** — Run `osascript -e 'id of app "App Name"'` in Terminal. Common ones: `com.spotify.client`, `com.apple.Music`, `com.google.Chrome`, `com.hnc.Discord`.
 
-<details>
-<summary><strong>Finding bundle IDs and device UIDs</strong></summary>
-
-**Bundle IDs** — App names shown in FineTune map to bundle IDs. Common ones:
-- Spotify: `com.spotify.client`
-- Apple Music: `com.apple.Music`
-- Chrome: `com.google.Chrome`
-- Safari: `com.apple.Safari`
-- Discord: `com.hnc.Discord`
-- Slack: `com.tinyspeck.slackmacgap`
-
-To find any app's bundle ID:
-```bash
-osascript -e 'id of app "App Name"'
-```
-
-**Device UIDs** — In FineTune, click the pencil icon to enter edit mode, then click the copy button next to a device name to copy its UID.
-</details>
+**Finding device UIDs** — Click the pencil icon to enter edit mode, then click the copy button next to a device name.
 
 ## Contributing
 
