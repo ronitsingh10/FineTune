@@ -45,7 +45,7 @@
 - **URL schemes** — Automate volume, mute, device routing, and more from scripts
 
 <p align="center">
-  <img src="assets/screenshot-edit-mode.png" alt="FineTune edit mode with Bluetooth paired devices, pin and ignore toggles" width="480">
+  <img src="assets/screenshot-edit-mode.png" alt="FineTune edit mode with Bluetooth paired devices, pin and ignore toggles" width="450">
   <img src="assets/screenshot-settings.png" alt="FineTune settings panel" width="375">
 </p>
 
