@@ -6,6 +6,7 @@ struct AppRowWithLevelPolling: View {
     let app: AudioApp
     let volume: Float
     let isMuted: Bool
+    let useLogScale: Bool
     let devices: [AudioDevice]
     let selectedDeviceUID: String
     let selectedDeviceUIDs: Set<String>
@@ -35,6 +36,7 @@ struct AppRowWithLevelPolling: View {
         app: AudioApp,
         volume: Float,
         isMuted: Bool,
+        useLogScale: Bool = false,
         devices: [AudioDevice],
         selectedDeviceUID: String,
         selectedDeviceUIDs: Set<String> = [],
@@ -60,6 +62,7 @@ struct AppRowWithLevelPolling: View {
         self.app = app
         self.volume = volume
         self.isMuted = isMuted
+        self.useLogScale = useLogScale
         self.devices = devices
         self.selectedDeviceUID = selectedDeviceUID
         self.selectedDeviceUIDs = selectedDeviceUIDs
@@ -95,6 +98,7 @@ struct AppRowWithLevelPolling: View {
             defaultDeviceUID: defaultDeviceUID,
             deviceSelectionMode: deviceSelectionMode,
             isMuted: isMuted,
+            useLogScale: useLogScale,
             boost: boost,
             onBoostChange: onBoostChange,
             onVolumeChange: onVolumeChange,

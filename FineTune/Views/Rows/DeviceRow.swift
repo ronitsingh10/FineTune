@@ -8,6 +8,7 @@ struct DeviceRow: View {
     let isDefault: Bool
     let volume: Float
     let isMuted: Bool
+    let useLogScale: Bool
     let hasVolumeControl: Bool
     let onSetDefault: () -> Void
     let onVolumeChange: (Float) -> Void
@@ -41,6 +42,7 @@ struct DeviceRow: View {
         isDefault: Bool,
         volume: Float,
         isMuted: Bool,
+        useLogScale: Bool = false,
         hasVolumeControl: Bool = true,
         onSetDefault: @escaping () -> Void,
         onVolumeChange: @escaping (Float) -> Void,
@@ -62,6 +64,7 @@ struct DeviceRow: View {
         self.isDefault = isDefault
         self.volume = volume
         self.isMuted = isMuted
+        self.useLogScale = useLogScale
         self.hasVolumeControl = hasVolumeControl
         self.onSetDefault = onSetDefault
         self.onVolumeChange = onVolumeChange
@@ -181,11 +184,9 @@ struct DeviceRow: View {
 
                 // Editable volume percentage
                 EditablePercentage(
-                    percentage: Binding(
-                        get: { Int(round(sliderValue * 100)) },
-                        set: { sliderValue = Double($0) / 100.0 }
-                    ),
-                    range: 0...100
+                    sliderValue: $sliderValue,
+                    range: 0...1,
+                    useLogScale: useLogScale
                 )
             }
         }

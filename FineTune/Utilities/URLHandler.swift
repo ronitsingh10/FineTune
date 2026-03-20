@@ -140,7 +140,7 @@ final class URLHandler {
 
         let currentGain = audioEngine.getVolume(for: app)
         let stepAmount: Double = 0.05 // 5% slider position
-        var sliderPosition = VolumeMapping.gainToSlider(currentGain)
+        var sliderPosition = VolumeMapping.gainToSlider(currentGain, logScale: false)
 
         switch direction.lowercased() {
         case "up", "+":
@@ -152,7 +152,7 @@ final class URLHandler {
             return
         }
 
-        let newGain = VolumeMapping.sliderToGain(sliderPosition)
+        let newGain = VolumeMapping.sliderToGain(sliderPosition, logScale: false)
         audioEngine.setVolume(for: app, to: newGain)
         let newPercent = Int(round(newGain * 100))
         logger.info("Stepped volume \(direction) for \(app.name) to \(newPercent)%")

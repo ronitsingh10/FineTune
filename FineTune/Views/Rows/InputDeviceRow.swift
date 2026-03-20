@@ -8,6 +8,7 @@ struct InputDeviceRow: View {
     let isDefault: Bool
     let volume: Float
     let isMuted: Bool
+    let useLogScale: Bool
     let onSetDefault: () -> Void
     let onVolumeChange: (Float) -> Void
     let onMuteToggle: () -> Void
@@ -26,6 +27,7 @@ struct InputDeviceRow: View {
         isDefault: Bool,
         volume: Float,
         isMuted: Bool,
+        useLogScale: Bool,
         onSetDefault: @escaping () -> Void,
         onVolumeChange: @escaping (Float) -> Void,
         onMuteToggle: @escaping () -> Void
@@ -34,6 +36,7 @@ struct InputDeviceRow: View {
         self.isDefault = isDefault
         self.volume = volume
         self.isMuted = isMuted
+        self.useLogScale = useLogScale
         self.onSetDefault = onSetDefault
         self.onVolumeChange = onVolumeChange
         self.onMuteToggle = onMuteToggle
@@ -99,11 +102,9 @@ struct InputDeviceRow: View {
 
             // Editable volume percentage
             EditablePercentage(
-                percentage: Binding(
-                    get: { Int(round(sliderValue * 100)) },
-                    set: { sliderValue = Double($0) / 100.0 }
-                ),
-                range: 0...100
+                sliderValue: $sliderValue,
+                range: 0...1,
+                useLogScale: useLogScale
             )
         }
         .frame(height: DesignTokens.Dimensions.rowContentHeight)
@@ -132,6 +133,7 @@ struct InputDeviceRow: View {
                 isDefault: true,
                 volume: 0.75,
                 isMuted: false,
+                useLogScale: false,
                 onSetDefault: {},
                 onVolumeChange: { _ in },
                 onMuteToggle: {}
@@ -148,6 +150,7 @@ struct InputDeviceRow: View {
                 isDefault: false,
                 volume: 1.0,
                 isMuted: false,
+                useLogScale: false,
                 onSetDefault: {},
                 onVolumeChange: { _ in },
                 onMuteToggle: {}
@@ -164,6 +167,7 @@ struct InputDeviceRow: View {
                 isDefault: false,
                 volume: 0.5,
                 isMuted: true,
+                useLogScale: false,
                 onSetDefault: {},
                 onVolumeChange: { _ in },
                 onMuteToggle: {}

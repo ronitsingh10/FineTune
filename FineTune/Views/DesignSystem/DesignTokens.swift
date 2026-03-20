@@ -244,6 +244,9 @@ enum DesignTokens {
         /// Percentage text width (fixed to prevent layout shift)
         static let percentageWidth: CGFloat = 40
 
+        /// Decibels text width (fixed to prevent layout shift)
+        static let decibelsWidth: CGFloat = 44
+
         // MARK: VU Meter
 
         /// VU meter bar count

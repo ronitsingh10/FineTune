@@ -77,6 +77,13 @@ struct SettingsView: View {
             )
 
             SettingsToggleRow(
+                icon: "chart.bar",
+                title: "Use Logarithmic Scale",
+                description: "Measure volume in decibels (dB)",
+                isOn: $settings.useLogScale
+            )
+
+            SettingsToggleRow(
                 icon: "mic",
                 title: "Lock Input Device",
                 description: "Prevent auto-switching when devices connect",

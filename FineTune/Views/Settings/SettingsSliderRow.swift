@@ -9,9 +9,9 @@ struct SettingsSliderRow: View {
     @Binding var value: Float
     let range: ClosedRange<Float>
 
-    /// Percentage range derived from Float range (e.g., 0.1...1.0 → 10...100)
-    private var percentageRange: ClosedRange<Int> {
-        Int(round(range.lowerBound * 100))...Int(round(range.upperBound * 100))
+    /// Double range derived from Float range
+    private var doubleRange: ClosedRange<Double> {
+        Double(range.lowerBound)...Double(range.upperBound)
     }
 
     init(
@@ -41,11 +41,12 @@ struct SettingsSliderRow: View {
                 .frame(width: DesignTokens.Dimensions.settingsSliderWidth)
 
                 EditablePercentage(
-                    percentage: Binding(
-                        get: { Int(round(value * 100)) },
-                        set: { value = Float($0) / 100.0 }
+                    sliderValue: Binding(
+                        get: { Double(value) },
+                        set: { value = Float($0) }
                     ),
-                    range: percentageRange
+                    range: doubleRange,
+                    useLogScale: false
                 )
                 .frame(width: DesignTokens.Dimensions.settingsPercentageWidth, alignment: .trailing)
             }
