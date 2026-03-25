@@ -4,6 +4,15 @@ import Foundation
 import os
 import UserNotifications
 
+struct SoftwareVolumeOutputOption: Identifiable, Equatable {
+    let uid: String
+    let name: String
+    let isAvailable: Bool
+    let isEnabled: Bool
+
+    var id: String { uid }
+}
+
 @Observable
 @MainActor
 final class AudioEngine {
@@ -15,6 +24,10 @@ final class AudioEngine {
     let settingsManager: SettingsManager
     let autoEQProfileManager: AutoEQProfileManager
     let permission: AudioRecordingPermission
+
+    let accessibilityPermission: AccessibilityPermission
+    let mediaKeyManager: MediaKeyManager
+    private let volumeHUD: VolumeHUDController
 
     #if !APP_STORE
     let ddcController: DDCController
@@ -76,9 +89,22 @@ final class AudioEngine {
         deviceMonitor.outputDevices
     }
 
-    /// Whether a device supports software volume control (CoreAudio or DDC).
-    /// Devices without volume control still appear in the list but without slider/mute UI.
+    /// Whether a device supports volume control via hardware (CoreAudio or DDC).
+    /// Does NOT include software volume — use `hasVolumeControl(for:)` for UI gating.
+    func hasHardwareVolumeControl(for deviceID: AudioDeviceID) -> Bool {
+        #if !APP_STORE
+        // During DDC probe, assume hardware control to avoid brief software-volume flicker
+        if !ddcController.probeCompleted { return true }
+        return deviceID.hasOutputVolumeControl() || ddcController.isDDCBacked(deviceID)
+        #else
+        return deviceID.hasOutputVolumeControl()
+        #endif
+    }
+
+    /// Whether a device supports any volume control (hardware, DDC, or software via Super Volume Keys).
+    /// When true, the device row shows a volume slider.
     func hasVolumeControl(for deviceID: AudioDeviceID) -> Bool {
+        if settingsManager.appSettings.superVolumeKeysEnabled { return true }
         #if !APP_STORE
         // Before DDC probe completes, assume all devices have volume control
         // to avoid premature hiding of controls on monitors that may be DDC-backed
@@ -87,6 +113,65 @@ final class AudioEngine {
         #else
         return deviceID.hasOutputVolumeControl()
         #endif
+    }
+
+    /// Whether FineTune should use its software gain path for this output device.
+    func usesSoftwareVolume(for device: AudioDevice) -> Bool {
+        settingsManager.getSoftwareVolumeOverride(for: device.uid) ?? false
+    }
+
+    func setSoftwareVolumeEnabled(_ enabled: Bool, for device: AudioDevice) {
+        settingsManager.noteOutputDevice(uid: device.uid, name: device.name)
+        if enabled {
+            if !settingsManager.hasStoredSoftwareVolume(for: device.uid) {
+                settingsManager.setSoftwareVolume(for: device.uid, to: deviceVolumeMonitor.volumes[device.id] ?? 1.0)
+            }
+            if !settingsManager.hasStoredSoftwareMute(for: device.uid) {
+                settingsManager.setSoftwareMute(for: device.uid, to: deviceVolumeMonitor.muteStates[device.id] ?? false)
+            }
+        }
+
+        settingsManager.setSoftwareVolumeOverride(for: device.uid, to: enabled)
+        propagateSoftwareVolume(to: device.uid)
+        updateMediaKeyInterception()
+    }
+
+    func setSoftwareVolumeEnabled(_ enabled: Bool, forDeviceUID uid: String) {
+        if let device = deviceMonitor.device(for: uid) {
+            setSoftwareVolumeEnabled(enabled, for: device)
+            return
+        }
+
+        if enabled {
+            if !settingsManager.hasStoredSoftwareVolume(for: uid) {
+                settingsManager.setSoftwareVolume(for: uid, to: 1.0)
+            }
+            if !settingsManager.hasStoredSoftwareMute(for: uid) {
+                settingsManager.setSoftwareMute(for: uid, to: false)
+            }
+        }
+
+        settingsManager.setSoftwareVolumeOverride(for: uid, to: enabled)
+        propagateSoftwareVolume(to: uid)
+        updateMediaKeyInterception()
+    }
+
+    func softwareVolumeOutputOptions() -> [SoftwareVolumeOutputOption] {
+        for device in outputDevices {
+            settingsManager.ensureDeviceInPriority(device.uid)
+            settingsManager.noteOutputDevice(uid: device.uid, name: device.name)
+        }
+
+        let connectedByUID = Dictionary(uniqueKeysWithValues: outputDevices.map { ($0.uid, $0) })
+        return settingsManager.knownOutputDeviceUIDs.map { uid in
+            let connected = connectedByUID[uid]
+            return SoftwareVolumeOutputOption(
+                uid: uid,
+                name: connected?.name ?? settingsManager.outputDeviceName(for: uid) ?? uid,
+                isAvailable: connected != nil,
+                isEnabled: settingsManager.getSoftwareVolumeOverride(for: uid) ?? false
+            )
+        }
     }
 
     var inputDevices: [AudioDevice] {
@@ -147,6 +232,7 @@ final class AudioEngine {
     func registerNewDevicesInPriority() {
         for device in outputDevices {
             settingsManager.ensureDeviceInPriority(device.uid)
+            settingsManager.noteOutputDevice(uid: device.uid, name: device.name)
         }
         for device in inputDevices {
             settingsManager.ensureInputDeviceInPriority(device.uid)
@@ -191,6 +277,9 @@ final class AudioEngine {
         startMonitorsAutomatically: Bool = true
     ) {
         self.permission = permission ?? AudioRecordingPermission()
+        self.accessibilityPermission = AccessibilityPermission()
+        self.mediaKeyManager = MediaKeyManager()
+        self.volumeHUD = VolumeHUDController()
         let manager = settingsManager ?? SettingsManager()
         self.settingsManager = manager
         self.autoEQProfileManager = autoEQProfileManager ?? AutoEQProfileManager()
@@ -278,6 +367,7 @@ final class AudioEngine {
                 #if !APP_STORE
                 ddc.onProbeCompleted = { [weak self] in
                     self?.deviceVolumeMonitor.refreshAfterDDCProbe()
+                    self?.updateMediaKeyInterception()
                 }
                 ddc.start()
                 #endif
@@ -292,6 +382,13 @@ final class AudioEngine {
                 if manager.appSettings.lockInputDevice {
                     self.restoreLockedInputDevice()
                 }
+
+                // Start media key tap if Super Volume Keys is enabled and permission already granted
+                if manager.appSettings.superVolumeKeysEnabled && self.accessibilityPermission.isGranted {
+                    self.mediaKeyManager.start()
+                }
+                self.updateMediaKeyInterception()
+                self.observeAccessibilityPermission()
             }
         }
 
@@ -315,6 +412,32 @@ final class AudioEngine {
                 } else {
                     self.observePermissionGranted()
                 }
+            }
+        }
+    }
+
+    /// Watches for Accessibility permission being granted or revoked and syncs the media key tap.
+    private func observeAccessibilityPermission() {
+        withObservationTracking {
+            _ = self.accessibilityPermission.isGranted
+        } onChange: { [weak self] in
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                if self.accessibilityPermission.isGranted {
+                    // Permission granted (or re-granted after revocation)
+                    if self.settingsManager.appSettings.superVolumeKeysEnabled,
+                       !self.mediaKeyManager.isActive {
+                        self.mediaKeyManager.start()
+                        self.updateMediaKeyInterception()
+                        self.logger.info("Accessibility permission granted — media key tap started")
+                    }
+                } else if self.mediaKeyManager.isActive {
+                    // Permission revoked — stop the now-disabled tap so it can be recreated later
+                    self.mediaKeyManager.stop()
+                    self.logger.info("Accessibility permission revoked — media key tap stopped")
+                }
+                // Re-observe for future changes
+                self.observeAccessibilityPermission()
             }
         }
     }
@@ -386,6 +509,18 @@ final class AudioEngine {
             Task { @MainActor [weak self] in
                 self?.handleDefaultInputDeviceChanged(newDefaultInputUID)
             }
+        }
+
+        // Wire media key callbacks. CGEventTap runs on the main run loop (main thread),
+        // so MainActor.assumeIsolated lets us call @MainActor methods synchronously.
+        mediaKeyManager.onVolumeUp = { [weak self] in
+            MainActor.assumeIsolated { self?.adjustSoftwareVolume(by: 1.0 / 16.0) }
+        }
+        mediaKeyManager.onVolumeDown = { [weak self] in
+            MainActor.assumeIsolated { self?.adjustSoftwareVolume(by: -1.0 / 16.0) }
+        }
+        mediaKeyManager.onMuteToggle = { [weak self] in
+            MainActor.assumeIsolated { self?.toggleSoftwareMute() }
         }
     }
 
@@ -626,6 +761,10 @@ final class AudioEngine {
         // 1. Clear persisted state
         settingsManager.resetAllSettings()
 
+        // Stop media key tap (superVolumeKeysEnabled is now false)
+        mediaKeyManager.stop()
+        updateMediaKeyInterception()
+
         // 2. Clear in-memory routing and tracking state
         appliedPIDs.removeAll()
         appDeviceRouting.removeAll()
@@ -672,9 +811,99 @@ final class AudioEngine {
         volumeState.getBoost(for: app.id)
     }
 
-    /// Effective gain for ProcessTapController: volume × boost
+    /// Effective gain for ProcessTapController: volume × boost × softwareVolume
     private func effectiveVolume(for pid: pid_t) -> Float {
-        volumeState.getVolume(for: pid) * volumeState.getBoost(for: pid).rawValue
+        let appGain = volumeState.getVolume(for: pid) * volumeState.getBoost(for: pid).rawValue
+        let deviceUID = appDeviceRouting[pid] ?? deviceVolumeMonitor.defaultDeviceUID ?? ""
+        guard !deviceUID.isEmpty else { return appGain }
+        guard usesSoftwareVolume(for: deviceUID) else { return appGain }
+        if settingsManager.getSoftwareMute(for: deviceUID) { return 0 }
+        return appGain * settingsManager.getSoftwareVolume(for: deviceUID)
+    }
+
+    // MARK: - Software Volume
+
+    func getSoftwareVolume(for deviceUID: String) -> Float {
+        settingsManager.getSoftwareVolume(for: deviceUID)
+    }
+
+    func setSoftwareVolume(for deviceUID: String, to volume: Float) {
+        settingsManager.setSoftwareVolume(for: deviceUID, to: volume)
+        propagateSoftwareVolume(to: deviceUID)
+    }
+
+    func getSoftwareMute(for deviceUID: String) -> Bool {
+        settingsManager.getSoftwareMute(for: deviceUID)
+    }
+
+    func setSoftwareMute(for deviceUID: String, to muted: Bool) {
+        settingsManager.setSoftwareMute(for: deviceUID, to: muted)
+        propagateSoftwareVolume(to: deviceUID)
+    }
+
+    /// Re-applies effectiveVolume to all taps routed to a device, picking up software volume changes.
+    private func propagateSoftwareVolume(to deviceUID: String) {
+        for (pid, tap) in taps {
+            let tapDevice = appDeviceRouting[pid] ?? deviceVolumeMonitor.defaultDeviceUID ?? ""
+            guard tapDevice == deviceUID else { continue }
+            tap.volume = effectiveVolume(for: pid)
+        }
+    }
+
+    // MARK: - Super Volume Keys
+
+    /// Called when the user presses Volume Up/Down via the media key interceptor.
+    func adjustSoftwareVolume(by delta: Float) {
+        guard let uid = deviceVolumeMonitor.defaultDeviceUID else { return }
+        let current = settingsManager.getSoftwareVolume(for: uid)
+        let clamped = max(0, min(1, current + delta))
+        setSoftwareVolume(for: uid, to: clamped)
+        volumeHUD.show(volume: clamped, isMuted: settingsManager.getSoftwareMute(for: uid))
+    }
+
+    /// Called when the user presses the Mute key via the media key interceptor.
+    func toggleSoftwareMute() {
+        guard let uid = deviceVolumeMonitor.defaultDeviceUID else { return }
+        let newMuted = !settingsManager.getSoftwareMute(for: uid)
+        setSoftwareMute(for: uid, to: newMuted)
+        volumeHUD.show(volume: settingsManager.getSoftwareVolume(for: uid), isMuted: newMuted)
+    }
+
+    /// Enables or disables Super Volume Keys. Checks Accessibility permission and starts/stops the tap.
+    func setSuperVolumeKeysEnabled(_ enabled: Bool) {
+        if enabled {
+            if accessibilityPermission.isGranted {
+                mediaKeyManager.start()
+            } else {
+                // Add to the Accessibility list and prompt for permission
+                accessibilityPermission.requestWithPrompt()
+                // The tap will auto-start when the user grants permission (via didBecomeActiveNotification)
+            }
+        } else {
+            mediaKeyManager.stop()
+        }
+        updateMediaKeyInterception()
+    }
+
+    /// Updates whether the media key tap should swallow volume events, based on current device state.
+    func updateMediaKeyInterception() {
+        guard settingsManager.appSettings.superVolumeKeysEnabled else {
+            mediaKeyManager.shouldIntercept = false
+            return
+        }
+        guard let uid = deviceVolumeMonitor.defaultDeviceUID,
+              let device = deviceMonitor.device(for: uid) else {
+            mediaKeyManager.shouldIntercept = false
+            return
+        }
+        mediaKeyManager.shouldIntercept = usesSoftwareVolume(for: device)
+    }
+
+    private func usesSoftwareVolume(for deviceUID: String) -> Bool {
+        guard let device = deviceMonitor.device(for: deviceUID) else {
+            return settingsManager.getSoftwareVolumeOverride(for: deviceUID) ?? false
+        }
+        return usesSoftwareVolume(for: device)
     }
 
     func setMute(for app: AudioApp, to muted: Bool) {
@@ -1693,6 +1922,9 @@ final class AudioEngine {
                 }
             }
         }
+
+        // Update media key interception for the new default device
+        updateMediaKeyInterception()
     }
 
     private func showDefaultChangedNotification(newDeviceName: String, affectedApps: [AudioApp]) {

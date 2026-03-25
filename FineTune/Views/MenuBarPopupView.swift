@@ -113,7 +113,12 @@ struct MenuBarPopupView: View {
                         deviceVolumeMonitor.setSystemFollowDefault()
                     },
                     deviceVolumeMonitor: deviceVolumeMonitor,
-                    outputDevices: sortedDevices
+                    outputDevices: sortedDevices,
+                    accessibilityPermission: audioEngine.accessibilityPermission,
+                    softwareVolumeOutputs: audioEngine.softwareVolumeOutputOptions(),
+                    onSoftwareVolumeToggle: { uid, isEnabled in
+                        audioEngine.setSoftwareVolumeEnabled(isEnabled, forDeviceUID: uid)
+                    }
                 )
                 .transition(.asymmetric(
                     insertion: .move(edge: .trailing).combined(with: .opacity),
@@ -157,6 +162,9 @@ struct MenuBarPopupView: View {
             audioEngine.settingsManager.updateAppSettings(newValue)
             if !oldValue.lockInputDevice && newValue.lockInputDevice {
                 audioEngine.handleInputLockEnabled()
+            }
+            if oldValue.superVolumeKeysEnabled != newValue.superVolumeKeysEnabled {
+                audioEngine.setSuperVolumeKeysEnabled(newValue.superVolumeKeysEnabled)
             }
         }
         .onChange(of: audioEngine.bluetoothDeviceMonitor.pairedDevices) { _, newValue in
@@ -522,22 +530,37 @@ struct MenuBarPopupView: View {
                         guard let sel = selection else { return nil }
                         return audioEngine.autoEQProfileManager.profile(for: sel.profileID)?.name
                     }()
+                    let usesSoftwareVolume = audioEngine.usesSoftwareVolume(for: device)
+                    let hasVolumeControl = audioEngine.hasHardwareVolumeControl(for: device.id) || usesSoftwareVolume
 
                     DeviceRow(
                         device: device,
                         isDefault: device.id == deviceVolumeMonitor.defaultDeviceID,
-                        volume: deviceVolumeMonitor.volumes[device.id] ?? 1.0,
-                        isMuted: deviceVolumeMonitor.muteStates[device.id] ?? false,
-                        hasVolumeControl: audioEngine.hasVolumeControl(for: device.id),
+                        volume: usesSoftwareVolume
+                            ? audioEngine.getSoftwareVolume(for: device.uid)
+                            : (deviceVolumeMonitor.volumes[device.id] ?? 1.0),
+                        isMuted: usesSoftwareVolume
+                            ? audioEngine.getSoftwareMute(for: device.uid)
+                            : (deviceVolumeMonitor.muteStates[device.id] ?? false),
+                        hasVolumeControl: hasVolumeControl,
+                        softwareVolumeEnabled: usesSoftwareVolume,
                         onSetDefault: {
                             audioEngine.setDefaultOutputDevice(device.id)
                         },
                         onVolumeChange: { volume in
-                            deviceVolumeMonitor.setVolume(for: device.id, to: volume)
+                            if usesSoftwareVolume {
+                                audioEngine.setSoftwareVolume(for: device.uid, to: volume)
+                            } else {
+                                deviceVolumeMonitor.setVolume(for: device.id, to: volume)
+                            }
                         },
                         onMuteToggle: {
-                            let currentMute = deviceVolumeMonitor.muteStates[device.id] ?? false
-                            deviceVolumeMonitor.setMute(for: device.id, to: !currentMute)
+                            if usesSoftwareVolume {
+                                audioEngine.setSoftwareMute(for: device.uid, to: !audioEngine.getSoftwareMute(for: device.uid))
+                            } else {
+                                let currentMute = deviceVolumeMonitor.muteStates[device.id] ?? false
+                                deviceVolumeMonitor.setMute(for: device.id, to: !currentMute)
+                            }
                         },
                         autoEQProfileName: profileName,
                         autoEQEnabled: selection?.isEnabled ?? false,

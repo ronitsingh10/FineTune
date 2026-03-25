@@ -54,6 +54,7 @@ struct AppSettings: Codable, Equatable {
 
     // Audio
     var defaultNewAppVolume: Float = 1.0      // 100% (unity gain)
+    var superVolumeKeysEnabled: Bool = false  // Software volume for DACs without hardware volume
 
     // Input Device Lock
     var lockInputDevice: Bool = true          // Prevent auto-switching input device
@@ -73,7 +74,7 @@ final class SettingsManager {
     private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "FineTune", category: "SettingsManager")
 
     struct Settings: Codable {
-        var version: Int = 8
+        var version: Int = 9
         var appVolumes: [String: Float] = [:]
         var appDeviceRouting: [String: String] = [:]  // bundleID → deviceUID
         var appMutes: [String: Bool] = [:]  // bundleID → isMuted
@@ -104,11 +105,17 @@ final class SettingsManager {
         var favoriteAutoEQProfiles: Set<String> = []  // profile IDs
         var autoEQPreampEnabled: Bool = true  // Use profile preamp vs bypass (rely on limiter)
 
+        // Per-device software volume (for DACs without hardware volume control)
+        var deviceSoftwareVolumes: [String: Float] = [:]  // deviceUID → software gain (0.0–1.0)
+        var deviceSoftwareMutes: [String: Bool] = [:]     // deviceUID → software mute
+        var deviceSoftwareVolumeOverrides: [String: Bool] = [:]  // deviceUID → explicit software-volume on/off
+        var outputDeviceNames: [String: String] = [:]  // deviceUID → last seen display name
+
         init() {}
 
         init(from decoder: Decoder) throws {
             let c = try decoder.container(keyedBy: CodingKeys.self)
-            version = try c.decodeIfPresent(Int.self, forKey: .version) ?? 8
+            version = try c.decodeIfPresent(Int.self, forKey: .version) ?? 9
             appVolumes = (try c.decodeIfPresent([String: Float].self, forKey: .appVolumes) ?? [:])
                 .filter { $0.value.isFinite && $0.value >= 0 }
                 .mapValues { min($0, 1.0) }  // Clamp old volumes > 1.0 (boost is now per-app)
@@ -139,6 +146,12 @@ final class SettingsManager {
             deviceAutoEQ = try c.decodeIfPresent([String: AutoEQSelection].self, forKey: .deviceAutoEQ) ?? [:]
             favoriteAutoEQProfiles = try c.decodeIfPresent(Set<String>.self, forKey: .favoriteAutoEQProfiles) ?? []
             autoEQPreampEnabled = try c.decodeIfPresent(Bool.self, forKey: .autoEQPreampEnabled) ?? true
+            deviceSoftwareVolumes = (try c.decodeIfPresent([String: Float].self, forKey: .deviceSoftwareVolumes) ?? [:])
+                .filter { $0.value.isFinite && $0.value >= 0 }
+                .mapValues { min($0, 1.0) }
+            deviceSoftwareMutes = try c.decodeIfPresent([String: Bool].self, forKey: .deviceSoftwareMutes) ?? [:]
+            deviceSoftwareVolumeOverrides = try c.decodeIfPresent([String: Bool].self, forKey: .deviceSoftwareVolumeOverrides) ?? [:]
+            outputDeviceNames = try c.decodeIfPresent([String: String].self, forKey: .outputDeviceNames) ?? [:]
         }
     }
 
@@ -366,6 +379,35 @@ final class SettingsManager {
         scheduleSave()
     }
 
+    func noteOutputDevice(uid: String, name: String) {
+        guard settings.outputDeviceNames[uid] != name else { return }
+        settings.outputDeviceNames[uid] = name
+        scheduleSave()
+    }
+
+    func outputDeviceName(for uid: String) -> String? {
+        settings.outputDeviceNames[uid]
+    }
+
+    var knownOutputDeviceUIDs: [String] {
+        var ordered = settings.outputDevicePriority
+        var seen = Set(ordered)
+
+        let extras = Set(settings.outputDeviceNames.keys)
+            .union(settings.deviceSoftwareVolumes.keys)
+            .union(settings.deviceSoftwareMutes.keys)
+            .union(settings.deviceSoftwareVolumeOverrides.keys)
+            .subtracting(seen)
+            .sorted {
+                let lhs = settings.outputDeviceNames[$0] ?? $0
+                let rhs = settings.outputDeviceNames[$1] ?? $1
+                return lhs.localizedCaseInsensitiveCompare(rhs) == .orderedAscending
+            }
+
+        ordered.append(contentsOf: extras.filter { seen.insert($0).inserted })
+        return ordered
+    }
+
     var inputDevicePriorityOrder: [String] {
         settings.inputDevicePriority
     }
@@ -541,6 +583,45 @@ final class SettingsManager {
         }
     }
 
+    // MARK: - Per-Device Software Volume
+
+    /// Returns the software volume for a device (default 1.0 = unity gain).
+    func getSoftwareVolume(for deviceUID: String) -> Float {
+        settings.deviceSoftwareVolumes[deviceUID] ?? 1.0
+    }
+
+    func setSoftwareVolume(for deviceUID: String, to volume: Float) {
+        settings.deviceSoftwareVolumes[deviceUID] = max(0, min(1, volume))
+        scheduleSave()
+    }
+
+    func hasStoredSoftwareVolume(for deviceUID: String) -> Bool {
+        settings.deviceSoftwareVolumes[deviceUID] != nil
+    }
+
+    /// Returns whether software mute is active for a device.
+    func getSoftwareMute(for deviceUID: String) -> Bool {
+        settings.deviceSoftwareMutes[deviceUID] ?? false
+    }
+
+    func setSoftwareMute(for deviceUID: String, to muted: Bool) {
+        settings.deviceSoftwareMutes[deviceUID] = muted
+        scheduleSave()
+    }
+
+    func hasStoredSoftwareMute(for deviceUID: String) -> Bool {
+        settings.deviceSoftwareMutes[deviceUID] != nil
+    }
+
+    func getSoftwareVolumeOverride(for deviceUID: String) -> Bool? {
+        settings.deviceSoftwareVolumeOverrides[deviceUID]
+    }
+
+    func setSoftwareVolumeOverride(for deviceUID: String, to enabled: Bool?) {
+        settings.deviceSoftwareVolumeOverrides[deviceUID] = enabled
+        scheduleSave()
+    }
+
     // MARK: - App-Wide Settings
 
     var appSettings: AppSettings {
@@ -602,6 +683,10 @@ final class SettingsManager {
         settings.favoriteAutoEQProfiles.removeAll()
         settings.appDeviceSelectionMode.removeAll()
         settings.appSelectedDeviceUIDs.removeAll()
+        settings.deviceSoftwareVolumes.removeAll()
+        settings.deviceSoftwareMutes.removeAll()
+        settings.deviceSoftwareVolumeOverrides.removeAll()
+        settings.outputDeviceNames.removeAll()
 
         // Also unregister from launch at login
         try? SMAppService.mainApp.unregister()

@@ -9,6 +9,7 @@ struct DeviceRow: View {
     let volume: Float
     let isMuted: Bool
     let hasVolumeControl: Bool
+    let softwareVolumeEnabled: Bool
     let onSetDefault: () -> Void
     let onVolumeChange: (Float) -> Void
     let onMuteToggle: () -> Void
@@ -42,6 +43,7 @@ struct DeviceRow: View {
         volume: Float,
         isMuted: Bool,
         hasVolumeControl: Bool = true,
+        softwareVolumeEnabled: Bool = false,
         onSetDefault: @escaping () -> Void,
         onVolumeChange: @escaping (Float) -> Void,
         onMuteToggle: @escaping () -> Void,
@@ -63,6 +65,7 @@ struct DeviceRow: View {
         self.volume = volume
         self.isMuted = isMuted
         self.hasVolumeControl = hasVolumeControl
+        self.softwareVolumeEnabled = softwareVolumeEnabled
         self.onSetDefault = onSetDefault
         self.onVolumeChange = onVolumeChange
         self.onMuteToggle = onMuteToggle
@@ -146,6 +149,24 @@ struct DeviceRow: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
 
+            if softwareVolumeEnabled {
+                HStack(spacing: 4) {
+                    Image(systemName: "dial.medium.fill")
+                        .symbolRenderingMode(.hierarchical)
+                    Text("SW")
+                        .font(.system(size: 9, weight: .semibold))
+                }
+                .padding(.horizontal, 6)
+                .padding(.vertical, 4)
+                .background {
+                    Capsule(style: .continuous)
+                        .fill(DesignTokens.Colors.interactiveDefault.opacity(0.18))
+                }
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(DesignTokens.Colors.interactiveDefault)
+                .help("Software volume is enabled for this device. Manage enabled outputs in Settings.")
+            }
+
             if hasVolumeControl {
                 // Mute button
                 MuteButton(isMuted: showMutedIcon) {
@@ -208,6 +229,7 @@ struct DeviceRow: View {
                 isDefault: true,
                 volume: 0.75,
                 isMuted: false,
+                softwareVolumeEnabled: false,
                 onSetDefault: {},
                 onVolumeChange: { _ in },
                 onMuteToggle: {}
@@ -218,6 +240,7 @@ struct DeviceRow: View {
                 isDefault: false,
                 volume: 1.0,
                 isMuted: false,
+                softwareVolumeEnabled: true,
                 onSetDefault: {},
                 onVolumeChange: { _ in },
                 onMuteToggle: {}
@@ -228,6 +251,7 @@ struct DeviceRow: View {
                 isDefault: false,
                 volume: 0.5,
                 isMuted: true,
+                softwareVolumeEnabled: false,
                 onSetDefault: {},
                 onVolumeChange: { _ in },
                 onMuteToggle: {}
