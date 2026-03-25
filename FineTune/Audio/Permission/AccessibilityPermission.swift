@@ -6,6 +6,7 @@ import ApplicationServices
 @MainActor
 final class AccessibilityPermission {
     private(set) var isGranted: Bool = false
+    private var activationObserver: NSObjectProtocol?
 
     init() {
         check()
@@ -22,7 +23,7 @@ final class AccessibilityPermission {
     }
 
     private func registerForActivation() {
-        NotificationCenter.default.addObserver(
+        activationObserver = NotificationCenter.default.addObserver(
             forName: NSApplication.didBecomeActiveNotification,
             object: nil,
             queue: .main
@@ -30,6 +31,14 @@ final class AccessibilityPermission {
             guard let self else { return }
             Task { @MainActor [weak self] in
                 self?.check()
+            }
+        }
+    }
+
+    deinit {
+        MainActor.assumeIsolated {
+            if let activationObserver {
+                NotificationCenter.default.removeObserver(activationObserver)
             }
         }
     }

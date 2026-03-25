@@ -11,6 +11,7 @@ protocol AudioDeviceProviding: AnyObject {
     var onInputDeviceConnected: ((_ uid: String, _ name: String) -> Void)? { get set }
 
     func device(for uid: String) -> AudioDevice?
+    func device(for id: AudioDeviceID) -> AudioDevice?
     func inputDevice(for uid: String) -> AudioDevice?
 
     func start()

@@ -101,10 +101,13 @@ final class AudioEngine {
         #endif
     }
 
-    /// Whether a device supports any volume control (hardware, DDC, or software via Super Volume Keys).
+    /// Whether a device supports any volume control (hardware, DDC, or explicit software volume).
     /// When true, the device row shows a volume slider.
     func hasVolumeControl(for deviceID: AudioDeviceID) -> Bool {
-        if settingsManager.appSettings.superVolumeKeysEnabled { return true }
+        if let device = deviceMonitor.device(for: deviceID),
+           usesSoftwareVolume(for: device) {
+            return true
+        }
         #if !APP_STORE
         // Before DDC probe completes, assume all devices have volume control
         // to avoid premature hiding of controls on monitors that may be DDC-backed
