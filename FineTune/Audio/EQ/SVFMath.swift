@@ -1,13 +1,14 @@
 import Foundation
 
-/// Audio EQ Cookbook biquad coefficient calculations
-/// Reference: Robert Bristow-Johnson's Audio EQ Cookbook
-enum BiquadMath {
+/// Audio EQ Cookbook SVF coefficient calculations
+/// Reference: Andrew Simper / Cytomic's SVF equations
+enum SVFMath {
     /// Standard Q for graphic EQ (overlapping bands)
     static let graphicEQQ: Double = 1.4
 
-    /// Compute peaking EQ biquad coefficients
-    /// Returns [b0, b1, b2, a1, a2] normalized by a0 for vDSP_biquad
+    /// Compute peaking bell EQ SVF coefficients
+    /// Reference: https://www.kvraudio.com/forum/viewtopic.php?p=6382460#p6382460
+    /// Returns [a1, a2, a3, m0, m1, m2] for SVF function
     static func peakingEQCoefficients(
         frequency: Double,
         gainDB: Float,
@@ -15,32 +16,22 @@ enum BiquadMath {
         sampleRate: Double
     ) -> [Double] {
         let A = pow(10.0, Double(gainDB) / 40.0)
-        let omega = 2.0 * .pi * frequency / sampleRate
-        let sinW = sin(omega)
-        let cosW = cos(omega)
-        let alpha = sinW / (2.0 * q)
+        let G = tan(.pi * frequency / sampleRate)
+        let K = 1.0 / (q * A)
 
-        let b0 = 1.0 + alpha * A
-        let b1 = -2.0 * cosW
-        let b2 = 1.0 - alpha * A
-        let a0 = 1.0 + alpha / A
-        let a1 = -2.0 * cosW
-        let a2 = 1.0 - alpha / A
+        let a1 = 1.0 / (1.0 + G * (G + K))
+        let a2 = G * a1
+        let a3 = G * a2
+        let m0 = 1.0
+        let m1 = K * (A * A - 1.0)
+        let m2 = 0.0
 
-        // Normalize by a0 for vDSP_biquad format
-        // vDSP difference equation: y[n] = b0*x[n] + b1*x[n-1] + b2*x[n-2] - a1*y[n-1] - a2*y[n-2]
-        // Coefficients are passed as-is (vDSP internally subtracts a1/a2)
-        return [
-            b0 / a0,
-            b1 / a0,
-            b2 / a0,
-            a1 / a0,
-            a2 / a0
-        ]
+        return [ a1, a2, a3, m0, m1, m2 ]
     }
 
-    /// Compute low shelf biquad coefficients (RBJ cookbook)
-    /// Returns [b0, b1, b2, a1, a2] normalized by a0 for vDSP_biquad
+    /// Compute low shelf SVF coefficients
+    /// Reference: https://www.kvraudio.com/forum/viewtopic.php?p=6382460#p6382460
+    /// Returns [a1, a2, a3, m0, m1, m2] for SVF function
     static func lowShelfCoefficients(
         frequency: Double,
         gainDB: Float,
@@ -48,24 +39,22 @@ enum BiquadMath {
         sampleRate: Double
     ) -> [Double] {
         let A = pow(10.0, Double(gainDB) / 40.0)
-        let omega = 2.0 * .pi * frequency / sampleRate
-        let sinW = sin(omega)
-        let cosW = cos(omega)
-        let alpha = sinW / (2.0 * q)
-        let twoSqrtAAlpha = 2.0 * sqrt(A) * alpha
+        let G = tan(.pi * frequency / sampleRate) / sqrt(A)
+        let K = 1.0 / q
 
-        let b0 = A * ((A + 1.0) - (A - 1.0) * cosW + twoSqrtAAlpha)
-        let b1 = 2.0 * A * ((A - 1.0) - (A + 1.0) * cosW)
-        let b2 = A * ((A + 1.0) - (A - 1.0) * cosW - twoSqrtAAlpha)
-        let a0 = (A + 1.0) + (A - 1.0) * cosW + twoSqrtAAlpha
-        let a1 = -2.0 * ((A - 1.0) + (A + 1.0) * cosW)
-        let a2 = (A + 1.0) + (A - 1.0) * cosW - twoSqrtAAlpha
+        let a1 = 1.0 / (1.0 + G * (G + K))
+        let a2 = G * a1
+        let a3 = G * a2
+        let m0 = 1.0
+        let m1 = K * (A - 1.0)
+        let m2 = (A * A - 1.0)
 
-        return [b0 / a0, b1 / a0, b2 / a0, a1 / a0, a2 / a0]
+        return [ a1, a2, a3, m0, m1, m2 ]
     }
 
-    /// Compute high shelf biquad coefficients (RBJ cookbook)
-    /// Returns [b0, b1, b2, a1, a2] normalized by a0 for vDSP_biquad
+    /// Compute high shelf SVF coefficients
+    /// Reference: https://www.kvraudio.com/forum/viewtopic.php?p=6382460#p6382460
+    /// Returns [a1, a2, a3, m0, m1, m2] for SVF function
     static func highShelfCoefficients(
         frequency: Double,
         gainDB: Float,
@@ -73,20 +62,17 @@ enum BiquadMath {
         sampleRate: Double
     ) -> [Double] {
         let A = pow(10.0, Double(gainDB) / 40.0)
-        let omega = 2.0 * .pi * frequency / sampleRate
-        let sinW = sin(omega)
-        let cosW = cos(omega)
-        let alpha = sinW / (2.0 * q)
-        let twoSqrtAAlpha = 2.0 * sqrt(A) * alpha
+        let G = tan(.pi * frequency / sampleRate) * sqrt(A)
+        let K = 1.0 / q
 
-        let b0 = A * ((A + 1.0) + (A - 1.0) * cosW + twoSqrtAAlpha)
-        let b1 = -2.0 * A * ((A - 1.0) + (A + 1.0) * cosW)
-        let b2 = A * ((A + 1.0) + (A - 1.0) * cosW - twoSqrtAAlpha)
-        let a0 = (A + 1.0) - (A - 1.0) * cosW + twoSqrtAAlpha
-        let a1 = 2.0 * ((A - 1.0) - (A + 1.0) * cosW)
-        let a2 = (A + 1.0) - (A - 1.0) * cosW - twoSqrtAAlpha
+        let a1 = 1.0 / (1.0 + G * (G + K))
+        let a2 = G * a1
+        let a3 = G * a2
+        let m0 = A * A
+        let m1 = K * (1.0 - A) * A
+        let m2 = (1 - A * A)
 
-        return [b0 / a0, b1 / a0, b2 / a0, a1 / a0, a2 / a0]
+        return [ a1, a2, a3, m0, m1, m2 ]
     }
 
     /// Correct a filter frequency optimized at `sourceRate` for use at `targetRate`.
@@ -103,7 +89,7 @@ enum BiquadMath {
     }
 
     /// Compute coefficients for AutoEQ filters (peaking, lowShelf, highShelf).
-    /// Returns flat array of 5*N Doubles for vDSP_biquad_CreateSetup.
+    /// Returns flat array of 6*N Doubles for SVF function
     ///
     /// - Parameters:
     ///   - filters: Filter parameters from an AutoEQ profile.
@@ -132,7 +118,7 @@ enum BiquadMath {
             // Bypass invalid or above-Nyquist filters (pre-warp can produce
             // negative frequencies when the source filter is above its own Nyquist)
             if frequency <= 0 || frequency >= sampleRate / 2.0 {
-                allCoeffs.append(contentsOf: [1.0, 0.0, 0.0, 0.0, 0.0])
+                allCoeffs.append(contentsOf: [0.0, 0.0, 0.0, 1.0, 0.0, 0.0])
                 continue
             }
 
@@ -158,26 +144,23 @@ enum BiquadMath {
     }
 
     /// Compute coefficients for all 10 bands
-    /// Returns 50 Doubles: [band0: b0,b1,b2,a1,a2, band1: ..., ...]
+    /// Returns 60 Doubles: [band0: a1,a2,a3,m0,m1,m2, band1: ..., ...]
     static func coefficientsForAllBands(
         gains: [Float],
         sampleRate: Double
     ) -> [Double] {
         guard gains.count == EQSettings.bandCount else {
             // Return unity (passthrough) coefficients for all bands
-            return (0..<EQSettings.bandCount).flatMap { _ in [1.0, 0.0, 0.0, 0.0, 0.0] }
+            return (0..<EQSettings.bandCount).flatMap { _ in [0.0, 0.0, 0.0, 1.0, 0.0, 0.0] }
         }
 
         var allCoeffs: [Double] = []
-        allCoeffs.reserveCapacity(50)
+        allCoeffs.reserveCapacity(60)
 
         for (index, frequency) in EQSettings.frequencies.enumerated() {
             // Bands at or above Nyquist cannot exist in the signal — bypass with unity gain.
-            // Without this guard, omega > pi produces negative alpha, yielding unstable
-            // biquad coefficients (poles outside the unit circle) that cause exponentially
-            // growing output heard as robotic/static distortion.
             if frequency >= sampleRate / 2.0 {
-                allCoeffs.append(contentsOf: [1.0, 0.0, 0.0, 0.0, 0.0])
+                allCoeffs.append(contentsOf: [0.0, 0.0, 0.0, 1.0, 0.0, 0.0])
                 continue
             }
             let bandCoeffs = peakingEQCoefficients(

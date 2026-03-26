@@ -1,6 +1,6 @@
-// FineTune/Audio/Types/BiquadProcessable.swift
+// FineTune/Audio/Types/SVFProcessable.swift
 
-/// Protocol for RT-safe biquad audio processors.
+/// Protocol for RT-safe SVF audio processors.
 ///
 /// Captures the read-only interface that audio callbacks use.
 /// Concrete types should be used in the actual audio path to avoid
@@ -10,7 +10,7 @@
 /// ## RT-Safety Contract
 /// `process()` and `isEnabled` MUST be safe to call on CoreAudio's
 /// HAL I/O thread: no allocations, locks, ObjC, logging, or I/O.
-protocol BiquadProcessable: AnyObject {
+protocol SVFProcessable: AnyObject {
     /// Whether processing is currently active (RT-safe atomic read).
     var isEnabled: Bool { get }
 

@@ -4,10 +4,10 @@ import Accelerate
 
 /// RT-safe parametric EQ processor for AutoEQ headphone correction.
 ///
-/// Subclass of `BiquadProcessor` — inherits delay buffer management, atomic setup swaps,
-/// stereo biquad processing, and NaN safety. This class adds AutoEQ-specific profile
-/// management and a preamp gain stage applied before the biquad cascade.
-final class AutoEQProcessor: BiquadProcessor, @unchecked Sendable {
+/// Subclass of `SVFProcessor` — inherits delay buffer management, atomic setup swaps,
+/// stereo SVF processing, and NaN safety. This class adds AutoEQ-specific profile
+/// management and a preamp gain stage applied before the SVF cascade.
+final class AutoEQProcessor: SVFProcessor, @unchecked Sendable {
 
     /// Currently applied profile (needed for sample rate recalculation)
     private var _currentProfile: AutoEQProfile?
@@ -52,18 +52,10 @@ final class AutoEQProcessor: BiquadProcessor, @unchecked Sendable {
         }
 
         let filters = validated.filters
-        let coefficients = BiquadMath.coefficientsForAutoEQFilters(
+        let coefficients = SVFMath.coefficientsForAutoEQFilters(
             filters, sampleRate: sampleRate,
             profileOptimizedRate: validated.optimizedSampleRate
         )
-
-        guard let newSetup = coefficients.withUnsafeBufferPointer({ ptr in
-            vDSP_biquad_CreateSetup(ptr.baseAddress!, vDSP_Length(filters.count))
-        }) else {
-            // Keep the previous profile active — don't break working audio
-            logger.warning("vDSP_biquad_CreateSetup returned nil for \(filters.count) filters — skipping profile update")
-            return
-        }
 
         // Preamp: convert dB to linear gain (bypassed when preamp disabled — limiter handles peaks)
         let preampLinear = _preampEnabled ? powf(10.0, validated.preampDB / 20.0) : 1.0
@@ -71,7 +63,7 @@ final class AutoEQProcessor: BiquadProcessor, @unchecked Sendable {
         // Atomic state update + setup swap
         _preampGain = preampLinear
         _filterCount = UInt(filters.count)
-        swapSetup(newSetup)
+        swapSetup(coefficients)
         setEnabled(true)
 
         let preampStatus = self._preampEnabled ? "active" : "bypassed"
@@ -95,18 +87,18 @@ final class AutoEQProcessor: BiquadProcessor, @unchecked Sendable {
         }
     }
 
-    // MARK: - BiquadProcessor Overrides
+    // MARK: - SVFProcessor Overrides
 
     override func recomputeCoefficients() -> (coefficients: [Double], sectionCount: Int)? {
         guard let profile = _currentProfile?.validated(), !profile.filters.isEmpty else { return nil }
-        let coefficients = BiquadMath.coefficientsForAutoEQFilters(
+        let coefficients = SVFMath.coefficientsForAutoEQFilters(
             profile.filters, sampleRate: sampleRate,
             profileOptimizedRate: profile.optimizedSampleRate
         )
         return (coefficients, profile.filters.count)
     }
 
-    /// Apply preamp gain before the biquad cascade (RT-safe).
+    /// Apply preamp gain before the SVF cascade (RT-safe).
     override func preProcess(output: UnsafeMutablePointer<Float>, frameCount: Int) {
         var preamp = _preampGain
         let sampleCount = frameCount * 2

@@ -106,7 +106,7 @@ final class ProcessTapController: ProcessTapControlling {
     private nonisolated(unsafe) var eqProcessor: EQProcessor?
     private nonisolated(unsafe) var autoEQProcessor: AutoEQProcessor?
     /// Independent EQ processors for secondary tap during crossfade.
-    /// Each tap needs its own biquad delay buffers — sharing would corrupt filter state
+    /// Each tap needs its own SVF delay buffers — sharing would corrupt filter state
     /// because both callbacks write concurrently from different HAL I/O threads.
     private nonisolated(unsafe) var secondaryEQProcessor: EQProcessor?
     private nonisolated(unsafe) var secondaryAutoEQProcessor: AutoEQProcessor?
@@ -763,7 +763,7 @@ final class ProcessTapController: ProcessTapControlling {
         _secondaryCurrentVolume = _primaryCurrentVolume
 
         // Create independent EQ processors for the secondary tap.
-        // Each tap needs its own biquad delay buffers — sharing would corrupt filter state
+        // Each tap needs its own SVF delay buffers — sharing would corrupt filter state
         // because both callbacks run concurrently on different HAL I/O threads.
         let secEQ = EQProcessor(sampleRate: sampleRate)
         if let settings = eqProcessor?.currentSettings {

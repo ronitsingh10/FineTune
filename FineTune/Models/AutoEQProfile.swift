@@ -1,6 +1,6 @@
 // FineTune/Models/AutoEQProfile.swift
 
-/// A single biquad filter in an AutoEQ correction profile.
+/// A single State Variable Filter in an AutoEQ correction profile.
 struct AutoEQFilter: Codable, Equatable {
     enum FilterType: String, Codable {
         case peaking, lowShelf, highShelf
