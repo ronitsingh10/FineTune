@@ -19,6 +19,15 @@ final class StreamDeckBridge {
     /// Snapshot of the last broadcast state to avoid redundant sends.
     private var lastStateJSON: Data?
 
+    /// Apps the bridge has seen while active. Keyed by persistenceIdentifier.
+    /// Remembered so we can include them as inactive in state broadcasts with their persisted settings.
+    private var knownApps: [String: KnownApp] = [:]
+
+    private struct KnownApp {
+        let name: String
+        let icon: String // base64
+    }
+
     // MARK: - Init
 
     init(audioEngine: AudioEngine, server: WebSocketServer) {
@@ -110,8 +119,8 @@ final class StreamDeckBridge {
 
     private func startLevelsTimer() {
         guard levelsTimer == nil else { return }
-        // ~10 fps
-        levelsTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
+        // ~30 fps for snappy level meters
+        levelsTimer = Timer.scheduledTimer(withTimeInterval: 0.033, repeats: true) { [weak self] _ in
             Task { @MainActor [weak self] in
                 self?.broadcastLevels()
             }
@@ -136,21 +145,24 @@ final class StreamDeckBridge {
     private func handleCommand(_ command: WebSocketCommand) {
         switch command {
         case .setVolume(let bundleId, let volume):
-            guard let app = findApp(bundleId: bundleId) else {
-                logger.warning("setVolume: app not found for \(bundleId)")
-                return
-            }
             let clamped = volume.clamped(to: 0...1)
-            audioEngine.setVolume(for: app, to: clamped)
+            if let app = findApp(bundleId: bundleId) {
+                audioEngine.setVolume(for: app, to: clamped)
+            } else {
+                // App not currently active — persist for next launch
+                audioEngine.setVolumeForInactive(identifier: bundleId, to: clamped)
+            }
             broadcastState()
 
         case .toggleMute(let bundleId):
-            guard let app = findApp(bundleId: bundleId) else {
-                logger.warning("toggleMute: app not found for \(bundleId)")
-                return
+            if let app = findApp(bundleId: bundleId) {
+                let currentMute = audioEngine.getMute(for: app)
+                audioEngine.setMute(for: app, to: !currentMute)
+            } else {
+                // App not currently active — toggle persisted mute
+                let currentMute = audioEngine.getMuteForInactive(identifier: bundleId)
+                audioEngine.setMuteForInactive(identifier: bundleId, to: !currentMute)
             }
-            let currentMute = audioEngine.getMute(for: app)
-            audioEngine.setMute(for: app, to: !currentMute)
             broadcastState()
 
         case .setMasterVolume(let volume):
@@ -212,17 +224,44 @@ final class StreamDeckBridge {
     }
 
     private func buildStateMessage() -> StateMessage {
-        let appStates = audioEngine.apps.map { app -> AppState in
-            AppState(
+        let activeApps = audioEngine.apps
+        let activeIdentifiers = Set(activeApps.map { $0.persistenceIdentifier })
+
+        // Build active app states and remember them
+        let activeStates = activeApps.map { app -> AppState in
+            let icon = iconToBase64(app.icon, size: 32)
+            // Remember this app for when it goes inactive
+            knownApps[app.persistenceIdentifier] = KnownApp(name: app.name, icon: icon)
+
+            return AppState(
                 bundleId: app.persistenceIdentifier,
                 name: app.name,
-                icon: iconToBase64(app.icon, size: 32),
+                icon: icon,
                 volume: audioEngine.getVolume(for: app),
                 isMuted: audioEngine.getMute(for: app),
                 boost: audioEngine.getBoost(for: app).rawValue,
-                outputDeviceUID: audioEngine.getDeviceUID(for: app)
+                outputDeviceUID: audioEngine.getDeviceUID(for: app),
+                isActive: true
             )
         }
+
+        // Include previously-seen apps that are no longer active, with persisted settings
+        let inactiveStates = knownApps
+            .filter { !activeIdentifiers.contains($0.key) }
+            .map { (identifier, known) -> AppState in
+                AppState(
+                    bundleId: identifier,
+                    name: known.name,
+                    icon: known.icon,
+                    volume: audioEngine.getVolumeForInactive(identifier: identifier),
+                    isMuted: audioEngine.getMuteForInactive(identifier: identifier),
+                    boost: audioEngine.getBoostForInactive(identifier: identifier).rawValue,
+                    outputDeviceUID: nil,
+                    isActive: false
+                )
+            }
+
+        let appStates = activeStates + inactiveStates
 
         let monitor = audioEngine.deviceVolumeMonitor
 

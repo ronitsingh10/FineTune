@@ -34,6 +34,7 @@ struct AppState: Codable {
     let isMuted: Bool
     let boost: Float
     let outputDeviceUID: String?
+    let isActive: Bool
 }
 
 struct DeviceState: Codable {
