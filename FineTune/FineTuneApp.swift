@@ -10,6 +10,7 @@ private let logger = Logger(subsystem: "com.finetuneapp.FineTune", category: "Ap
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelegate {
     var audioEngine: AudioEngine?
+    var streamDeckBridge: StreamDeckBridge?
     
     func application(_ application: NSApplication, open urls: [URL]) {
         guard let audioEngine = audioEngine else {
@@ -104,6 +105,11 @@ struct FineTuneApp: App {
 
         // Pass engine to AppDelegate
         _appDelegate.wrappedValue.audioEngine = engine
+
+        // Start Stream Deck WebSocket bridge
+        let bridge = StreamDeckBridge(audioEngine: engine, server: WebSocketServer())
+        _appDelegate.wrappedValue.streamDeckBridge = bridge
+        bridge.start()
 
         if permission.status == .unknown {
             permission.request()
