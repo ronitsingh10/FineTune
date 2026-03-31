@@ -6,6 +6,7 @@ import SwiftUI
 struct AppRowControls: View {
     let volume: Float
     let isMuted: Bool
+    let useLogScale: Bool
     let devices: [AudioDevice]
     let selectedDeviceUID: String
     let selectedDeviceUIDs: Set<String>
@@ -27,7 +28,7 @@ struct AppRowControls: View {
     @State private var isEQButtonHovered = false
 
     private var sliderValue: Double {
-        dragOverrideValue ?? VolumeMapping.gainToSlider(volume)
+        dragOverrideValue ?? VolumeMapping.gainToSlider(volume, logScale: useLogScale)
     }
 
     private var showMutedIcon: Bool { isMuted || sliderValue == 0 }
@@ -62,7 +63,7 @@ struct AppRowControls: View {
                     get: { sliderValue },
                     set: { newValue in
                         dragOverrideValue = newValue
-                        let gain = VolumeMapping.sliderToGain(newValue)
+                        let gain = VolumeMapping.sliderToGain(newValue, logScale: useLogScale)
                         onVolumeChange(gain)
                         if isMuted {
                             onMuteChange(false)
@@ -81,17 +82,18 @@ struct AppRowControls: View {
 
             // Editable volume percentage (shows slider position, not raw gain)
             EditablePercentage(
-                percentage: Binding(
-                    get: {
-                        Int(round(sliderValue * 100))
-                    },
-                    set: { newPercentage in
-                        let sliderPos = Double(newPercentage) / 100.0
-                        let gain = VolumeMapping.sliderToGain(sliderPos)
+                sliderValue: Binding(
+                    get: { sliderValue },
+                    set: { newValue in
+                        let gain = VolumeMapping.sliderToGain(newValue, logScale: useLogScale)
                         onVolumeChange(gain)
+                        if isMuted {
+                            onMuteChange(false)
+                        }
                     }
                 ),
-                range: 0...100
+                range: 0...1,
+                useLogScale: useLogScale
             )
 
             // Boost chevrons

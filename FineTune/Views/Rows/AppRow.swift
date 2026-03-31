@@ -14,6 +14,7 @@ struct AppRow: View {
     let defaultDeviceUID: String?
     let deviceSelectionMode: DeviceSelectionMode
     let isMutedExternal: Bool  // Mute state from AudioEngine
+    let useLogScale: Bool
     let boost: BoostLevel
     let onBoostChange: (BoostLevel) -> Void
     let onVolumeChange: (Float) -> Void
@@ -42,6 +43,7 @@ struct AppRow: View {
         defaultDeviceUID: String? = nil,
         deviceSelectionMode: DeviceSelectionMode = .single,
         isMuted: Bool = false,
+        useLogScale: Bool = false,
         boost: BoostLevel = .x1,
         onBoostChange: @escaping (BoostLevel) -> Void = { _ in },
         onVolumeChange: @escaping (Float) -> Void,
@@ -66,6 +68,7 @@ struct AppRow: View {
         self.defaultDeviceUID = defaultDeviceUID
         self.deviceSelectionMode = deviceSelectionMode
         self.isMutedExternal = isMuted
+        self.useLogScale = useLogScale
         self.boost = boost
         self.onBoostChange = onBoostChange
         self.onVolumeChange = onVolumeChange
@@ -120,6 +123,7 @@ struct AppRow: View {
                 AppRowControls(
                     volume: volume,
                     isMuted: isMutedExternal,
+                    useLogScale: useLogScale,
                     devices: devices,
                     selectedDeviceUID: selectedDeviceUID,
                     selectedDeviceUIDs: selectedDeviceUIDs,

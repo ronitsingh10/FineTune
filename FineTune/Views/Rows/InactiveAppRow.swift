@@ -18,6 +18,7 @@ struct InactiveAppRow: View {
     let defaultDeviceUID: String?
     let deviceSelectionMode: DeviceSelectionMode
     let isMuted: Bool
+    let useLogScale: Bool
     let boost: BoostLevel
     let onBoostChange: (BoostLevel) -> Void
     let onVolumeChange: (Float) -> Void
@@ -44,6 +45,7 @@ struct InactiveAppRow: View {
         defaultDeviceUID: String? = nil,
         deviceSelectionMode: DeviceSelectionMode = .single,
         isMuted: Bool = false,
+        useLogScale: Bool = false,
         boost: BoostLevel = .x1,
         onBoostChange: @escaping (BoostLevel) -> Void = { _ in },
         onVolumeChange: @escaping (Float) -> Void,
@@ -67,6 +69,7 @@ struct InactiveAppRow: View {
         self.defaultDeviceUID = defaultDeviceUID
         self.deviceSelectionMode = deviceSelectionMode
         self.isMuted = isMuted
+        self.useLogScale = useLogScale
         self.boost = boost
         self.onBoostChange = onBoostChange
         self.onVolumeChange = onVolumeChange
@@ -107,6 +110,7 @@ struct InactiveAppRow: View {
                 AppRowControls(
                     volume: volume,
                     isMuted: isMuted,
+                    useLogScale: useLogScale,
                     devices: devices,
                     selectedDeviceUID: selectedDeviceUID ?? defaultDeviceUID ?? "",
                     selectedDeviceUIDs: selectedDeviceUIDs,

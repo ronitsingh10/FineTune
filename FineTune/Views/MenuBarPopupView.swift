@@ -503,6 +503,7 @@ struct MenuBarPopupView: View {
                         isDefault: device.id == deviceVolumeMonitor.defaultInputDeviceID,
                         volume: deviceVolumeMonitor.inputVolumes[device.id] ?? 1.0,
                         isMuted: deviceVolumeMonitor.inputMuteStates[device.id] ?? false,
+                        useLogScale: audioEngine.settingsManager.appSettings.useLogScale,
                         onSetDefault: {
                             audioEngine.setLockedInputDevice(device)
                         },
@@ -528,6 +529,7 @@ struct MenuBarPopupView: View {
                         isDefault: device.id == deviceVolumeMonitor.defaultDeviceID,
                         volume: deviceVolumeMonitor.volumes[device.id] ?? 1.0,
                         isMuted: deviceVolumeMonitor.muteStates[device.id] ?? false,
+                        useLogScale: audioEngine.settingsManager.appSettings.useLogScale,
                         hasVolumeControl: audioEngine.hasVolumeControl(for: device.id),
                         onSetDefault: {
                             audioEngine.setDefaultOutputDevice(device.id)
@@ -732,6 +734,7 @@ struct MenuBarPopupView: View {
                 app: app,
                 volume: audioEngine.getVolume(for: app),
                 isMuted: audioEngine.getMute(for: app),
+                useLogScale: audioEngine.settingsManager.appSettings.useLogScale,
                 devices: sortedDevices,
                 selectedDeviceUID: deviceUID,
                 selectedDeviceUIDs: audioEngine.getSelectedDeviceUIDs(for: app),
@@ -793,6 +796,7 @@ struct MenuBarPopupView: View {
             defaultDeviceUID: deviceVolumeMonitor.defaultDeviceUID,
             deviceSelectionMode: audioEngine.getDeviceSelectionModeForInactive(identifier: identifier),
             isMuted: audioEngine.getMuteForInactive(identifier: identifier),
+            useLogScale: audioEngine.settingsManager.appSettings.useLogScale,
             boost: audioEngine.getBoostForInactive(identifier: identifier),
             onBoostChange: { boost in
                 audioEngine.setBoostForInactive(identifier: identifier, to: boost)
@@ -1035,6 +1039,7 @@ struct MenuBarPopupView: View {
                     isDefault: device == MockData.sampleDevices[0],
                     volume: 0.75,
                     isMuted: false,
+                    useLogScale: false,
                     onSetDefault: {},
                     onVolumeChange: { _ in },
                     onMuteToggle: {}
@@ -1055,6 +1060,7 @@ struct MenuBarPopupView: View {
                     devices: MockData.sampleDevices,
                     selectedDeviceUID: MockData.sampleDevices[0].uid,
                     isMuted: false,
+                    useLogScale: false,
                     onVolumeChange: { _ in },
                     onMuteChange: { _ in },
                     onDeviceSelected: { _ in }

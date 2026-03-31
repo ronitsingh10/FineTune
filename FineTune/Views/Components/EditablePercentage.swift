@@ -5,9 +5,10 @@ import AppKit
 /// A percentage display that can be clicked to edit the value directly
 /// Features a refined edit state with subtle visual feedback
 struct EditablePercentage: View {
-    @Binding var percentage: Int
-    let range: ClosedRange<Int>
-    var onCommit: ((Int) -> Void)? = nil
+    @Binding var sliderValue: Double
+    let range: ClosedRange<Double>
+    let useLogScale: Bool
+    var onCommit: ((Double) -> Void)? = nil
 
     @State private var isEditing = false
     @State private var inputText = ""
@@ -19,6 +20,22 @@ struct EditablePercentage: View {
     /// Text color adapts to state: accent when editing, secondary otherwise
     private var textColor: Color {
         isEditing ? DesignTokens.Colors.accentPrimary : DesignTokens.Colors.textSecondary
+    }
+
+    private var width: CGFloat {
+        if useLogScale {
+            DesignTokens.Dimensions.decibelsWidth
+        } else {
+            DesignTokens.Dimensions.percentageWidth
+        }
+    }
+
+    private var percentage: Int { Int(sliderValue * 100) }
+
+    private var decibels: String {
+        let gain = VolumeMapping.sliderToGain(sliderValue, logScale: useLogScale)
+        let db = VolumeMapping.gainToDecibels(gain)
+        return String(format: "%0.1f", db)
     }
 
     var body: some View {
@@ -35,14 +52,22 @@ struct EditablePercentage: View {
                     .onExitCommand { cancel() }
                     .fixedSize()  // Size to content
 
-                Text("%")
-                    .font(DesignTokens.Typography.percentage)
-                    .foregroundStyle(textColor)
+                if !useLogScale {
+                    Text("%")
+                        .font(DesignTokens.Typography.percentage)
+                        .foregroundStyle(textColor)
+                }
             } else {
                 // Display mode: tappable percentage
-                Text("\(percentage)%")
-                    .font(DesignTokens.Typography.percentage)
-                    .foregroundStyle(isHovered ? DesignTokens.Colors.textPrimary : textColor)
+                if useLogScale {
+                    Text(decibels)
+                        .font(DesignTokens.Typography.percentage)
+                        .foregroundStyle(isHovered ? DesignTokens.Colors.textPrimary : textColor)
+                } else {
+                    Text("\(percentage)%")
+                        .font(DesignTokens.Typography.percentage)
+                        .foregroundStyle(isHovered ? DesignTokens.Colors.textPrimary : textColor)
+                }
             }
         }
         .padding(.horizontal, isEditing ? 6 : 4)
@@ -71,7 +96,7 @@ struct EditablePercentage: View {
                     .fill(Color.primary.opacity(0.08))
             }
         }
-        .frame(width: DesignTokens.Dimensions.percentageWidth, alignment: .trailing)
+        .frame(width: width, alignment: .trailing)
         .contentShape(Rectangle())
         .onTapGesture { if !isEditing { startEditing() } }
         .accessibilityAddTraits(.isButton)
@@ -94,7 +119,11 @@ struct EditablePercentage: View {
     }
 
     private func startEditing() {
-        inputText = "\(percentage)"
+        if useLogScale {
+            inputText = decibels
+        } else {
+            inputText = "\(percentage)"
+        }
         isEditing = true
 
         // Install monitors via coordinator (handles local, global, and app deactivation)
@@ -111,12 +140,24 @@ struct EditablePercentage: View {
         }
     }
 
-    private func commit() {
-        let cleaned = inputText.replacing("%", with: "")
-                               .trimmingCharacters(in: .whitespaces)
+    private func parseValue(_ input: String) -> Double? {
+        let cleaned = input
+            .replacing("%", with: "")
+            .trimmingCharacters(in: .whitespaces)
 
-        if let value = Int(cleaned), range.contains(value) {
-            percentage = value
+        guard let newValue = Float(cleaned) else { return nil }
+
+        if useLogScale {
+            let gain = VolumeMapping.decibelsToGain(Double(newValue))
+            return VolumeMapping.gainToSlider(gain, logScale: useLogScale)
+        } else {
+            return Double(newValue) / 100
+        }
+    }
+
+    private func commit() {
+        if let value = parseValue(inputText), range.contains(value) {
+            sliderValue = value
             onCommit?(value)
         }
         isEditing = false
@@ -144,12 +185,16 @@ private struct FramePreferenceKey: PreferenceKey {
 
 #Preview("Editable Percentage") {
     struct PreviewWrapper: View {
-        @State private var percentage = 100
+        @State private var value: Double = 1.0
 
         var body: some View {
             HStack {
                 Text("Volume:")
-                EditablePercentage(percentage: $percentage, range: 0...400)
+                EditablePercentage(
+                    sliderValue: $value,
+                    range: 0...1,
+                    useLogScale: false
+                )
             }
             .padding()
             .background(Color.black)

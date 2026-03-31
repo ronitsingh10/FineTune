@@ -54,6 +54,7 @@ struct AppSettings: Codable, Equatable {
 
     // Audio
     var defaultNewAppVolume: Float = 1.0      // 100% (unity gain)
+    var useLogScale: Bool = false             // Measure volume in dB
 
     // Input Device Lock
     var lockInputDevice: Bool = true          // Prevent auto-switching input device
