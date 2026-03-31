@@ -780,6 +780,9 @@ final class AudioEngine {
             guard let profile = await autoEQProfileManager.resolveProfile(for: selection.profileID) else { return }
             // Verify tap still exists and is still routed to the same device
             guard tap.currentDeviceUID == deviceUID else { return }
+            guard let latestSelection = settingsManager.getAutoEQSelection(for: deviceUID),
+                  latestSelection.profileID == selection.profileID,
+                  latestSelection.isEnabled else { return }
             tap.updateAutoEQProfile(profile)
         }
     }
