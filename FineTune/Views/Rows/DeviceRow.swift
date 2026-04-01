@@ -172,6 +172,7 @@ struct DeviceRow: View {
                 )
                 .opacity(showMutedIcon ? 0.5 : 1.0)
                 .onChange(of: sliderValue) { _, newValue in
+                    guard isEditing else { return }
                     onVolumeChange(Float(newValue))
                     // Auto-unmute when slider moved while muted
                     if isMuted && newValue > 0 {
