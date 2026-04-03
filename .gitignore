@@ -13,11 +13,14 @@ tools/
 *.xcodeproj/xcuserdata/
 *.xcworkspace/xcuserdata/
 
-# Tests (excluded from v1.0)
-FineTuneTests/
+# Tests
 FineTuneUITests/
 __Snapshots__/
 
 # macOS
 .DS_Store
 *.swp
+# Local dev tooling
+.mcp.json
+.xcodebuildmcp/
+launch-team.sh

@@ -77,6 +77,13 @@ struct SettingsView: View {
             )
 
             SettingsToggleRow(
+                icon: "speaker.badge.exclamationmark",
+                title: "Software Volume for Unsupported Devices",
+                description: "Add volume sliders for outputs without native controls (e.g. HDMI TVs)",
+                isOn: $settings.softwareDeviceVolumeEnabled
+            )
+
+            SettingsToggleRow(
                 icon: "mic",
                 title: "Lock Input Device",
                 description: "Prevent auto-switching when devices connect",

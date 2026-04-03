@@ -158,6 +158,9 @@ struct MenuBarPopupView: View {
             if !oldValue.lockInputDevice && newValue.lockInputDevice {
                 audioEngine.handleInputLockEnabled()
             }
+            if oldValue.softwareDeviceVolumeEnabled != newValue.softwareDeviceVolumeEnabled {
+                audioEngine.handleSoftwareVolumeSettingChanged()
+            }
         }
         .onChange(of: audioEngine.bluetoothDeviceMonitor.pairedDevices) { _, newValue in
             pairedDevices = newValue
@@ -521,6 +524,7 @@ struct MenuBarPopupView: View {
                     let profileName: String? = {
                         guard let sel = selection else { return nil }
                         return audioEngine.autoEQProfileManager.profile(for: sel.profileID)?.name
+                            ?? audioEngine.autoEQProfileManager.catalogEntry(for: sel.profileID)?.name
                     }()
 
                     DeviceRow(
@@ -541,8 +545,8 @@ struct MenuBarPopupView: View {
                         },
                         autoEQProfileName: profileName,
                         autoEQEnabled: selection?.isEnabled ?? false,
-                        onAutoEQToggle: {
-                            audioEngine.setAutoEQEnabled(for: device.uid, enabled: !(selection?.isEnabled ?? false))
+                        onAutoEQToggle: { enabled in
+                            audioEngine.setAutoEQEnabled(for: device.uid, enabled: enabled)
                         },
                         autoEQProfileManager: audioEngine.autoEQProfileManager,
                         autoEQSelection: selection,
@@ -710,14 +714,15 @@ struct MenuBarPopupView: View {
     }
 
     private func appsContent(scrollProxy: ScrollViewProxy) -> some View {
-        VStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {
+        let presets = audioEngine.settingsManager.getUserPresets()
+        return VStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {
             ForEach(audioEngine.displayableApps) { displayableApp in
                 switch displayableApp {
                 case .active(let app):
-                    activeAppRow(app: app, displayableApp: displayableApp, scrollProxy: scrollProxy)
+                    activeAppRow(app: app, displayableApp: displayableApp, userPresets: presets, scrollProxy: scrollProxy)
 
                 case .pinnedInactive(let info):
-                    inactiveAppRow(info: info, displayableApp: displayableApp, scrollProxy: scrollProxy)
+                    inactiveAppRow(info: info, displayableApp: displayableApp, userPresets: presets, scrollProxy: scrollProxy)
                 }
             }
         }
@@ -726,7 +731,7 @@ struct MenuBarPopupView: View {
 
     /// Row for an active app (currently producing audio)
     @ViewBuilder
-    private func activeAppRow(app: AudioApp, displayableApp: DisplayableApp, scrollProxy: ScrollViewProxy) -> some View {
+    private func activeAppRow(app: AudioApp, displayableApp: DisplayableApp, userPresets: [UserEQPreset], scrollProxy: ScrollViewProxy) -> some View {
         if let deviceUID = audioEngine.getDeviceUID(for: app) {
             AppRowWithLevelPolling(
                 app: app,
@@ -766,8 +771,24 @@ struct MenuBarPopupView: View {
                     activateApp(pid: app.id, bundleID: app.bundleID)
                 },
                 eqSettings: audioEngine.getEQSettings(for: app),
+                userPresets: userPresets,
                 onEQChange: { settings in
                     audioEngine.setEQSettings(settings, for: app)
+                },
+                onUserPresetSelected: { userPreset in
+                    // Apply only bandGains — preserve app's current isEnabled state
+                    var current = audioEngine.getEQSettings(for: app)
+                    current.bandGains = userPreset.settings.bandGains
+                    audioEngine.setEQSettings(current, for: app)
+                },
+                onSavePreset: { name, settings in
+                    audioEngine.settingsManager.createUserPreset(name: name, settings: settings)
+                },
+                onDeleteUserPreset: { id in
+                    audioEngine.settingsManager.deleteUserPreset(id: id)
+                },
+                onRenameUserPreset: { id, newName in
+                    audioEngine.settingsManager.updateUserPreset(id: id, name: newName)
                 },
                 isEQExpanded: expandedRowID == displayableApp.id,
                 onEQToggle: {
@@ -780,7 +801,7 @@ struct MenuBarPopupView: View {
 
     /// Row for a pinned inactive app (not currently producing audio)
     @ViewBuilder
-    private func inactiveAppRow(info: PinnedAppInfo, displayableApp: DisplayableApp, scrollProxy: ScrollViewProxy) -> some View {
+    private func inactiveAppRow(info: PinnedAppInfo, displayableApp: DisplayableApp, userPresets: [UserEQPreset], scrollProxy: ScrollViewProxy) -> some View {
         let identifier = info.persistenceIdentifier
         InactiveAppRow(
             appInfo: info,
@@ -816,8 +837,24 @@ struct MenuBarPopupView: View {
                 audioEngine.setDeviceRoutingForInactive(identifier: identifier, deviceUID: nil)
             },
             eqSettings: audioEngine.getEQSettingsForInactive(identifier: identifier),
+            userPresets: userPresets,
             onEQChange: { settings in
                 audioEngine.setEQSettingsForInactive(settings, identifier: identifier)
+            },
+            onUserPresetSelected: { userPreset in
+                // Apply only bandGains — preserve app's current isEnabled state
+                var current = audioEngine.getEQSettingsForInactive(identifier: identifier)
+                current.bandGains = userPreset.settings.bandGains
+                audioEngine.setEQSettingsForInactive(current, identifier: identifier)
+            },
+            onSavePreset: { name, settings in
+                audioEngine.settingsManager.createUserPreset(name: name, settings: settings)
+            },
+            onDeleteUserPreset: { id in
+                audioEngine.settingsManager.deleteUserPreset(id: id)
+            },
+            onRenameUserPreset: { id, newName in
+                audioEngine.settingsManager.updateUserPreset(id: id, name: newName)
             },
             isEQExpanded: expandedRowID == displayableApp.id,
             onEQToggle: {

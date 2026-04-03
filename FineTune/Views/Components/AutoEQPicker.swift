@@ -12,6 +12,8 @@ struct AutoEQPicker: View {
     let onImport: () -> Void
     let onToggleFavorite: (String) -> Void
     let importError: String?
+    var isCorrectionEnabled: Bool = false
+    var onCorrectionToggle: ((Bool) -> Void)?
     var preampEnabled: Bool = true
     var onPreampToggle: (() -> Void)?
 
@@ -27,7 +29,7 @@ struct AutoEQPicker: View {
     private var iconColor: Color {
         if isExpanded {
             return DesignTokens.Colors.accentPrimary
-        } else if profileName != nil {
+        } else if selection != nil || profileName != nil {
             return DesignTokens.Colors.accentPrimary
         } else if isButtonHovered {
             return DesignTokens.Colors.interactiveHover
@@ -95,6 +97,8 @@ struct AutoEQPicker: View {
                 },
                 onToggleFavorite: onToggleFavorite,
                 importErrorMessage: importError,
+                isCorrectionEnabled: isCorrectionEnabled,
+                onCorrectionToggle: onCorrectionToggle,
                 preampEnabled: preampEnabled,
                 onPreampToggle: onPreampToggle
             )

@@ -210,6 +210,47 @@ final class DDCService: @unchecked Sendable {
         throw lastError
     }
 
+    // MARK: - EDID
+
+    /// Reads EDID data directly from the monitor via I2C (address 0x50).
+    /// This is more reliable than reading from the IORegistry, because the IORegistry
+    /// parent walk from DCPAVServiceProxy often fails on Apple Silicon (IODisplay nodes
+    /// are siblings, not ancestors of DCPAVServiceProxy entries).
+    /// Returns the EDID manufacturer/product/serial identifiers, or nil if the read fails.
+    func readEDID() -> (vendorID: UInt32, productID: UInt32, serialNumber: UInt32)? {
+        // EDID lives at I2C slave address 0x50, starting at offset 0
+        let edidAddress: UInt32 = 0x50
+        var edidData = [UInt8](repeating: 0, count: 128)
+        let result = edidData.withUnsafeMutableBufferPointer { buf in
+            IOAVServiceLoader.readI2C(service: service, chipAddress: edidAddress,
+                                      dataAddress: 0, buffer: buf.baseAddress!, size: 128)
+        }
+        guard result == kIOReturnSuccess else { return nil }
+
+        // Validate EDID header: 00 FF FF FF FF FF FF 00
+        let expectedHeader: [UInt8] = [0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x00]
+        guard Array(edidData[0..<8]) == expectedHeader else { return nil }
+
+        // Validate checksum (all 128 bytes should sum to 0 mod 256)
+        let checksum: UInt8 = edidData.reduce(0, &+)
+        guard checksum == 0 else { return nil }
+
+        // Manufacturer ID: bytes 8-9, big-endian (ISA PnP vendor code)
+        // Matches CGDisplayVendorNumber()
+        let vendorID = UInt32(edidData[8]) << 8 | UInt32(edidData[9])
+
+        // Product code: bytes 10-11, little-endian
+        // Matches CGDisplayModelNumber()
+        let productID = UInt32(edidData[10]) | UInt32(edidData[11]) << 8
+
+        // Serial number: bytes 12-15, little-endian
+        // Matches CGDisplaySerialNumber()
+        let serialNumber = UInt32(edidData[12]) | UInt32(edidData[13]) << 8
+            | UInt32(edidData[14]) << 16 | UInt32(edidData[15]) << 24
+
+        return (vendorID: vendorID, productID: productID, serialNumber: serialNumber)
+    }
+
     // MARK: - Convenience
 
     /// Checks if this display supports audio volume control (VCP 0x62).

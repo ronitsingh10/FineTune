@@ -57,31 +57,20 @@ extension AudioDeviceID {
     }
 
     /// Checks if the built-in audio device currently has headphones plugged in
-    /// by reading the active data source name.
+    /// by reading the active data source ID.
     func builtInHasHeadphonesActive() -> Bool {
-        // Read the active data source ID
         guard let sourceID: UInt32 = try? read(
             kAudioDevicePropertyDataSource,
             scope: .output,
             defaultValue: 0
         ), sourceID != 0 else {
-            // API failure — safer to not apply headphone correction to speakers
             return false
         }
 
-        // Resolve data source ID to a name string
-        guard let sourceName = readStringWithQualifier(
-            kAudioDevicePropertyDataSourceNameForIDCFString,
-            scope: .output,
-            qualifier: sourceID
-        ) else {
-            return false
-        }
-
-        return sourceName.localizedCaseInsensitiveContains("headphone")
+        // 0x6864706E = 'hdpn' — CoreAudio-internal FourCC for headphones, language-independent
+        return sourceID == 0x6864706E
     }
 }
-
 // MARK: - Device Icon
 
 extension AudioDeviceID {

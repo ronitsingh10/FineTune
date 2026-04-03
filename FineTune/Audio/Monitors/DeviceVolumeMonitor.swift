@@ -149,6 +149,37 @@ final class DeviceVolumeMonitor: DeviceVolumeProviding {
     }
     #endif
 
+    func outputVolumeBackend(for deviceID: AudioDeviceID) -> VolumeControlTier {
+        guard deviceID.isValid else { return .software }
+
+        if deviceID.hasOutputVolumeControl() {
+            return .hardware
+        }
+
+        #if !APP_STORE
+        if let ddcController {
+            if !ddcController.probeCompleted {
+                return .hardware
+            }
+            if ddcController.isDDCBacked(deviceID) {
+                return .ddc
+            }
+        }
+        #endif
+
+        return .software
+    }
+
+    func outputProcessingGain(for deviceID: AudioDeviceID) -> Float {
+        guard outputVolumeBackend(for: deviceID) == .software else { return 1.0 }
+        if muteStates[deviceID] ?? false { return 0.0 }
+        return volumes[deviceID] ?? 1.0
+    }
+
+    func refreshOutputDeviceStates() {
+        readAllStates()
+    }
+
     func start() {
         guard defaultDeviceListenerBlock == nil else { return }
 
@@ -305,21 +336,36 @@ final class DeviceVolumeMonitor: DeviceVolumeProviding {
         }
 
         let clamped = clampedVolume(volume)
-        let success = deviceID.setOutputVolumeScalar(clamped)
-        if success {
-            volumes[deviceID] = clamped
-        } else {
-            #if !APP_STORE
-            if let ddcController, ddcController.isDDCBacked(deviceID) {
-                let ddcVolume = Int(round(clamped * 100))
-                ddcController.setVolume(for: deviceID, to: ddcVolume)
+        switch outputVolumeBackend(for: deviceID) {
+        case .hardware:
+            let success = deviceID.setOutputVolumeScalar(clamped)
+            if success {
                 volumes[deviceID] = clamped
             } else {
                 logger.warning("Failed to set volume on device \(deviceID)")
             }
+
+        case .ddc:
+            #if !APP_STORE
+            if let ddcController {
+                let ddcVolume = Int(round(clamped * 100))
+                ddcController.setVolume(for: deviceID, to: ddcVolume)
+                volumes[deviceID] = clamped
+            } else {
+                logger.warning("Failed to set DDC volume on device \(deviceID)")
+            }
             #else
-            logger.warning("Failed to set volume on device \(deviceID)")
+            logger.warning("DDC volume not available on device \(deviceID)")
             #endif
+
+        case .software:
+            guard let deviceUID = outputDeviceUID(for: deviceID) else {
+                logger.warning("Cannot persist software volume: missing device UID for \(deviceID)")
+                return
+            }
+            volumes[deviceID] = clamped
+            settingsManager.setSoftwareDeviceVolume(for: deviceUID, to: clamped)
+            onVolumeChanged?(deviceID, clamped)
         }
     }
 
@@ -348,12 +394,18 @@ final class DeviceVolumeMonitor: DeviceVolumeProviding {
             return
         }
 
-        let success = deviceID.setMuteState(muted)
-        if success {
-            muteStates[deviceID] = muted
-        } else {
+        switch outputVolumeBackend(for: deviceID) {
+        case .hardware:
+            let success = deviceID.setMuteState(muted)
+            if success {
+                muteStates[deviceID] = muted
+            } else {
+                logger.warning("Failed to set mute on device \(deviceID)")
+            }
+
+        case .ddc:
             #if !APP_STORE
-            if let ddcController, ddcController.isDDCBacked(deviceID) {
+            if let ddcController {
                 if muted {
                     ddcController.mute(for: deviceID)
                 } else {
@@ -361,18 +413,50 @@ final class DeviceVolumeMonitor: DeviceVolumeProviding {
                 }
                 muteStates[deviceID] = muted
             } else {
-                logger.warning("Failed to set mute on device \(deviceID)")
+                logger.warning("Failed to set DDC mute on device \(deviceID)")
             }
             #else
-            logger.warning("Failed to set mute on device \(deviceID)")
+            logger.warning("DDC mute not available on device \(deviceID)")
             #endif
+
+        case .software:
+            guard let deviceUID = outputDeviceUID(for: deviceID) else {
+                logger.warning("Cannot persist software mute: missing device UID for \(deviceID)")
+                return
+            }
+
+            if muted {
+                let currentVisibleVolume = volumes[deviceID] ?? settingsManager.getSoftwareDeviceVolume(for: deviceUID) ?? 1.0
+                if currentVisibleVolume > 0 {
+                    settingsManager.setSoftwareDeviceSavedVolume(for: deviceUID, to: currentVisibleVolume)
+                }
+                settingsManager.setSoftwareDeviceMuteState(for: deviceUID, to: true)
+                settingsManager.setSoftwareDeviceVolume(for: deviceUID, to: 0)
+                volumes[deviceID] = 0
+                muteStates[deviceID] = true
+                onVolumeChanged?(deviceID, 0)
+                onMuteChanged?(deviceID, true)
+            } else {
+                settingsManager.setSoftwareDeviceMuteState(for: deviceUID, to: false)
+
+                let currentVisibleVolume = volumes[deviceID] ?? settingsManager.getSoftwareDeviceVolume(for: deviceUID) ?? 0
+                if currentVisibleVolume == 0 {
+                    let restoredVolume = settingsManager.getSoftwareDeviceSavedVolume(for: deviceUID) ?? 0.5
+                    settingsManager.setSoftwareDeviceVolume(for: deviceUID, to: restoredVolume)
+                    volumes[deviceID] = restoredVolume
+                    onVolumeChanged?(deviceID, restoredVolume)
+                }
+
+                muteStates[deviceID] = false
+                onMuteChanged?(deviceID, false)
+            }
         }
     }
 
     #if !APP_STORE
     /// Re-reads volume/mute states after DDC probe discovers (or loses) displays.
     func refreshAfterDDCProbe() {
-        readAllStates()
+        refreshOutputDeviceStates()
     }
     #endif
 
@@ -687,6 +771,8 @@ final class DeviceVolumeMonitor: DeviceVolumeProviding {
     private func handleVolumeChanged(for deviceID: AudioDeviceID) {
         guard deviceID.isValid else { return }
 
+        if outputVolumeBackend(for: deviceID) == .software { return }
+
         #if !APP_STORE
         // DDC-backed devices don't have real CoreAudio volume changes;
         // ignore HAL callbacks (they always report 1.0)
@@ -751,6 +837,7 @@ final class DeviceVolumeMonitor: DeviceVolumeProviding {
 
     private func handleMuteChanged(for deviceID: AudioDeviceID) {
         guard deviceID.isValid else { return }
+        if outputVolumeBackend(for: deviceID) == .software { return }
         let newMuteState = deviceID.readMuteState()
         muteStates[deviceID] = newMuteState
         onMuteChanged?(deviceID, newMuteState)
@@ -765,9 +852,20 @@ final class DeviceVolumeMonitor: DeviceVolumeProviding {
             // Skip devices that HAL reports as dead (mid-disconnect)
             guard device.id.isDeviceAlive() else { continue }
 
+            let backend = outputVolumeBackend(for: device.id)
+
+            if backend == .software {
+                let muted = settingsManager.getSoftwareDeviceMuteState(for: device.uid)
+                let defaultVolume: Float = muted ? 0 : 1.0
+                let visibleVolume = settingsManager.getSoftwareDeviceVolume(for: device.uid) ?? defaultVolume
+                volumes[device.id] = clampedVolume(visibleVolume)
+                muteStates[device.id] = muted
+                continue
+            }
+
             #if !APP_STORE
             // For DDC-backed devices, use cached DDC volume instead of CoreAudio
-            if let ddcController, ddcController.isDDCBacked(device.id) {
+            if backend == .ddc, let ddcController {
                 if let ddcVolume = ddcController.getVolume(for: device.id) {
                     volumes[device.id] = Float(ddcVolume) / 100.0
                 } else {
@@ -792,6 +890,10 @@ final class DeviceVolumeMonitor: DeviceVolumeProviding {
                 scheduleBluetoothOutputConfirmation(for: device.id)
             }
         }
+    }
+
+    private func outputDeviceUID(for deviceID: AudioDeviceID) -> String? {
+        deviceMonitor.device(for: deviceID)?.uid
     }
 
     /// Starts observing deviceMonitor.outputDevices for changes

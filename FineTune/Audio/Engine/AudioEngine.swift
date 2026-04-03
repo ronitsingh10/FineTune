@@ -76,17 +76,19 @@ final class AudioEngine {
         deviceMonitor.outputDevices
     }
 
-    /// Whether a device supports software volume control (CoreAudio or DDC).
-    /// Devices without volume control still appear in the list but without slider/mute UI.
+    func outputVolumeBackend(for deviceID: AudioDeviceID) -> VolumeControlTier {
+        deviceVolumeMonitor.outputVolumeBackend(for: deviceID)
+    }
+
+    /// Returns true when the device has usable volume control.
+    /// Software-backed devices require the user setting to be enabled.
     func hasVolumeControl(for deviceID: AudioDeviceID) -> Bool {
-        #if !APP_STORE
-        // Before DDC probe completes, assume all devices have volume control
-        // to avoid premature hiding of controls on monitors that may be DDC-backed
-        if !ddcController.probeCompleted { return true }
-        return deviceID.hasOutputVolumeControl() || ddcController.isDDCBacked(deviceID)
-        #else
-        return deviceID.hasOutputVolumeControl()
-        #endif
+        switch outputVolumeBackend(for: deviceID) {
+        case .hardware, .ddc:
+            return true
+        case .software:
+            return settingsManager.appSettings.softwareDeviceVolumeEnabled
+        }
     }
 
     var inputDevices: [AudioDevice] {
@@ -278,6 +280,7 @@ final class AudioEngine {
                 #if !APP_STORE
                 ddc.onProbeCompleted = { [weak self] in
                     self?.deviceVolumeMonitor.refreshAfterDDCProbe()
+                    self?.refreshAllTapOutputStates()
                 }
                 ddc.start()
                 #endif
@@ -328,6 +331,10 @@ final class AudioEngine {
             for (_, tap) in self.taps {
                 if tap.currentDeviceUID == deviceUID {
                     tap.currentDeviceVolume = newVolume
+                    if tap.currentDeviceUIDs.count == 1,
+                       self.outputVolumeBackend(for: deviceID) == .software {
+                        tap.volume = self.effectiveVolume(for: tap.app.id, deviceUIDs: tap.currentDeviceUIDs)
+                    }
                 }
             }
         }
@@ -338,6 +345,10 @@ final class AudioEngine {
             for (_, tap) in self.taps {
                 if tap.currentDeviceUID == deviceUID {
                     tap.isDeviceMuted = isMuted
+                    if tap.currentDeviceUIDs.count == 1,
+                       self.outputVolumeBackend(for: deviceID) == .software {
+                        tap.volume = self.effectiveVolume(for: tap.app.id, deviceUIDs: tap.currentDeviceUIDs)
+                    }
                 }
             }
         }
@@ -634,16 +645,17 @@ final class AudioEngine {
         // 3. Clear cached per-app audio state
         volumeState.resetAll()
 
-        // 4. Push defaults to all active taps
-        let defaultVolume = settingsManager.appSettings.defaultNewAppVolume
+        // 4. Refresh output state caches so software-backed devices reset to defaults.
+        deviceVolumeMonitor.refreshOutputDeviceStates()
+
+        // 5. Push defaults to all active taps
         for tap in taps.values {
-            tap.volume = defaultVolume
-            tap.isMuted = false
+            applyTapOutputState(to: tap, for: tap.app.id, deviceUIDs: tap.currentDeviceUIDs)
             tap.updateEQSettings(.flat)
             tap.updateAutoEQProfile(nil)
         }
 
-        // 5. Re-apply from clean settings (re-establishes routing to system default)
+        // 6. Re-apply from clean settings (re-establishes routing to system default)
         applyPersistedSettings()
 
         logger.info("Settings reset: engine state synchronized")
@@ -654,7 +666,9 @@ final class AudioEngine {
         if let deviceUID = appDeviceRouting[app.id] {
             ensureTapExists(for: app, deviceUID: deviceUID)
         }
-        taps[app.id]?.volume = effectiveVolume(for: app.id)
+        if let tap = taps[app.id] {
+            tap.volume = effectiveVolume(for: app.id, deviceUIDs: tap.currentDeviceUIDs)
+        }
     }
 
     func getVolume(for app: AudioApp) -> Float {
@@ -665,16 +679,57 @@ final class AudioEngine {
 
     func setBoost(for app: AudioApp, to boost: BoostLevel) {
         volumeState.setBoost(for: app.id, to: boost, identifier: app.persistenceIdentifier)
-        taps[app.id]?.volume = effectiveVolume(for: app.id)
+        if let tap = taps[app.id] {
+            tap.volume = effectiveVolume(for: app.id, deviceUIDs: tap.currentDeviceUIDs)
+        }
     }
 
     func getBoost(for app: AudioApp) -> BoostLevel {
         volumeState.getBoost(for: app.id)
     }
 
-    /// Effective gain for ProcessTapController: volume × boost
-    private func effectiveVolume(for pid: pid_t) -> Float {
-        volumeState.getVolume(for: pid) * volumeState.getBoost(for: pid).rawValue
+    /// Effective gain for ProcessTapController: app volume × boost, plus optional
+    /// single-device software output gain for unsupported devices.
+    private func effectiveVolume(for pid: pid_t, deviceUIDs: [String]? = nil) -> Float {
+        let appGain = volumeState.getVolume(for: pid) * volumeState.getBoost(for: pid).rawValue
+
+        guard settingsManager.appSettings.softwareDeviceVolumeEnabled,
+              let resolvedUIDs = deviceUIDs, resolvedUIDs.count == 1,
+              let primaryUID = resolvedUIDs.first,
+              let device = deviceMonitor.device(for: primaryUID),
+              outputVolumeBackend(for: device.id) == .software else {
+            return appGain
+        }
+
+        return appGain * deviceVolumeMonitor.outputProcessingGain(for: device.id)
+    }
+
+    private func applyTapOutputState(to tap: any ProcessTapControlling, for pid: pid_t, deviceUIDs: [String]? = nil) {
+        let resolvedUIDs = deviceUIDs ?? tap.currentDeviceUIDs
+        tap.volume = effectiveVolume(for: pid, deviceUIDs: resolvedUIDs)
+        tap.isMuted = volumeState.getMute(for: pid)
+
+        if let primaryUID = resolvedUIDs.first,
+           let device = deviceMonitor.device(for: primaryUID) {
+            tap.currentDeviceVolume = deviceVolumeMonitor.volumes[device.id] ?? 1.0
+            tap.isDeviceMuted = deviceVolumeMonitor.muteStates[device.id] ?? false
+        } else {
+            tap.currentDeviceVolume = 1.0
+            tap.isDeviceMuted = false
+        }
+    }
+
+    private func refreshAllTapOutputStates() {
+        for tap in taps.values {
+            applyTapOutputState(to: tap, for: tap.app.id, deviceUIDs: tap.currentDeviceUIDs)
+        }
+    }
+
+    /// Called when the software device volume setting is toggled.
+    /// Recalculates tap gains so software volume is applied or stripped immediately.
+    func handleSoftwareVolumeSettingChanged() {
+        deviceVolumeMonitor.refreshOutputDeviceStates()
+        refreshAllTapOutputStates()
     }
 
     func setMute(for app: AudioApp, to muted: Bool) {
@@ -780,6 +835,9 @@ final class AudioEngine {
             guard let profile = await autoEQProfileManager.resolveProfile(for: selection.profileID) else { return }
             // Verify tap still exists and is still routed to the same device
             guard tap.currentDeviceUID == deviceUID else { return }
+            guard let latestSelection = settingsManager.getAutoEQSelection(for: deviceUID),
+                  latestSelection.profileID == selection.profileID,
+                  latestSelection.isEnabled else { return }
             tap.updateAutoEQProfile(profile)
         }
     }
@@ -817,8 +875,7 @@ final class AudioEngine {
                 Task {
                     do {
                         try await tap.refreshTapSource(nil)
-                        tap.volume = self.effectiveVolume(for: app.id)
-                        tap.isMuted = self.volumeState.getMute(for: app.id)
+                        self.applyTapOutputState(to: tap, for: app.id)
                     } catch {
                         self.logger.error("Failed to refresh tap source for \(app.name): \(error)")
                     }
@@ -850,14 +907,7 @@ final class AudioEngine {
             Task {
                 do {
                     try await tap.switchDevice(to: targetUID, preferredTapSourceDeviceUID: preferredTapSourceUID)
-                    // Restore saved volume/mute state after device switch
-                    tap.volume = self.effectiveVolume(for: app.id)
-                    tap.isMuted = self.volumeState.getMute(for: app.id)
-                    // Update device volume/mute for VU meter after switch
-                    if let device = self.deviceMonitor.device(for: targetUID) {
-                        tap.currentDeviceVolume = self.deviceVolumeMonitor.volumes[device.id] ?? 1.0
-                        tap.isDeviceMuted = self.deviceVolumeMonitor.muteStates[device.id] ?? false
-                    }
+                    self.applyTapOutputState(to: tap, for: app.id, deviceUIDs: [targetUID])
                     self.applyAutoEQToTap(tap)
                     self.logger.debug("Switched \(app.name) to device: \(targetUID)")
                 } catch {
@@ -950,14 +1000,7 @@ final class AudioEngine {
                 do {
                     let preferredTapSourceUID = preferredTapSourceDeviceUID(forOutputUIDs: deviceUIDs, isFollowsDefault: followsDefault.contains(app.id))
                     try await tap.updateDevices(to: deviceUIDs, preferredTapSourceDeviceUID: preferredTapSourceUID)
-                    tap.volume = effectiveVolume(for: app.id)
-                    tap.isMuted = volumeState.getMute(for: app.id)
-                    // Update device volume for VU meter (use primary device)
-                    if let primaryUID = deviceUIDs.first,
-                       let device = deviceMonitor.device(for: primaryUID) {
-                        tap.currentDeviceVolume = deviceVolumeMonitor.volumes[device.id] ?? 1.0
-                        tap.isDeviceMuted = deviceVolumeMonitor.muteStates[device.id] ?? false
-                    }
+                    applyTapOutputState(to: tap, for: app.id, deviceUIDs: deviceUIDs)
                     logger.debug("Updated \(app.name) to \(deviceUIDs.count) device(s)")
                 } catch {
                     logger.error("Failed to update devices for \(app.name): \(error.localizedDescription)")
@@ -978,14 +1021,7 @@ final class AudioEngine {
         let preferredTapSourceUID = preferredTapSourceDeviceUID(forOutputUIDs: deviceUIDs, isFollowsDefault: followsDefault.contains(app.id))
         do {
             let tap = try tapFactory(app, deviceUIDs, preferredTapSourceUID)
-            tap.volume = effectiveVolume(for: app.id)
-
-            // Set initial device volume/mute for VU meter (use primary device)
-            if let primaryUID = deviceUIDs.first,
-               let device = deviceMonitor.device(for: primaryUID) {
-                tap.currentDeviceVolume = deviceVolumeMonitor.volumes[device.id] ?? 1.0
-                tap.isDeviceMuted = deviceVolumeMonitor.muteStates[device.id] ?? false
-            }
+            applyTapOutputState(to: tap, for: app.id, deviceUIDs: deviceUIDs)
 
             try tap.activate()
             taps[app.id] = tap
@@ -1036,7 +1072,9 @@ final class AudioEngine {
 
                         // Apply volume (with boost) and mute
                         if savedVolume != nil {
-                            taps[app.id]?.volume = effectiveVolume(for: app.id)
+                            if let tap = taps[app.id] {
+                                applyTapOutputState(to: tap, for: app.id, deviceUIDs: availableUIDs)
+                            }
                         }
                         if let muted = savedMute, muted {
                             taps[app.id]?.isMuted = true
@@ -1084,12 +1122,7 @@ final class AudioEngine {
                 Task {
                     do {
                         try await existingTap.switchDevice(to: deviceUID, preferredTapSourceDeviceUID: preferredSource)
-                        existingTap.volume = self.effectiveVolume(for: app.id)
-                        existingTap.isMuted = self.volumeState.getMute(for: app.id)
-                        if let device = self.deviceMonitor.device(for: deviceUID) {
-                            existingTap.currentDeviceVolume = self.deviceVolumeMonitor.volumes[device.id] ?? 1.0
-                            existingTap.isDeviceMuted = self.deviceVolumeMonitor.muteStates[device.id] ?? false
-                        }
+                        self.applyTapOutputState(to: existingTap, for: app.id, deviceUIDs: [deviceUID])
                         self.applyAutoEQToTap(existingTap)
                     } catch {
                         self.logger.error("Failed to re-route \(app.name) to \(deviceUID): \(error.localizedDescription)")
@@ -1108,7 +1141,7 @@ final class AudioEngine {
             appliedPIDs.insert(app.id)
 
             if savedVolume != nil {
-                let effective = effectiveVolume(for: app.id)
+                let effective = effectiveVolume(for: app.id, deviceUIDs: [deviceUID])
                 let displayPercent = Int(effective * 100)
                 logger.debug("Applying saved volume \(displayPercent)% (with boost) to \(app.name)")
                 taps[app.id]?.volume = effective
@@ -1128,13 +1161,7 @@ final class AudioEngine {
         let preferredTapSourceUID = preferredTapSourceDeviceUID(forOutputUIDs: [deviceUID], isFollowsDefault: followsDefault.contains(app.id))
         do {
             let tap = try tapFactory(app, [deviceUID], preferredTapSourceUID)
-            tap.volume = effectiveVolume(for: app.id)
-
-            // Set initial device volume/mute for VU meter accuracy
-            if let device = deviceMonitor.device(for: deviceUID) {
-                tap.currentDeviceVolume = deviceVolumeMonitor.volumes[device.id] ?? 1.0
-                tap.isDeviceMuted = deviceVolumeMonitor.muteStates[device.id] ?? false
-            }
+            applyTapOutputState(to: tap, for: app.id, deviceUIDs: [deviceUID])
 
             try tap.activate()
             taps[app.id] = tap
@@ -1235,12 +1262,7 @@ final class AudioEngine {
                 do {
                     let preferredTapSourceUID = self.preferredTapSourceDeviceUID(forOutputUIDs: [targetUID], isFollowsDefault: true)
                     try await tap.switchDevice(to: targetUID, preferredTapSourceDeviceUID: preferredTapSourceUID)
-                    tap.volume = self.effectiveVolume(for: app.id)
-                    tap.isMuted = self.volumeState.getMute(for: app.id)
-                    if let device = self.deviceMonitor.device(for: targetUID) {
-                        tap.currentDeviceVolume = self.deviceVolumeMonitor.volumes[device.id] ?? 1.0
-                        tap.isDeviceMuted = self.deviceVolumeMonitor.muteStates[device.id] ?? false
-                    }
+                    self.applyTapOutputState(to: tap, for: app.id, deviceUIDs: [targetUID])
                     self.applyAutoEQToTap(tap)
                 } catch {
                     self.logger.error("Failed to switch \(app.name) to \(targetUID): \(error.localizedDescription)")
@@ -1320,8 +1342,7 @@ final class AudioEngine {
                     do {
                         let preferredTapSourceUID = self.preferredTapSourceDeviceUID(forOutputUIDs: [fallbackUID], isFollowsDefault: true)
                         try await tap.switchDevice(to: fallbackUID, preferredTapSourceDeviceUID: preferredTapSourceUID, sourceDeviceDead: true)
-                        tap.volume = self.effectiveVolume(for: tap.app.id)
-                        tap.isMuted = self.volumeState.getMute(for: tap.app.id)
+                        self.applyTapOutputState(to: tap, for: tap.app.id, deviceUIDs: [fallbackUID])
                         self.applyAutoEQToTap(tap)
                     } catch {
                         self.logger.error("Failed to switch \(tap.app.name) to fallback: \(error.localizedDescription)")
@@ -1334,8 +1355,7 @@ final class AudioEngine {
                     do {
                         let preferredTapSourceUID = self.preferredTapSourceDeviceUID(forOutputUIDs: remainingUIDs, isFollowsDefault: self.followsDefault.contains(tap.app.id))
                         try await tap.updateDevices(to: remainingUIDs, preferredTapSourceDeviceUID: preferredTapSourceUID, sourceDeviceDead: true)
-                        tap.volume = self.effectiveVolume(for: tap.app.id)
-                        tap.isMuted = self.volumeState.getMute(for: tap.app.id)
+                        self.applyTapOutputState(to: tap, for: tap.app.id, deviceUIDs: remainingUIDs)
                         self.logger.debug("Removed \(deviceName) from \(tap.app.name) multi-device output")
                     } catch {
                         self.logger.error("Failed to update \(tap.app.name) devices: \(error.localizedDescription)")
@@ -1394,12 +1414,7 @@ final class AudioEngine {
                     do {
                         let preferredTapSourceUID = self.preferredTapSourceDeviceUID(forOutputUIDs: [deviceUID], isFollowsDefault: false)
                         try await tap.switchDevice(to: deviceUID, preferredTapSourceDeviceUID: preferredTapSourceUID)
-                        tap.volume = self.effectiveVolume(for: tap.app.id)
-                        tap.isMuted = self.volumeState.getMute(for: tap.app.id)
-                        if let device = self.deviceMonitor.device(for: deviceUID) {
-                            tap.currentDeviceVolume = self.deviceVolumeMonitor.volumes[device.id] ?? 1.0
-                            tap.isDeviceMuted = self.deviceVolumeMonitor.muteStates[device.id] ?? false
-                        }
+                        self.applyTapOutputState(to: tap, for: tap.app.id, deviceUIDs: [deviceUID])
                         self.applyAutoEQToTap(tap)
                     } catch {
                         self.logger.error("Failed to switch \(tap.app.name) back to \(deviceName): \(error.localizedDescription)")

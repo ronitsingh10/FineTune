@@ -16,7 +16,7 @@ struct DeviceRow: View {
     // AutoEQ (all optional — existing call sites work without them)
     let autoEQProfileName: String?
     let autoEQEnabled: Bool
-    let onAutoEQToggle: (() -> Void)?
+    let onAutoEQToggle: ((Bool) -> Void)?
     let autoEQProfileManager: AutoEQProfileManager?
     let autoEQSelection: AutoEQSelection?
     let autoEQFavoriteIDs: Set<String>
@@ -29,11 +29,12 @@ struct DeviceRow: View {
 
     @State private var sliderValue: Double
     @State private var isEditing = false
+    @State private var suppressSliderAutoUnmute = false
 
     /// Show muted icon when system muted OR volume is 0
     private var showMutedIcon: Bool { isMuted || sliderValue == 0 }
 
-    /// Default volume to restore when unmuting from 0 (50%)
+    /// Default slider position to restore when unmuting from 0 (50%)
     private let defaultUnmuteVolume: Double = 0.5
 
     init(
@@ -47,7 +48,7 @@ struct DeviceRow: View {
         onMuteToggle: @escaping () -> Void,
         autoEQProfileName: String? = nil,
         autoEQEnabled: Bool = false,
-        onAutoEQToggle: (() -> Void)? = nil,
+        onAutoEQToggle: ((Bool) -> Void)? = nil,
         autoEQProfileManager: AutoEQProfileManager? = nil,
         autoEQSelection: AutoEQSelection? = nil,
         autoEQFavoriteIDs: Set<String> = [],
@@ -78,7 +79,7 @@ struct DeviceRow: View {
         self.autoEQImportError = autoEQImportError
         self.autoEQPreampEnabled = autoEQPreampEnabled
         self.onAutoEQPreampToggle = onAutoEQPreampToggle
-        self._sliderValue = State(initialValue: Double(volume))
+        self._sliderValue = State(initialValue: VolumeMapping.gainToSlider(volume))
     }
 
     var body: some View {
@@ -115,8 +116,8 @@ struct DeviceRow: View {
                         .lineLimit(1)
                         .help(device.name)
 
-                    if let profileName = autoEQProfileName, autoEQEnabled {
-                        Text(profileName)
+                    if let subtitle = Self.autoEQSubtitle(profileName: autoEQProfileName, isEnabled: autoEQEnabled) {
+                        Text(subtitle)
                             .font(.system(size: 9))
                             .foregroundStyle(DesignTokens.Colors.textTertiary)
                             .lineLimit(1)
@@ -139,6 +140,8 @@ struct DeviceRow: View {
                         onImport: onImport,
                         onToggleFavorite: { id in onAutoEQToggleFavorite?(id) },
                         importError: autoEQImportError,
+                        isCorrectionEnabled: autoEQEnabled,
+                        onCorrectionToggle: onAutoEQToggle,
                         preampEnabled: autoEQPreampEnabled,
                         onPreampToggle: onAutoEQPreampToggle
                     )
@@ -152,6 +155,7 @@ struct DeviceRow: View {
                     if showMutedIcon {
                         // Unmute: restore to default if at 0
                         if sliderValue == 0 {
+                            suppressSliderAutoUnmute = isMuted
                             sliderValue = defaultUnmuteVolume
                         }
                         if isMuted {
@@ -173,7 +177,11 @@ struct DeviceRow: View {
                 .opacity(showMutedIcon ? 0.5 : 1.0)
                 .onChange(of: sliderValue) { _, newValue in
                     guard isEditing else { return }
-                    onVolumeChange(Float(newValue))
+                    onVolumeChange(VolumeMapping.sliderToGain(newValue))
+                    if suppressSliderAutoUnmute {
+                        suppressSliderAutoUnmute = false
+                        return
+                    }
                     // Auto-unmute when slider moved while muted
                     if isMuted && newValue > 0 {
                         onMuteToggle()
@@ -194,8 +202,15 @@ struct DeviceRow: View {
         .onChange(of: volume) { _, newValue in
             // Only sync from external changes when user is NOT dragging
             guard !isEditing else { return }
-            sliderValue = Double(newValue)
+            sliderValue = VolumeMapping.gainToSlider(newValue)
         }
+    }
+}
+
+extension DeviceRow {
+    static func autoEQSubtitle(profileName: String?, isEnabled: Bool) -> String? {
+        guard let profileName else { return nil }
+        return isEnabled ? profileName : "\(profileName) (off)"
     }
 }
 

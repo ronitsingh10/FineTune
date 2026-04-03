@@ -27,7 +27,12 @@ struct InactiveAppRow: View {
     let onDeviceModeChange: (DeviceSelectionMode) -> Void
     let onSelectFollowDefault: () -> Void
     let eqSettings: EQSettings
+    let userPresets: [UserEQPreset]
     let onEQChange: (EQSettings) -> Void
+    let onUserPresetSelected: (UserEQPreset) -> Void
+    let onSavePreset: (String, EQSettings) -> Void
+    let onDeleteUserPreset: (UUID) -> Void
+    let onRenameUserPreset: (UUID, String) -> Void
     let isEQExpanded: Bool
     let onEQToggle: () -> Void
 
@@ -53,7 +58,12 @@ struct InactiveAppRow: View {
         onDeviceModeChange: @escaping (DeviceSelectionMode) -> Void = { _ in },
         onSelectFollowDefault: @escaping () -> Void = {},
         eqSettings: EQSettings = EQSettings(),
+        userPresets: [UserEQPreset] = [],
         onEQChange: @escaping (EQSettings) -> Void = { _ in },
+        onUserPresetSelected: @escaping (UserEQPreset) -> Void = { _ in },
+        onSavePreset: @escaping (String, EQSettings) -> Void = { _, _ in },
+        onDeleteUserPreset: @escaping (UUID) -> Void = { _ in },
+        onRenameUserPreset: @escaping (UUID, String) -> Void = { _, _ in },
         isEQExpanded: Bool = false,
         onEQToggle: @escaping () -> Void = {}
     ) {
@@ -76,7 +86,12 @@ struct InactiveAppRow: View {
         self.onDeviceModeChange = onDeviceModeChange
         self.onSelectFollowDefault = onSelectFollowDefault
         self.eqSettings = eqSettings
+        self.userPresets = userPresets
         self.onEQChange = onEQChange
+        self.onUserPresetSelected = onUserPresetSelected
+        self.onSavePreset = onSavePreset
+        self.onDeleteUserPreset = onDeleteUserPreset
+        self.onRenameUserPreset = onRenameUserPreset
         self.isEQExpanded = isEQExpanded
         self.onEQToggle = onEQToggle
         self._localEQSettings = State(initialValue: eqSettings)
@@ -131,13 +146,21 @@ struct InactiveAppRow: View {
             // EQ panel
             EQPanelView(
                 settings: $localEQSettings,
+                userPresets: userPresets,
                 onPresetSelected: { preset in
                     localEQSettings = preset.settings
                     onEQChange(preset.settings)
                 },
+                onUserPresetSelected: { userPreset in
+                    localEQSettings = userPreset.settings
+                    onUserPresetSelected(userPreset)
+                },
                 onSettingsChanged: { settings in
                     onEQChange(settings)
-                }
+                },
+                onSavePreset: onSavePreset,
+                onDeleteUserPreset: onDeleteUserPreset,
+                onRenameUserPreset: onRenameUserPreset
             )
             .padding(.top, DesignTokens.Spacing.sm)
         }

@@ -299,7 +299,7 @@ private struct GroupedDropdownContentView<Section: Identifiable & Hashable, Item
 
     var body: some View {
         ScrollView(.vertical) {
-            LazyVStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: 2) {
                 ForEach(sections) { section in
                     // Section header
                     Text(sectionTitle(section))
