@@ -251,9 +251,7 @@ struct EQPanelView: View {
             onPresetSelected: { _ in },
             onUserPresetSelected: { _ in },
             onSettingsChanged: { _ in },
-            onSavePreset: { name, settings in
-                print("Saving preset: \(name)")
-            },
+            onSavePreset: { _, _ in },
             onDeleteUserPreset: { _ in },
             onRenameUserPreset: { _, _ in }
         )
