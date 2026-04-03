@@ -45,7 +45,7 @@ struct EQPanelView: View {
     var body: some View {
         // Entire EQ panel content inside recessed background
         VStack(spacing: 12) {
-            // Header: Toggle left, Preset + Save right
+            // Header: Toggle left, save field or spacer in middle, Preset right
             HStack {
                 // EQ toggle on left
                 HStack(spacing: 6) {
@@ -61,14 +61,21 @@ struct EQPanelView: View {
                         .foregroundStyle(.primary)
                 }
 
-                Spacer()
+                if isSaving {
+                    // Save field fills the middle gap
+                    savePresetField
+                        .transition(.opacity)
+                } else {
+                    Spacer()
 
-                // Save button (visible when curve is custom and not currently saving)
-                if isCustomCurve && !isSaving {
-                    saveButton
+                    // Save button (visible when curve is custom)
+                    if isCustomCurve {
+                        saveButton
+                            .transition(.opacity)
+                    }
                 }
 
-                // Preset picker on right
+                // Preset picker on right (always visible)
                 HStack(spacing: DesignTokens.Spacing.sm) {
                     Text("Preset")
                         .font(DesignTokens.Typography.pickerText)
@@ -85,12 +92,6 @@ struct EQPanelView: View {
                 }
             }
             .zIndex(1)  // Ensure dropdown renders above sliders
-
-            // Save preset inline field
-            if isSaving {
-                savePresetField
-                    .transition(.move(edge: .top).combined(with: .opacity))
-            }
 
             // 10-band sliders
             HStack(spacing: 22) {
@@ -147,9 +148,9 @@ struct EQPanelView: View {
     // MARK: - Save Preset Field
 
     private var savePresetField: some View {
-        HStack(spacing: DesignTokens.Spacing.sm) {
+        HStack(spacing: DesignTokens.Spacing.xs) {
             Image(systemName: "tag")
-                .font(.system(size: 11))
+                .font(.system(size: 10))
                 .foregroundStyle(DesignTokens.Colors.textTertiary)
 
             TextField("Preset name", text: $savePresetName)
@@ -173,7 +174,7 @@ struct EQPanelView: View {
                 cancelSave()
             } label: {
                 Image(systemName: "xmark")
-                    .font(.system(size: 10, weight: .medium))
+                    .font(.system(size: 9, weight: .medium))
                     .foregroundStyle(DesignTokens.Colors.textTertiary)
             }
             .buttonStyle(.plain)
@@ -181,7 +182,7 @@ struct EQPanelView: View {
             .accessibilityLabel("Cancel saving preset")
         }
         .padding(.horizontal, DesignTokens.Spacing.sm)
-        .padding(.vertical, DesignTokens.Spacing.xs)
+        .padding(.vertical, 3)
         .background {
             RoundedRectangle(cornerRadius: DesignTokens.Dimensions.buttonRadius)
                 .fill(DesignTokens.Colors.accentPrimary.opacity(0.08))
