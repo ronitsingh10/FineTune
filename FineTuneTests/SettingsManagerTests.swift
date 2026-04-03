@@ -55,7 +55,7 @@ struct SettingsJSONTests {
         let json = "{}"
         let data = Data(json.utf8)
         let decoded = try JSONDecoder().decode(SettingsManager.Settings.self, from: data)
-        #expect(decoded.version == 8)
+        #expect(decoded.version == 9)
         #expect(decoded.appVolumes.isEmpty)
         #expect(decoded.appMutes.isEmpty)
         #expect(decoded.systemSoundsFollowsDefault == true)
@@ -65,11 +65,11 @@ struct SettingsJSONTests {
     @Test("Decoding with extra unknown keys is tolerated")
     func unknownKeysIgnored() throws {
         let json = """
-        {"version": 8, "unknownField": "hello", "anotherNew": 42}
+        {"version": 9, "unknownField": "hello", "anotherNew": 42}
         """
         let data = Data(json.utf8)
         let decoded = try JSONDecoder().decode(SettingsManager.Settings.self, from: data)
-        #expect(decoded.version == 8)
+        #expect(decoded.version == 9)
     }
 
     @Test("Volume values above 1.0 are clamped to 1.0 on decode")
