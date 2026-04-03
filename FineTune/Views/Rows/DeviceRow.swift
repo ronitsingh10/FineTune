@@ -16,7 +16,7 @@ struct DeviceRow: View {
     // AutoEQ (all optional — existing call sites work without them)
     let autoEQProfileName: String?
     let autoEQEnabled: Bool
-    let onAutoEQToggle: (() -> Void)?
+    let onAutoEQToggle: ((Bool) -> Void)?
     let autoEQProfileManager: AutoEQProfileManager?
     let autoEQSelection: AutoEQSelection?
     let autoEQFavoriteIDs: Set<String>
@@ -48,7 +48,7 @@ struct DeviceRow: View {
         onMuteToggle: @escaping () -> Void,
         autoEQProfileName: String? = nil,
         autoEQEnabled: Bool = false,
-        onAutoEQToggle: (() -> Void)? = nil,
+        onAutoEQToggle: ((Bool) -> Void)? = nil,
         autoEQProfileManager: AutoEQProfileManager? = nil,
         autoEQSelection: AutoEQSelection? = nil,
         autoEQFavoriteIDs: Set<String> = [],
@@ -116,8 +116,8 @@ struct DeviceRow: View {
                         .lineLimit(1)
                         .help(device.name)
 
-                    if let profileName = autoEQProfileName, autoEQEnabled {
-                        Text(profileName)
+                    if let subtitle = Self.autoEQSubtitle(profileName: autoEQProfileName, isEnabled: autoEQEnabled) {
+                        Text(subtitle)
                             .font(.system(size: 9))
                             .foregroundStyle(DesignTokens.Colors.textTertiary)
                             .lineLimit(1)
@@ -140,6 +140,8 @@ struct DeviceRow: View {
                         onImport: onImport,
                         onToggleFavorite: { id in onAutoEQToggleFavorite?(id) },
                         importError: autoEQImportError,
+                        isCorrectionEnabled: autoEQEnabled,
+                        onCorrectionToggle: onAutoEQToggle,
                         preampEnabled: autoEQPreampEnabled,
                         onPreampToggle: onAutoEQPreampToggle
                     )
@@ -201,6 +203,13 @@ struct DeviceRow: View {
             guard !isEditing else { return }
             sliderValue = VolumeMapping.gainToSlider(newValue)
         }
+    }
+}
+
+extension DeviceRow {
+    static func autoEQSubtitle(profileName: String?, isEnabled: Bool) -> String? {
+        guard let profileName else { return nil }
+        return isEnabled ? profileName : "\(profileName) (off)"
     }
 }
 

@@ -25,6 +25,7 @@ If you have a custom measurement or want to use a profile from another source:
 1. Click **"Import ParametricEQ.txt..."** at the bottom of the AutoEQ panel
 2. Select your `.txt` file
 3. The profile is imported and applied to the selected device
+4. Use the **Correction** switch in the picker to A/B the profile without removing it
 
 FineTune accepts [EqualizerAPO](https://sourceforge.net/projects/equalizerapo/) ParametricEQ.txt files:
 
@@ -55,5 +56,6 @@ Up to 10 filters per profile. The `Preamp` line sets a global gain offset to pre
 ## Managing Profiles
 
 - Each device remembers its assigned profile independently
-- To remove a profile, click the wand icon and select **No correction**
+- To temporarily bypass a profile, click the wand icon and turn **Correction** off
+- To remove a profile entirely, click the wand icon and select **No correction**
 - Favorite frequently-used profiles for quick access with the star icon — favorited profiles appear at the top of search results and are shown when the search field is empty

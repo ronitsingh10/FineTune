@@ -12,6 +12,8 @@ struct AutoEQSearchPanel: View {
     let onImport: () -> Void
     let onToggleFavorite: (String) -> Void
     let importErrorMessage: String?
+    var isCorrectionEnabled: Bool = false
+    var onCorrectionToggle: ((Bool) -> Void)?
     var preampEnabled: Bool = true
     var onPreampToggle: (() -> Void)?
 
@@ -34,6 +36,7 @@ struct AutoEQSearchPanel: View {
 
     /// Unified list of all selectable rows for keyboard navigation.
     private enum NavigableItem: Equatable {
+        case correctionToggle
         case noCorrection
         case selectedProfile(String)
         case searchResult(String)
@@ -41,6 +44,8 @@ struct AutoEQSearchPanel: View {
 
         var profileID: String? {
             switch self {
+            case .correctionToggle:
+                return nil
             case .noCorrection: return nil
             case .selectedProfile(let id), .searchResult(let id), .favorite(let id): return id
             }
@@ -48,6 +53,7 @@ struct AutoEQSearchPanel: View {
 
         var itemID: String {
             switch self {
+            case .correctionToggle: return "_correction"
             case .noCorrection: return "_none"
             case .selectedProfile(let id): return "selected_\(id)"
             case .searchResult(let id): return "result_\(id)"
@@ -59,8 +65,12 @@ struct AutoEQSearchPanel: View {
     private var navigableItems: [NavigableItem] {
         var items: [NavigableItem] = [.noCorrection]
 
+        if Self.showsCorrectionToggle(selectedProfileID: selectedProfileID), onCorrectionToggle != nil {
+            items.insert(.correctionToggle, at: 0)
+        }
+
         if let selectedID = selectedProfileID,
-           profileManager.profile(for: selectedID) != nil {
+           Self.showsAssignedProfileRow(selectedProfileName: selectedProfileName(for: selectedID)) {
             items.append(.selectedProfile(selectedID))
         }
 
@@ -105,6 +115,25 @@ struct AutoEQSearchPanel: View {
         return count
     }
 
+    private var correctionEnabledBinding: Binding<Bool> {
+        Binding(
+            get: { isCorrectionEnabled },
+            set: { newValue in onCorrectionToggle?(newValue) }
+        )
+    }
+
+    private func selectedProfileName(for id: String) -> String? {
+        profileManager.profile(for: id)?.name ?? profileManager.catalogEntry(for: id)?.name
+    }
+
+    static func showsCorrectionToggle(selectedProfileID: String?) -> Bool {
+        selectedProfileID != nil
+    }
+
+    static func showsAssignedProfileRow(selectedProfileName: String?) -> Bool {
+        selectedProfileName != nil
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             // Search field
@@ -136,19 +165,66 @@ struct AutoEQSearchPanel: View {
             Divider()
                 .padding(.horizontal, DesignTokens.Spacing.xs)
 
+            if Self.showsCorrectionToggle(selectedProfileID: selectedProfileID),
+               onCorrectionToggle != nil {
+                Button {
+                    onCorrectionToggle?(!isCorrectionEnabled)
+                } label: {
+                    HStack(spacing: DesignTokens.Spacing.sm) {
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text("Correction")
+                                .font(.system(size: 11, weight: .semibold))
+                                .foregroundStyle(DesignTokens.Colors.textPrimary)
+
+                            Text(isCorrectionEnabled ? "On" : "Off")
+                                .font(.system(size: 9))
+                                .foregroundStyle(DesignTokens.Colors.textTertiary)
+                        }
+
+                        Spacer()
+
+                        Toggle("Correction", isOn: correctionEnabledBinding)
+                            .toggleStyle(.switch)
+                            .scaleEffect(0.7)
+                            .labelsHidden()
+                            .allowsHitTesting(false)
+                    }
+                    .padding(.horizontal, DesignTokens.Spacing.sm)
+                    .padding(.vertical, DesignTokens.Spacing.xs)
+                    .background(
+                        RoundedRectangle(cornerRadius: 5)
+                            .fill(rowHighlight(for: "_correction", isHovered: hoveredID == "_correction"))
+                    )
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Correction")
+                .accessibilityValue(isCorrectionEnabled ? "On" : "Off")
+                .accessibilityHint("Toggles the assigned correction profile without removing it")
+                .padding(.horizontal, DesignTokens.Spacing.xs)
+                .whenHovered { isHovered in
+                    hoveredID = isHovered ? "_correction" : nil
+                    if isHovered { highlightedIndex = nil }
+                }
+
+                Divider()
+                    .padding(.horizontal, DesignTokens.Spacing.xs)
+            }
+
             // "None" option to remove correction
             Button {
                 onSelect(nil)
                 onDismiss()
             } label: {
                 HStack(spacing: DesignTokens.Spacing.sm) {
-                    Image(systemName: "xmark.circle")
-                        .font(.system(size: 12))
-                        .foregroundStyle(selectedProfileID == nil ? DesignTokens.Colors.textPrimary : DesignTokens.Colors.textTertiary)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Image(systemName: "xmark.circle")
+                            .font(.system(size: 12))
+                            .foregroundStyle(selectedProfileID == nil ? DesignTokens.Colors.textPrimary : DesignTokens.Colors.textTertiary)
 
-                    Text("No correction")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(selectedProfileID == nil ? DesignTokens.Colors.textPrimary : DesignTokens.Colors.textSecondary)
+                        Text("No correction")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(selectedProfileID == nil ? DesignTokens.Colors.textPrimary : DesignTokens.Colors.textSecondary)
+                    }
 
                     Spacer()
 
@@ -209,6 +285,11 @@ struct AutoEQSearchPanel: View {
                     .whenHovered { hoveredID = $0 ? "_preamp" : nil }
                     .padding(.horizontal, DesignTokens.Spacing.xs)
                 }
+            } else if let selectedID = selectedProfileID,
+                      let selectedName = selectedProfileName(for: selectedID),
+                      Self.showsAssignedProfileRow(selectedProfileName: selectedName) {
+                selectedCatalogProfileRow(id: selectedID, name: selectedName)
+                    .padding(.horizontal, DesignTokens.Spacing.xs)
             }
 
             // Results / Favorites / Empty state
@@ -589,7 +670,13 @@ struct AutoEQSearchPanel: View {
         guard let index = highlightedIndex, index < items.count else { return }
 
         let item = items[index]
-        if let profileID = item.profileID {
+        switch item {
+        case .correctionToggle:
+            onCorrectionToggle?(!isCorrectionEnabled)
+        case .noCorrection:
+            onSelect(nil)
+            onDismiss()
+        case .selectedProfile(let profileID), .searchResult(let profileID), .favorite(let profileID):
             // Check if already loaded
             if let profile = profileManager.profile(for: profileID) {
                 onSelect(profile)
@@ -597,9 +684,6 @@ struct AutoEQSearchPanel: View {
             } else if let entry = profileManager.catalogEntries.first(where: { $0.id == profileID }) {
                 selectCatalogEntry(entry)
             }
-        } else {
-            onSelect(nil)
-            onDismiss()
         }
     }
 
@@ -634,5 +718,54 @@ struct AutoEQSearchPanel: View {
         } else {
             return DesignTokens.Colors.interactiveDefault
         }
+    }
+
+    @ViewBuilder
+    private func selectedCatalogProfileRow(id: String, name: String) -> some View {
+        let itemID = "selected_\(id)"
+        let isRowHovered = hoveredID == id
+
+        Button {
+            if let profile = profileManager.profile(for: id) {
+                onSelect(profile)
+                onDismiss()
+            } else if let entry = profileManager.catalogEntry(for: id) {
+                selectCatalogEntry(entry)
+            }
+        } label: {
+            HStack {
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(name)
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(DesignTokens.Colors.textPrimary)
+                        .lineLimit(1)
+
+                    Text("Selected profile")
+                        .font(.system(size: 9))
+                        .foregroundStyle(DesignTokens.Colors.textTertiary)
+                }
+
+                Spacer()
+
+                Image(systemName: "checkmark")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(Color.accentColor)
+            }
+            .padding(.horizontal, DesignTokens.Spacing.sm)
+            .frame(height: itemHeight)
+            .background(
+                RoundedRectangle(cornerRadius: 5)
+                    .fill(rowHighlight(for: itemID, isHovered: isRowHovered))
+            )
+        }
+        .buttonStyle(.plain)
+        .whenHovered { isHovered in
+            hoveredID = isHovered ? id : nil
+            if isHovered { highlightedIndex = nil }
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(name)
+        .accessibilityAddTraits(.isSelected)
+        .accessibilityHint("Assigned correction profile")
     }
 }
