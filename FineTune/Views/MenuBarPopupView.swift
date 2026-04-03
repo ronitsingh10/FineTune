@@ -158,6 +158,9 @@ struct MenuBarPopupView: View {
             if !oldValue.lockInputDevice && newValue.lockInputDevice {
                 audioEngine.handleInputLockEnabled()
             }
+            if oldValue.softwareDeviceVolumeEnabled != newValue.softwareDeviceVolumeEnabled {
+                audioEngine.handleSoftwareVolumeSettingChanged()
+            }
         }
         .onChange(of: audioEngine.bluetoothDeviceMonitor.pairedDevices) { _, newValue in
             pairedDevices = newValue

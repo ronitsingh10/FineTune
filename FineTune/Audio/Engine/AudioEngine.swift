@@ -80,11 +80,14 @@ final class AudioEngine {
         deviceVolumeMonitor.outputVolumeBackend(for: deviceID)
     }
 
-    /// Every visible output device has some volume backend (native, DDC, or software).
+    /// Returns true when the device has usable volume control.
+    /// Software-backed devices require the user setting to be enabled.
     func hasVolumeControl(for deviceID: AudioDeviceID) -> Bool {
         switch outputVolumeBackend(for: deviceID) {
-        case .hardware, .ddc, .software:
+        case .hardware, .ddc:
             return true
+        case .software:
+            return settingsManager.appSettings.softwareDeviceVolumeEnabled
         }
     }
 
@@ -690,7 +693,8 @@ final class AudioEngine {
     private func effectiveVolume(for pid: pid_t, deviceUIDs: [String]? = nil) -> Float {
         let appGain = volumeState.getVolume(for: pid) * volumeState.getBoost(for: pid).rawValue
 
-        guard let resolvedUIDs = deviceUIDs, resolvedUIDs.count == 1,
+        guard settingsManager.appSettings.softwareDeviceVolumeEnabled,
+              let resolvedUIDs = deviceUIDs, resolvedUIDs.count == 1,
               let primaryUID = resolvedUIDs.first,
               let device = deviceMonitor.device(for: primaryUID),
               outputVolumeBackend(for: device.id) == .software else {
@@ -719,6 +723,13 @@ final class AudioEngine {
         for tap in taps.values {
             applyTapOutputState(to: tap, for: tap.app.id, deviceUIDs: tap.currentDeviceUIDs)
         }
+    }
+
+    /// Called when the software device volume setting is toggled.
+    /// Recalculates tap gains so software volume is applied or stripped immediately.
+    func handleSoftwareVolumeSettingChanged() {
+        deviceVolumeMonitor.refreshOutputDeviceStates()
+        refreshAllTapOutputStates()
     }
 
     func setMute(for app: AudioApp, to muted: Bool) {
