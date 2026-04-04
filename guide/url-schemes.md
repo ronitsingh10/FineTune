@@ -12,6 +12,9 @@ Control FineTune from Terminal, shell scripts, [Shortcuts](https://support.apple
 | Toggle mute | `finetune://toggle-mute?app=BUNDLE_ID` | Toggle mute state |
 | Set device | `finetune://set-device?app=BUNDLE_ID&device=DEVICE_UID` | Route an app to a specific output |
 | Reset | `finetune://reset` | Reset all apps to 100% and unmuted |
+| Set listening mode | `finetune://set-listening-mode?mode=MODE` | Set AirPods noise control (anc, transparency, adaptive, off) |
+| Connect device | `finetune://connect-device?name=DEVICE_NAME` | Connect a paired Bluetooth device |
+| Set default output | `finetune://set-default-output?device=DEVICE_UID` | Switch the system default output device |
 
 ## Examples
 
@@ -33,6 +36,21 @@ open "finetune://set-device?app=com.spotify.client&device=YOUR_DEVICE_UID"
 
 # Reset everything
 open "finetune://reset"
+
+# Set AirPods to Noise Cancellation
+open "finetune://set-listening-mode?mode=anc"
+
+# Set AirPods to Transparency mode
+open "finetune://set-listening-mode?mode=transparency"
+
+# Set listening mode on a specific device
+open "finetune://set-listening-mode?mode=adaptive&device=AirPods+Pro"
+
+# Connect AirPods Pro
+open "finetune://connect-device?name=AirPods+Pro"
+
+# Switch default output by name
+open "finetune://set-default-output?name=MacBook+Pro+Speakers"
 ```
 
 ## Use Cases
@@ -55,7 +73,29 @@ open "finetune://set-volumes?app=com.spotify.client&volume=30&app=com.apple.syst
 open "finetune://set-volumes?app=com.game.example&volume=400&app=com.hnc.Discord&volume=40"
 ```
 
+**AirPods workflow** — Connect AirPods, enable ANC, and lower music:
+
+```bash
+open "finetune://connect-device?name=AirPods+Pro"
+open "finetune://set-listening-mode?mode=anc"
+open "finetune://set-volumes?app=com.spotify.client&volume=30"
+```
+
 These commands work in Terminal, shell scripts, Automator, Raycast script commands, macOS Shortcuts (using "Open URL"), and any other tool that can open URLs.
+
+## Listening Mode Values
+
+| Value | Mode | Supported Devices |
+|-------|------|-------------------|
+| `anc` | Active Noise Cancellation | AirPods Pro, AirPods Max |
+| `transparency` | Transparency | AirPods Pro, AirPods Max |
+| `adaptive` | Adaptive | AirPods Pro 2+, AirPods Pro 3 |
+| `off` | Off (Normal) | AirPods Pro (1st/2nd gen), AirPods Max |
+
+> Note: AirPods Pro 3 does not have an "Off" mode. Available modes depend on your device model.
+
+Optional `device` parameter targets a specific device by name (useful if multiple AirPods are connected):
+`finetune://set-listening-mode?mode=anc&device=AirPods+Pro`
 
 ## Finding Bundle IDs
 
