@@ -1,5 +1,6 @@
 // FineTune/Utilities/URLHandler.swift
 import Foundation
+import AudioToolbox
 import os
 
 /// Protocol for the AudioEngine surface that URLHandler depends on.
@@ -7,7 +8,10 @@ import os
 @MainActor
 protocol URLHandlerEngine {
     var apps: [AudioApp] { get }
+    var outputDevices: [AudioDevice] { get }
+    var bluetoothDeviceMonitor: BluetoothDeviceMonitor { get }
     var settingsManager: SettingsManager { get }
+    @discardableResult func setDefaultOutputDevice(_ deviceID: AudioDeviceID) -> Bool
     func setVolume(for app: AudioApp, to volume: Float)
     func getVolume(for app: AudioApp) -> Float
     func setMute(for app: AudioApp, to muted: Bool)
@@ -54,6 +58,10 @@ final class URLHandler {
         // Other actions
         case "set-device":
             handleSetDevice(queryItems: queryItems)
+        case "connect-device":
+            handleConnectDevice(queryItems: queryItems)
+        case "set-default-output":
+            handleSetDefaultOutput(queryItems: queryItems)
         case "reset":
             handleReset(queryItems: queryItems)
         default:
@@ -258,6 +266,57 @@ final class URLHandler {
         logger.info("Routed \(app.name) to device \(deviceUID)")
     }
 
+    private func handleConnectDevice(queryItems: [URLQueryItem]) {
+        guard let name = normalizedQueryValue(queryItems.first(where: { $0.name == "name" })?.value) else {
+            logger.error("connect-device: missing name parameter")
+            return
+        }
+
+        let btMonitor = audioEngine.bluetoothDeviceMonitor
+
+        guard let device = btMonitor.pairedDevices.first(where: {
+            $0.name.localizedCaseInsensitiveContains(name)
+        }) else {
+            logger.warning("connect-device: no paired device found matching '\(name)'")
+            return
+        }
+
+        btMonitor.connect(device: device)
+        logger.info("Connecting to \(device.name)")
+    }
+
+    private func handleSetDefaultOutput(queryItems: [URLQueryItem]) {
+        let deviceUID = normalizedQueryValue(queryItems.first(where: { $0.name == "device" })?.value)
+        let deviceName = normalizedQueryValue(queryItems.first(where: { $0.name == "name" })?.value)
+
+        guard deviceUID != nil || deviceName != nil else {
+            logger.error("set-default-output: missing device or name parameter")
+            return
+        }
+
+        let matchedDevice: AudioDevice?
+        if let uid = deviceUID {
+            matchedDevice = audioEngine.outputDevices.first(where: { $0.uid == uid })
+        } else if let name = deviceName {
+            matchedDevice = audioEngine.outputDevices.first(where: {
+                $0.name.localizedCaseInsensitiveContains(name)
+            })
+        } else {
+            matchedDevice = nil
+        }
+
+        guard let device = matchedDevice else {
+            logger.warning("set-default-output: no output device found matching '\(deviceUID ?? deviceName ?? "nil")'")
+            return
+        }
+
+        if audioEngine.setDefaultOutputDevice(device.id) {
+            logger.info("Set default output device to \(device.name)")
+        } else {
+            logger.error("set-default-output: failed to set default output to \(device.name)")
+        }
+    }
+
     /// Reset apps to 100% volume and unmute
     /// URL format: finetune://reset?app=com.a&app=com.b or finetune://reset (all apps)
     private func handleReset(queryItems: [URLQueryItem]) {
@@ -293,6 +352,14 @@ final class URLHandler {
     /// Find an app by bundle ID or persistence identifier
     private func findApp(by identifier: String) -> AudioApp? {
         audioEngine.apps.first { $0.persistenceIdentifier == identifier }
+    }
+
+    private func normalizedQueryValue(_ value: String?) -> String? {
+        guard let value else { return nil }
+        let normalized = value
+            .replacingOccurrences(of: "+", with: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return normalized.isEmpty ? nil : normalized
     }
 
     /// Parse boolean from string (supports true/false, 1/0, yes/no)
