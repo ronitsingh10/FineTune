@@ -9,6 +9,8 @@ struct PairedBluetoothDevice: Identifiable, Hashable {
     let name: String
     let icon: NSImage?
 
+    var isAirPods: Bool { name.contains("AirPods") }
+
     func hash(into hasher: inout Hasher) { hasher.combine(id) }
     static func == (lhs: Self, rhs: Self) -> Bool { lhs.id == rhs.id }
 }

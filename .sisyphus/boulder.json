@@ -1,0 +1,34 @@
+{
+  "active_plan": "/Users/davidprokopec/Documents/dev/FineTune/.sisyphus/plans/airpods-integration.md",
+  "started_at": "2026-04-03T22:52:26.354Z",
+  "session_ids": [
+    "ses_2aa95769cffeFOrslRlJV9z3vI",
+    "ses_2aa5eb11cffevvroKl6LKPTBdG",
+    "ses_2aa5a11beffe6xiVw1w9LKBsvg",
+    "ses_2aa5189afffe1VYCs9Gs2R3e9Y",
+    "ses_2aa4e83e9ffeW67GSV64q1P3v1",
+    "ses_2a60e1414ffe11l6Tyezu6eJZj",
+    "ses_2a60bcce0ffe9LIodjW7cwqKg5",
+    "ses_2a6093cdeffeehqfFn0dPDQ3kq",
+    "ses_2a608351bffeItsVeLbu4TNJct",
+    "ses_2a607a05cffeIEs0oPmKSW71wd",
+    "ses_2a6055a9bffeXitdMTerpfWm1A",
+    "ses_2a60324d9ffelUB24yaviRbgM2",
+    "ses_2a6008f43ffeJgyEXTNccpeTKx",
+    "ses_2a5fe7a77ffeq8fT3bZq4kOjoM",
+    "ses_2a5fe7a64ffexWHoRRwwLbfbvN"
+  ],
+  "plan_name": "airpods-integration",
+  "agent": "atlas",
+  "task_sessions": {
+    "todo:1": {
+      "task_key": "todo:1",
+      "task_label": "1",
+      "task_title": "Dev Setup + Build Verification",
+      "session_id": "ses_2aa4e83e9ffeW67GSV64q1P3v1",
+      "agent": "Sisyphus-Junior",
+      "category": "visual-engineering",
+      "updated_at": "2026-04-03T23:34:30.708Z"
+    }
+  }
+}

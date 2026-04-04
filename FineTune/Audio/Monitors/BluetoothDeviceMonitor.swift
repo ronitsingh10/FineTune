@@ -1,6 +1,7 @@
 // FineTune/Audio/Monitors/BluetoothDeviceMonitor.swift
 import AppKit
 import IOBluetooth
+import IOKit
 import os
 
 /// Discovers paired-but-disconnected Bluetooth audio devices and initiates connections.
@@ -11,6 +12,15 @@ import os
 @Observable
 @MainActor
 final class BluetoothDeviceMonitor {
+
+    // MARK: - AirPods State
+
+    struct AirPodsState: Sendable {
+        let listeningMode: ListeningMode?
+        let availableModes: [ListeningMode]
+        let batteryPercent: Int?
+        let macAddress: String
+    }
 
     // MARK: - Published State
 
@@ -26,7 +36,13 @@ final class BluetoothDeviceMonitor {
     /// Inline error messages keyed by MAC address.
     private(set) var connectionErrors: [String: String] = [:]
 
+    // keyed by CoreAudio device UID
+    private(set) var connectedAirPodsState: [String: AirPodsState] = [:]
+
     // MARK: - Private
+
+    private var macToUID: [String: String] = [:]
+    private var uidToMAC: [String: String] = [:]
 
     private let logger = Logger(
         subsystem: "com.finetuneapp.FineTune",
@@ -162,7 +178,14 @@ final class BluetoothDeviceMonitor {
     /// Always refreshes the paired list so auto-connected devices (not initiated
     /// via FineTune) are removed. If a FineTune-initiated connection is in flight,
     /// clears the connecting state for devices that succeeded.
-    func notifyDeviceAppearedInCoreAudio() {
+    func notifyDeviceAppearedInCoreAudio(
+        appearedDeviceUID: String? = nil,
+        appearedDeviceName: String? = nil
+    ) {
+        if let uid = appearedDeviceUID, let name = appearedDeviceName {
+            Task { await correlateBluetoothDevice(uid: uid, name: name) }
+        }
+
         if !connectingIDs.isEmpty {
             Task {
                 let stillDisconnected = await Self.runOnBTQueue {
@@ -170,7 +193,6 @@ final class BluetoothDeviceMonitor {
                     return Set(allPaired.filter { !$0.isConnected() }.compactMap { $0.addressString })
                 }
 
-                // Clear connecting state for devices that actually connected
                 for mac in connectingIDs {
                     if !stillDisconnected.contains(mac) {
                         logger.debug("Device \(mac) connected; clearing in-flight state")
@@ -184,9 +206,91 @@ final class BluetoothDeviceMonitor {
                 refresh()
             }
         } else {
-            // Auto-connected device (not via FineTune) — still need to refresh
-            // so the device is removed from the paired list.
             refresh()
+        }
+    }
+
+    func handleDeviceDisconnected(deviceUID uid: String) {
+        if let mac = uidToMAC.removeValue(forKey: uid) {
+            macToUID.removeValue(forKey: mac)
+        }
+        connectedAirPodsState.removeValue(forKey: uid)
+    }
+
+    // MARK: - AirPods Listening Mode
+
+    func setListeningMode(_ mode: ListeningMode, forDeviceUID uid: String) {
+        guard let mac = uidToMAC[uid] else { return }
+        Task {
+            let success = await Self.runOnBTQueue {
+                guard let btDevice = IOBluetoothDevice(addressString: mac) else { return false }
+                return btDevice.setSafeListeningMode(mode.rawValue)
+            }
+            if success {
+                await refreshAirPodsState(for: uid)
+            }
+        }
+    }
+
+    func refreshAirPodsState(for deviceUID: String) async {
+        guard let mac = uidToMAC[deviceUID] else { return }
+
+        let state = await Self.runOnBTQueue { () -> AirPodsState? in
+            guard let btDevice = IOBluetoothDevice(addressString: mac) else { return nil }
+            guard btDevice.isConnected() else { return nil }
+
+            let currentModeRaw = btDevice.safeListeningMode
+            let currentMode = currentModeRaw.flatMap { ListeningMode(rawValue: $0) }
+
+            var available: [ListeningMode] = []
+            if btDevice.isANCCapable { available.append(.noiseCancellation) }
+            if btDevice.isTransparencyCapable { available.append(.transparency) }
+            if btDevice.supportsAdaptive { available.append(.adaptive) }
+
+            // .off is available on ANC-capable devices except AirPods Pro with adaptive
+            // (AirPods Pro 3 replaces "Off" with "Adaptive")
+            if let currentMode, currentMode == .off {
+                available.insert(.off, at: 0)
+            } else if !btDevice.supportsAdaptive || !(btDevice.name ?? "").contains("AirPods Pro") {
+                if btDevice.isANCCapable {
+                    available.insert(.off, at: 0)
+                }
+            }
+
+            let battery = Self.readBatteryLevel(forMAC: mac)
+
+            return AirPodsState(
+                listeningMode: currentMode,
+                availableModes: available,
+                batteryPercent: battery,
+                macAddress: mac
+            )
+        }
+
+        if let state {
+            connectedAirPodsState[deviceUID] = state
+        } else {
+            connectedAirPodsState.removeValue(forKey: deviceUID)
+        }
+    }
+
+    // MARK: - MAC ↔ UID Correlation
+
+    private func correlateBluetoothDevice(uid: String, name: String) async {
+        let matchedMAC: String? = await Self.runOnBTQueue {
+            let allPaired = IOBluetoothDevice.pairedDevices() as? [IOBluetoothDevice] ?? []
+            for device in allPaired where device.isConnected() {
+                if device.name == name, let mac = device.addressString {
+                    return mac
+                }
+            }
+            return nil
+        }
+
+        if let mac = matchedMAC {
+            macToUID[mac] = uid
+            uidToMAC[uid] = mac
+            await refreshAirPodsState(for: uid)
         }
     }
 
@@ -256,6 +360,39 @@ final class BluetoothDeviceMonitor {
     }
 
     // MARK: - Private Helpers
+
+    /// Reads battery percentage for a Bluetooth device by MAC address using IOKit.
+    private nonisolated static func readBatteryLevel(forMAC mac: String) -> Int? {
+        var iterator = io_iterator_t()
+        guard let matching = IOServiceMatching("AppleDeviceManagementHIDEventService") else { return nil }
+        let result = IOServiceGetMatchingServices(kIOMainPortDefault, matching, &iterator)
+        guard result == KERN_SUCCESS else { return nil }
+        defer { IOObjectRelease(iterator) }
+
+        var service = IOIteratorNext(iterator)
+        while service != 0 {
+            defer {
+                IOObjectRelease(service)
+                service = IOIteratorNext(iterator)
+            }
+
+            guard let addressRef = IORegistryEntryCreateCFProperty(
+                service, "DeviceAddress" as CFString, kCFAllocatorDefault, 0
+            )?.takeRetainedValue() as? String else { continue }
+
+            let normalizedAddress = addressRef.uppercased().replacingOccurrences(of: "-", with: ":")
+            let normalizedMAC = mac.uppercased().replacingOccurrences(of: "-", with: ":")
+            guard normalizedAddress == normalizedMAC else { continue }
+
+            guard let percentRef = IORegistryEntryCreateCFProperty(
+                service, "BatteryPercent" as CFString, kCFAllocatorDefault, 0
+            )?.takeRetainedValue() as? Int else { continue }
+
+            guard percentRef > 0 else { continue }
+            return percentRef
+        }
+        return nil
+    }
 
     private func startConnectTimeout(mac: String, name: String) {
         timeoutTasks[mac]?.cancel()

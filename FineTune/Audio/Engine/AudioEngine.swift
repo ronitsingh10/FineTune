@@ -370,12 +370,16 @@ final class AudioEngine {
 
         deviceMonitor.onDeviceDisconnected = { [weak self] deviceUID, deviceName in
             self?.handleDeviceDisconnected(deviceUID, name: deviceName)
+            self?.bluetoothDeviceMonitor.handleDeviceDisconnected(deviceUID: deviceUID)
             self?.bluetoothDeviceMonitor.refresh()
         }
 
         deviceMonitor.onDeviceConnected = { [weak self] deviceUID, deviceName in
             self?.handleDeviceConnected(deviceUID, name: deviceName)
-            self?.bluetoothDeviceMonitor.notifyDeviceAppearedInCoreAudio()
+            self?.bluetoothDeviceMonitor.notifyDeviceAppearedInCoreAudio(
+                appearedDeviceUID: deviceUID,
+                appearedDeviceName: deviceName
+            )
         }
 
         deviceMonitor.onInputDeviceDisconnected = { [weak self] deviceUID, deviceName in

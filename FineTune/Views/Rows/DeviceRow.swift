@@ -26,6 +26,8 @@ struct DeviceRow: View {
     let autoEQImportError: String?
     let autoEQPreampEnabled: Bool
     let onAutoEQPreampToggle: (() -> Void)?
+    let airPodsState: BluetoothDeviceMonitor.AirPodsState?
+    let onListeningModeChange: ((ListeningMode) -> Void)?
 
     @State private var sliderValue: Double
     @State private var isEditing = false
@@ -60,7 +62,9 @@ struct DeviceRow: View {
         onAutoEQToggleFavorite: ((String) -> Void)? = nil,
         autoEQImportError: String? = nil,
         autoEQPreampEnabled: Bool = true,
-        onAutoEQPreampToggle: (() -> Void)? = nil
+        onAutoEQPreampToggle: (() -> Void)? = nil,
+        airPodsState: BluetoothDeviceMonitor.AirPodsState? = nil,
+        onListeningModeChange: ((ListeningMode) -> Void)? = nil
     ) {
         self.device = device
         self.isDefault = isDefault
@@ -82,6 +86,8 @@ struct DeviceRow: View {
         self.autoEQImportError = autoEQImportError
         self.autoEQPreampEnabled = autoEQPreampEnabled
         self.onAutoEQPreampToggle = onAutoEQPreampToggle
+        self.airPodsState = airPodsState
+        self.onListeningModeChange = onListeningModeChange
         self._sliderValue = State(initialValue: VolumeMapping.gainToSlider(volume))
     }
 
@@ -125,9 +131,24 @@ struct DeviceRow: View {
                             .foregroundStyle(DesignTokens.Colors.textTertiary)
                             .lineLimit(1)
                     }
+
+                    if let battery = airPodsState?.batteryPercent {
+                        Text("\(battery)%")
+                            .font(.system(size: 9))
+                            .foregroundStyle(DesignTokens.Colors.textTertiary)
+                            .lineLimit(1)
+                    }
                 }
 
                 Spacer(minLength: 0)
+
+                if let state = airPodsState, !state.availableModes.isEmpty {
+                    ListeningModePicker(
+                        availableModes: state.availableModes,
+                        currentMode: state.listeningMode,
+                        onSelectMode: { mode in onListeningModeChange?(mode) }
+                    )
+                }
 
                 // AutoEQ picker inside the name area so slider length stays consistent
                 if device.supportsAutoEQ,
