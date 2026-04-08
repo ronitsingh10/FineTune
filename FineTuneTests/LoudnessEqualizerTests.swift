@@ -27,7 +27,6 @@ struct LoudnessEqualizerTests {
         #expect(s.gainReleaseMs == 5000)
         #expect(s.noiseFloorThresholdDb == -48)
         #expect(s.lowLevelMaxBoostDb == 1.5)
-        #expect(s.limiterCeilingDb == -1)
         #expect(s.enabled == false)
     }
 
@@ -206,7 +205,7 @@ struct LoudnessEqualizerTests {
         let frameCount = 512
         let channelCount = 2
 
-        let eq = LoudnessEqualizer(settings: settings, sampleRate: sampleRate, channelCount: channelCount)
+        let eq = LoudnessEqualizer(settings: settings, sampleRate: sampleRate)
 
         // Input is interleaved production-style stereo: L0,R0,L1,R1,...
         var input = [Float](repeating: 0, count: frameCount * channelCount)
@@ -253,7 +252,7 @@ struct LoudnessEqualizerTests {
         let frameCount = 256
         let channelCount = 2
 
-        let eq = LoudnessEqualizer(settings: settings, sampleRate: sampleRate, channelCount: channelCount)
+        let eq = LoudnessEqualizer(settings: settings, sampleRate: sampleRate)
 
         var input = [Float](repeating: 0, count: frameCount * channelCount)
         for frame in 0..<frameCount {
@@ -288,7 +287,7 @@ struct LoudnessEqualizerTests {
         let sampleRate: Float = 48000
         let frameCount = 2048
         let channelCount = 2
-        let enabledEq = LoudnessEqualizer(settings: enabledSettings, sampleRate: sampleRate, channelCount: channelCount)
+        let enabledEq = LoudnessEqualizer(settings: enabledSettings, sampleRate: sampleRate)
 
         var loudInput = [Float](repeating: 0, count: frameCount * channelCount)
         for frame in 0..<frameCount {
@@ -313,7 +312,7 @@ struct LoudnessEqualizerTests {
         // (matches the atomic swap pattern used in production)
         var disabledSettings = LoudnessEqualizerSettings()
         disabledSettings.enabled = false
-        let disabledEq = LoudnessEqualizer(settings: disabledSettings, sampleRate: sampleRate, channelCount: channelCount)
+        let disabledEq = LoudnessEqualizer(settings: disabledSettings, sampleRate: sampleRate)
 
         var quietInput = [Float](repeating: 0, count: frameCount * channelCount)
         for frame in 0..<frameCount {

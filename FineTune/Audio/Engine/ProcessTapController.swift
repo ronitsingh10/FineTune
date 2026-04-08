@@ -107,6 +107,9 @@ final class ProcessTapController: ProcessTapControlling {
     private nonisolated(unsafe) var autoEQProcessor: AutoEQProcessor?
     private nonisolated(unsafe) var loudnessCompensator: LoudnessCompensator?
     private nonisolated(unsafe) var loudnessEqualizerProcessor: LoudnessEqualizer?
+    /// Last effective loudness volume (device × app) passed to updateLoudnessCompensation.
+    /// Used by createSecondaryTap to initialize secondary compensator with the correct volume.
+    private var _lastLoudnessVolume: Float = 1.0
     /// Independent EQ processors for secondary tap during crossfade.
     /// Each tap needs its own biquad delay buffers — sharing would corrupt filter state
     /// because both callbacks write concurrently from different HAL I/O threads.
@@ -236,6 +239,7 @@ final class ProcessTapController: ProcessTapControlling {
     }
 
     func updateLoudnessCompensation(volume: Float, enabled: Bool) {
+        _lastLoudnessVolume = volume
         if enabled {
             loudnessCompensator?.updateForVolume(volume)
             secondaryLoudnessCompensator?.updateForVolume(volume)
@@ -251,7 +255,7 @@ final class ProcessTapController: ProcessTapControlling {
         // This eliminates the data race between main-thread settings changes and
         // RT-thread process() calls.
         if let sampleRate = try? primaryResources.aggregateDeviceID.readNominalSampleRate() {
-            let newProcessor = LoudnessEqualizer(settings: settings, sampleRate: Float(sampleRate), channelCount: 2)
+            let newProcessor = LoudnessEqualizer(settings: settings, sampleRate: Float(sampleRate))
             let old = loudnessEqualizerProcessor
             loudnessEqualizerProcessor = newProcessor
             if let old {
@@ -260,7 +264,7 @@ final class ProcessTapController: ProcessTapControlling {
         }
         if let secondary = secondaryLoudnessEqualizerProcessor,
            let sampleRate = try? secondaryResources.aggregateDeviceID.readNominalSampleRate() {
-            let newSecondary = LoudnessEqualizer(settings: settings, sampleRate: Float(sampleRate), channelCount: 2)
+            let newSecondary = LoudnessEqualizer(settings: settings, sampleRate: Float(sampleRate))
             secondaryLoudnessEqualizerProcessor = newSecondary
             DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 0.5) { _ = secondary }
         }
@@ -454,7 +458,7 @@ final class ProcessTapController: ProcessTapControlling {
 
         eqProcessor = EQProcessor(sampleRate: sampleRate)
         autoEQProcessor = AutoEQProcessor(sampleRate: sampleRate)
-        loudnessEqualizerProcessor = LoudnessEqualizer(settings: LoudnessEqualizerSettings(), sampleRate: Float(sampleRate), channelCount: 2)
+        loudnessEqualizerProcessor = LoudnessEqualizer(settings: LoudnessEqualizerSettings(), sampleRate: Float(sampleRate))
         loudnessCompensator = LoudnessCompensator(sampleRate: sampleRate)
 
         // Create IO proc with gain processing
@@ -816,11 +820,11 @@ final class ProcessTapController: ProcessTapControlling {
         }
         secondaryAutoEQProcessor = secAutoEQ
 
-        let secLoudnessEqualizer = LoudnessEqualizer(settings: loudnessEqualizerProcessor?.currentSettings ?? LoudnessEqualizerSettings(), sampleRate: Float(sampleRate), channelCount: 2)
+        let secLoudnessEqualizer = LoudnessEqualizer(settings: loudnessEqualizerProcessor?.currentSettings ?? LoudnessEqualizerSettings(), sampleRate: Float(sampleRate))
         secondaryLoudnessEqualizerProcessor = secLoudnessEqualizer
 
         let secLoudness = LoudnessCompensator(sampleRate: sampleRate)
-        secLoudness.updateForVolume(_currentDeviceVolume)
+        secLoudness.updateForVolume(_lastLoudnessVolume)
         if !(loudnessCompensator?.isEnabled ?? false) { secLoudness.setEnabled(false) }
         secondaryLoudnessCompensator = secLoudness
 
@@ -1038,8 +1042,7 @@ final class ProcessTapController: ProcessTapControlling {
             if let oldLE = loudnessEqualizerProcessor {
                 let newLE = LoudnessEqualizer(
                     settings: oldLE.currentSettings,
-                    sampleRate: Float(deviceSampleRate),
-                    channelCount: 2
+                    sampleRate: Float(deviceSampleRate)
                 )
                 loudnessEqualizerProcessor = newLE
                 DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 0.5) { _ = oldLE }

@@ -28,7 +28,7 @@ final class LoudnessEqualizer: @unchecked Sendable {
 
     // MARK: - Init
 
-    init(settings: LoudnessEqualizerSettings, sampleRate: Float, channelCount: Int) {
+    init(settings: LoudnessEqualizerSettings, sampleRate: Float) {
         self.settings = settings
         self.kFilter = KWeightingFilter(sampleRate: sampleRate)
         self.detector = LoudnessDetector(settings: settings, sampleRate: sampleRate)

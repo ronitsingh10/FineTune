@@ -65,7 +65,10 @@ final class LoudnessCompensator: BiquadProcessor, @unchecked Sendable {
     /// Converts volume → estimated phon, skips recomputation if phon changed by less
     /// than 1.0 (coalesces rapid slider drags), bypasses processor when at reference level.
     ///
-    /// Call from main thread only.
+    /// - Important: **Main thread only.** This method mutates `_eqSetup` and `_isEnabled`
+    ///   which the RT audio callback reads via `nonisolated(unsafe)`. Calling from any other
+    ///   thread creates a data race. Not annotated `@MainActor` because `BiquadProcessor`
+    ///   is not actor-isolated and test call sites run on arbitrary Swift Testing threads.
     func updateForVolume(_ systemVolume: Float) {
         let phon = ISO226Contours.estimatedPhon(fromSystemVolume: systemVolume)
 

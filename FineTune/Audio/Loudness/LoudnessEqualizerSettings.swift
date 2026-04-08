@@ -18,6 +18,5 @@ struct LoudnessEqualizerSettings: Codable, Equatable, Sendable {
     var noiseFloorThresholdDb: Float = -48
     var lowLevelMaxBoostDb: Float = 1.5
 
-    var limiterCeilingDb: Float = -1
     var enabled: Bool = false
 }
