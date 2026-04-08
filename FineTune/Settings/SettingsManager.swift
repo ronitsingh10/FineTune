@@ -609,20 +609,52 @@ final class SettingsManager {
     }
 
     /// Creates a new user EQ preset with the given name and band gains.
+    /// Trims whitespace, falls back to "Untitled" for empty names,
+    /// and auto-suffixes duplicates Finder-style: "Name (2)", "Name (3)", etc.
     /// Returns the created preset.
     @discardableResult
     func createUserPreset(name: String, settings eqSettings: EQSettings) -> UserEQPreset {
-        let preset = UserEQPreset(name: name, settings: eqSettings)
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let baseName = trimmed.isEmpty ? "Untitled" : trimmed
+        let finalName = uniquePresetName(baseName)
+        let preset = UserEQPreset(name: finalName, settings: eqSettings)
         settings.userEQPresets.append(preset)
         scheduleSave()
         return preset
     }
 
-    /// Renames an existing user preset. No-op if the preset ID is not found.
+    /// Renames an existing user preset. Trims whitespace; rejects empty names (no-op).
+    /// Auto-suffixes if the new name collides with another preset.
+    /// No-op if the preset ID is not found.
     func updateUserPreset(id: UUID, name: String) {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
         guard let index = settings.userEQPresets.firstIndex(where: { $0.id == id }) else { return }
-        settings.userEQPresets[index].name = name
+        let finalName = uniquePresetName(trimmed, excluding: id)
+        settings.userEQPresets[index].name = finalName
         scheduleSave()
+    }
+
+    /// Generates a unique preset name by appending (2), (3), etc. if the name
+    /// already exists among user presets. Follows Finder duplicate naming convention.
+    /// - Parameters:
+    ///   - name: The desired base name.
+    ///   - excludeID: A preset ID to exclude from collision checks (used during rename).
+    /// - Returns: A unique name, either the original or with a numeric suffix.
+    private func uniquePresetName(_ name: String, excluding excludeID: UUID? = nil) -> String {
+        let existingNames = Set(
+            settings.userEQPresets
+                .filter { $0.id != excludeID }
+                .map { $0.name }
+        )
+        guard existingNames.contains(name) else { return name }
+
+        var counter = 2
+        while true {
+            let candidate = "\(name) (\(counter))"
+            if !existingNames.contains(candidate) { return candidate }
+            counter += 1
+        }
     }
 
     /// Deletes a user preset by ID. No-op if the preset ID is not found.

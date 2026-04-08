@@ -15,6 +15,11 @@ struct EQPanelView: View {
     @State private var savePresetName = ""
     @FocusState private var isSaveFieldFocused: Bool
 
+    @State private var isRenaming = false
+    @State private var renamePresetName = ""
+    @State private var renamingPresetID: UUID?
+    @FocusState private var isRenameFieldFocused: Bool
+
     private let frequencyLabels = ["32", "64", "125", "250", "500", "1k", "2k", "4k", "8k", "16k"]
 
     // MARK: - Preset Matching
@@ -61,15 +66,19 @@ struct EQPanelView: View {
                         .foregroundStyle(.primary)
                 }
 
-                if isSaving {
-                    // Save field fills the middle gap
+                if isRenaming {
+                    renamePresetField
+                        .transition(.blurReplace.combined(with: .opacity))
+                } else if isSaving {
                     savePresetField
                         .transition(.blurReplace.combined(with: .opacity))
                 } else {
                     Spacer()
 
-                    // Save button (visible when curve is custom)
-                    if isCustomCurve {
+                    if currentUserPreset != nil {
+                        renameButton
+                            .transition(.blurReplace.combined(with: .opacity))
+                    } else if isCustomCurve {
                         saveButton
                             .transition(.blurReplace.combined(with: .opacity))
                     }
@@ -122,6 +131,7 @@ struct EQPanelView: View {
         .padding(.horizontal, 2)
         .padding(.vertical, 4)
         .animation(DesignTokens.Animation.quick, value: isSaving)
+        .animation(DesignTokens.Animation.quick, value: isRenaming)
         // No outer background - parent ExpandableGlassRow provides the glass container
     }
 
@@ -211,6 +221,96 @@ struct EQPanelView: View {
     private func cancelSave() {
         isSaving = false
         savePresetName = ""
+    }
+
+    // MARK: - Rename Button
+
+    private var renameButton: some View {
+        Button {
+            if let preset = currentUserPreset {
+                renamingPresetID = preset.id
+                renamePresetName = preset.name
+                isRenaming = true
+                Task { @MainActor in
+                    isRenameFieldFocused = true
+                }
+            }
+        } label: {
+            Image(systemName: "pencil")
+                .font(.system(size: 12))
+                .symbolRenderingMode(.hierarchical)
+                .foregroundStyle(DesignTokens.Colors.interactiveDefault)
+        }
+        .buttonStyle(.plain)
+        .help("Rename preset")
+        .accessibilityLabel("Rename current preset")
+    }
+
+    // MARK: - Rename Preset Field
+
+    private var renamePresetField: some View {
+        HStack(spacing: DesignTokens.Spacing.xs) {
+            TextField("Preset name", text: $renamePresetName)
+                .textFieldStyle(.plain)
+                .font(.system(size: 11, weight: .medium))
+                .focused($isRenameFieldFocused)
+                .onSubmit { commitRename() }
+                .onExitCommand { cancelRename() }
+
+            Button {
+                commitRename()
+            } label: {
+                Image(systemName: "checkmark")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(
+                        renamePresetName.trimmingCharacters(in: .whitespaces).isEmpty
+                            ? DesignTokens.Colors.textTertiary
+                            : DesignTokens.Colors.accentPrimary
+                    )
+            }
+            .buttonStyle(.plain)
+            .disabled(renamePresetName.trimmingCharacters(in: .whitespaces).isEmpty)
+            .help("Confirm rename")
+            .accessibilityLabel("Confirm rename preset")
+
+            Button {
+                cancelRename()
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(DesignTokens.Colors.textTertiary)
+            }
+            .buttonStyle(.plain)
+            .help("Cancel")
+            .accessibilityLabel("Cancel renaming preset")
+        }
+        .padding(.horizontal, DesignTokens.Spacing.sm)
+        .padding(.vertical, 4)
+        .background {
+            RoundedRectangle(cornerRadius: DesignTokens.Dimensions.buttonRadius)
+                .fill(.regularMaterial)
+        }
+        .overlay {
+            RoundedRectangle(cornerRadius: DesignTokens.Dimensions.buttonRadius)
+                .strokeBorder(DesignTokens.Colors.menuBorderHover, lineWidth: 0.5)
+        }
+    }
+
+    // MARK: - Rename Actions
+
+    private func commitRename() {
+        let trimmed = renamePresetName.trimmingCharacters(in: .whitespaces)
+        guard !trimmed.isEmpty, let id = renamingPresetID else { return }
+        onRenameUserPreset(id, trimmed)
+        isRenaming = false
+        renamePresetName = ""
+        renamingPresetID = nil
+    }
+
+    private func cancelRename() {
+        isRenaming = false
+        renamePresetName = ""
+        renamingPresetID = nil
     }
 }
 

@@ -100,32 +100,74 @@ struct EQPresetPicker: View {
         ) { selected in
             Text(selected?.name ?? "Custom")
         } itemContent: { item, isSelected in
-            HStack(spacing: DesignTokens.Spacing.xs) {
-                Text(item.name)
-                    .lineLimit(1)
-                Spacer(minLength: DesignTokens.Spacing.xs)
-                if isSelected {
-                    Image(systemName: "checkmark")
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundStyle(Color.accentColor)
-                }
-            }
-            .contextMenu {
-                if let userID = item.userPresetID {
-                    userPresetContextMenu(id: userID, currentName: item.name)
-                }
+            if item.isUserPreset {
+                UserPresetItemView(
+                    item: item,
+                    isSelected: isSelected,
+                    onDelete: onDeleteUserPreset
+                )
+            } else {
+                BuiltInPresetItemView(item: item, isSelected: isSelected)
             }
         }
     }
+}
 
-    @ViewBuilder
-    private func userPresetContextMenu(id: UUID, currentName: String) -> some View {
-        Button {
-            onDeleteUserPreset(id)
-        } label: {
-            Label("Delete Preset", systemImage: "trash")
+// MARK: - Built-In Preset Item
+
+private struct BuiltInPresetItemView: View {
+    let item: EQPickerItem
+    let isSelected: Bool
+
+    var body: some View {
+        HStack(spacing: DesignTokens.Spacing.xs) {
+            Text(item.name)
+                .lineLimit(1)
+            Spacer(minLength: DesignTokens.Spacing.xs)
+            if isSelected {
+                Image(systemName: "checkmark")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(Color.accentColor)
+            }
         }
-        .accessibilityLabel("Delete preset \(currentName)")
+    }
+}
+
+// MARK: - User Preset Item (with hover-revealed delete)
+
+private struct UserPresetItemView: View {
+    let item: EQPickerItem
+    let isSelected: Bool
+    let onDelete: (UUID) -> Void
+
+    @State private var isHovered = false
+
+    var body: some View {
+        HStack(spacing: DesignTokens.Spacing.xs) {
+            Text(item.name)
+                .lineLimit(1)
+            Spacer(minLength: DesignTokens.Spacing.xs)
+            if isSelected {
+                Image(systemName: "checkmark")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(Color.accentColor)
+            }
+            if let userID = item.userPresetID {
+                Button {
+                    onDelete(userID)
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 10))
+                        .symbolRenderingMode(.hierarchical)
+                        .foregroundStyle(isHovered ? DesignTokens.Colors.interactiveHover : .clear)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Delete preset \(item.name)")
+                .help("Delete preset")
+            }
+        }
+        .whenHovered { isHovered = $0 }
+        .animation(DesignTokens.Animation.hover, value: isHovered)
     }
 }
 

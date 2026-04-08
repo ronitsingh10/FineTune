@@ -125,20 +125,20 @@ struct UserEQPresetCRUDTests {
         #expect(a.id != b.id)
     }
 
-    @Test("createUserPreset with empty name succeeds")
+    @Test("createUserPreset with empty name falls back to Untitled")
     func createEmptyName() throws {
         let (manager, dir) = try makeTempManager()
         defer { cleanupDir(dir) }
 
         let preset = manager.createUserPreset(name: "", settings: EQSettings())
-        #expect(preset.name == "")
+        #expect(preset.name == "Untitled")
 
         let presets = manager.getUserPresets()
         #expect(presets.count == 1)
-        #expect(presets[0].name == "")
+        #expect(presets[0].name == "Untitled")
     }
 
-    @Test("createUserPreset allows duplicate names")
+    @Test("createUserPreset auto-suffixes duplicate names Finder-style")
     func createDuplicateNames() throws {
         let (manager, dir) = try makeTempManager()
         defer { cleanupDir(dir) }
@@ -147,11 +147,13 @@ struct UserEQPresetCRUDTests {
         let b = manager.createUserPreset(name: "Same Name", settings: EQSettings())
 
         #expect(a.id != b.id)
-        #expect(a.name == b.name)
+        #expect(a.name == "Same Name")
+        #expect(b.name == "Same Name (2)")
 
         let presets = manager.getUserPresets()
         #expect(presets.count == 2)
-        #expect(presets.allSatisfy { $0.name == "Same Name" })
+        let names = Set(presets.map(\.name))
+        #expect(names == ["Same Name", "Same Name (2)"])
     }
 
     // MARK: - Read
@@ -257,7 +259,7 @@ struct UserEQPresetCRUDTests {
         #expect(found.createdAt == preset.createdAt)
     }
 
-    @Test("updateUserPreset to empty name succeeds")
+    @Test("updateUserPreset with empty name is a no-op (keeps old name)")
     func renameToEmpty() throws {
         let (manager, dir) = try makeTempManager()
         defer { cleanupDir(dir) }
@@ -266,7 +268,7 @@ struct UserEQPresetCRUDTests {
         manager.updateUserPreset(id: preset.id, name: "")
 
         let found = try #require(manager.getUserPresets().first { $0.id == preset.id })
-        #expect(found.name == "")
+        #expect(found.name == "Had a Name")
     }
 
     // MARK: - Delete
@@ -364,6 +366,195 @@ struct UserEQPresetCRUDTests {
 
         let presets = manager.getUserPresets()
         #expect(presets.count == 1)
+    }
+}
+
+// MARK: - SettingsManager — User EQ Preset Name Validation
+
+@Suite("SettingsManager — User EQ Preset Name Validation")
+@MainActor
+struct UserEQPresetNameValidationTests {
+
+    private func makeTempManager() throws -> (SettingsManager, URL) {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("FineTuneTests-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let manager = SettingsManager(directory: dir)
+        return (manager, dir)
+    }
+
+    private func cleanupDir(_ dir: URL) {
+        try? FileManager.default.removeItem(at: dir)
+    }
+
+    // MARK: - Whitespace Trimming
+
+    @Test("createUserPreset trims leading and trailing whitespace")
+    func createTrimsWhitespace() throws {
+        let (manager, dir) = try makeTempManager()
+        defer { cleanupDir(dir) }
+
+        let preset = manager.createUserPreset(name: "  Padded Name  ", settings: EQSettings())
+        #expect(preset.name == "Padded Name")
+    }
+
+    @Test("createUserPreset trims tabs and newlines")
+    func createTrimsTabsAndNewlines() throws {
+        let (manager, dir) = try makeTempManager()
+        defer { cleanupDir(dir) }
+
+        let preset = manager.createUserPreset(name: "\t\nTabbed\n\t", settings: EQSettings())
+        #expect(preset.name == "Tabbed")
+    }
+
+    @Test("createUserPreset with whitespace-only name falls back to Untitled")
+    func createWhitespaceOnlyName() throws {
+        let (manager, dir) = try makeTempManager()
+        defer { cleanupDir(dir) }
+
+        let preset = manager.createUserPreset(name: "   ", settings: EQSettings())
+        #expect(preset.name == "Untitled")
+    }
+
+    @Test("updateUserPreset trims whitespace on rename")
+    func renameTrimsWhitespace() throws {
+        let (manager, dir) = try makeTempManager()
+        defer { cleanupDir(dir) }
+
+        let preset = manager.createUserPreset(name: "Original", settings: EQSettings())
+        manager.updateUserPreset(id: preset.id, name: "  Trimmed  ")
+
+        let found = try #require(manager.getUserPresets().first { $0.id == preset.id })
+        #expect(found.name == "Trimmed")
+    }
+
+    @Test("updateUserPreset with whitespace-only name is a no-op")
+    func renameWhitespaceOnlyNoOp() throws {
+        let (manager, dir) = try makeTempManager()
+        defer { cleanupDir(dir) }
+
+        let preset = manager.createUserPreset(name: "Keep This", settings: EQSettings())
+        manager.updateUserPreset(id: preset.id, name: "   \t\n  ")
+
+        let found = try #require(manager.getUserPresets().first { $0.id == preset.id })
+        #expect(found.name == "Keep This")
+    }
+
+    // MARK: - Finder-Style Dedup Chain
+
+    @Test("Duplicate names produce sequential suffixes: Name, Name (2), Name (3)")
+    func finderDedupChain() throws {
+        let (manager, dir) = try makeTempManager()
+        defer { cleanupDir(dir) }
+
+        let a = manager.createUserPreset(name: "Rock", settings: EQSettings())
+        let b = manager.createUserPreset(name: "Rock", settings: EQSettings())
+        let c = manager.createUserPreset(name: "Rock", settings: EQSettings())
+
+        #expect(a.name == "Rock")
+        #expect(b.name == "Rock (2)")
+        #expect(c.name == "Rock (3)")
+    }
+
+    @Test("Dedup chain skips existing suffixed names to find next available")
+    func dedupChainSkipsExisting() throws {
+        let (manager, dir) = try makeTempManager()
+        defer { cleanupDir(dir) }
+
+        // Create "Jazz" and "Jazz (2)" manually
+        manager.createUserPreset(name: "Jazz", settings: EQSettings())
+        manager.createUserPreset(name: "Jazz (2)", settings: EQSettings())
+
+        // Next "Jazz" should skip to (3) since (2) is taken by a differently-named preset
+        let third = manager.createUserPreset(name: "Jazz", settings: EQSettings())
+        #expect(third.name == "Jazz (3)")
+    }
+
+    @Test("Multiple Untitled presets follow dedup chain")
+    func multipleUntitledDedup() throws {
+        let (manager, dir) = try makeTempManager()
+        defer { cleanupDir(dir) }
+
+        let a = manager.createUserPreset(name: "", settings: EQSettings())
+        let b = manager.createUserPreset(name: "", settings: EQSettings())
+        let c = manager.createUserPreset(name: "   ", settings: EQSettings())
+
+        #expect(a.name == "Untitled")
+        #expect(b.name == "Untitled (2)")
+        #expect(c.name == "Untitled (3)")
+    }
+
+    // MARK: - Rename Collision Handling
+
+    @Test("Rename to own current name produces no suffix (excludeID)")
+    func renameToSelfNoSuffix() throws {
+        let (manager, dir) = try makeTempManager()
+        defer { cleanupDir(dir) }
+
+        let preset = manager.createUserPreset(name: "MyPreset", settings: EQSettings())
+        manager.updateUserPreset(id: preset.id, name: "MyPreset")
+
+        let found = try #require(manager.getUserPresets().first { $0.id == preset.id })
+        #expect(found.name == "MyPreset")
+    }
+
+    @Test("Rename colliding with another preset auto-suffixes")
+    func renameCollisionAutoSuffixes() throws {
+        let (manager, dir) = try makeTempManager()
+        defer { cleanupDir(dir) }
+
+        let a = manager.createUserPreset(name: "Bass", settings: EQSettings())
+        let b = manager.createUserPreset(name: "Treble", settings: EQSettings())
+
+        // Rename b to collide with a's name
+        manager.updateUserPreset(id: b.id, name: "Bass")
+
+        let foundA = try #require(manager.getUserPresets().first { $0.id == a.id })
+        let foundB = try #require(manager.getUserPresets().first { $0.id == b.id })
+        #expect(foundA.name == "Bass")
+        #expect(foundB.name == "Bass (2)")
+    }
+
+    @Test("Rename with trimmed result colliding gets suffixed")
+    func renameTrimmedCollision() throws {
+        let (manager, dir) = try makeTempManager()
+        defer { cleanupDir(dir) }
+
+        manager.createUserPreset(name: "Vocal", settings: EQSettings())
+        let b = manager.createUserPreset(name: "Other", settings: EQSettings())
+
+        // Rename b with padded whitespace that trims to match existing "Vocal"
+        manager.updateUserPreset(id: b.id, name: "  Vocal  ")
+
+        let foundB = try #require(manager.getUserPresets().first { $0.id == b.id })
+        #expect(foundB.name == "Vocal (2)")
+    }
+
+    // MARK: - Edge Cases
+
+    @Test("Dedup handles names that already contain parenthesized numbers")
+    func dedupWithExistingParenNumbers() throws {
+        let (manager, dir) = try makeTempManager()
+        defer { cleanupDir(dir) }
+
+        // Create a preset whose base name already looks like a suffixed name
+        let a = manager.createUserPreset(name: "Preset (2)", settings: EQSettings())
+        let b = manager.createUserPreset(name: "Preset (2)", settings: EQSettings())
+
+        #expect(a.name == "Preset (2)")
+        #expect(b.name == "Preset (2) (2)")
+    }
+
+    @Test("Deleting a preset frees its name for reuse without suffix")
+    func deleteFreesNameForReuse() throws {
+        let (manager, dir) = try makeTempManager()
+        defer { cleanupDir(dir) }
+
+        let first = manager.createUserPreset(name: "Ephemeral", settings: EQSettings())
+        manager.deleteUserPreset(id: first.id)
+
+        let reused = manager.createUserPreset(name: "Ephemeral", settings: EQSettings())
+        #expect(reused.name == "Ephemeral")
     }
 }
 
