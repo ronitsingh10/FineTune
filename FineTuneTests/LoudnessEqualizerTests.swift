@@ -80,7 +80,155 @@ struct LoudnessEqualizerTests {
                 "After reset, first output (\(secondPass)) must equal original first output (\(firstPass))")
     }
 
+    // MARK: - KWeightingFilter frequency response
+
+    /// ITU-R BS.1770 K-weighting: high-shelf pre-emphasis (+4 dB HF) cascaded with
+    /// 2nd-order Butterworth high-pass at ~38 Hz. Expected behavioral properties:
+    ///   - 1 kHz reference: near 0 dB (within ±1 dB)
+    ///   - 100 Hz: near 0 dB (HP has minimal effect above cutoff)
+    ///   - 2 kHz+: positive boost increasing toward +4 dB shelf asymptote
+    ///   - Below 38 Hz: significant HP roll-off
+    ///
+    /// Expected gains derived from ITU-R BS.1770-4 behavioral specification, not
+    /// from running the code. Tolerances account for BiquadMath cookbook approximation
+    /// vs. the ITU's published exact coefficients.
+    @Test("K-weighting frequency response matches ITU-R BS.1770 behavioral spec",
+          arguments: [
+              (freq: 100.0,  minDB: -1.0,  maxDB: 1.0),
+              (freq: 1000.0, minDB: -1.0,  maxDB: 1.0),
+              (freq: 2000.0, minDB: 0.5,   maxDB: 3.5),
+              (freq: 4000.0, minDB: 2.0,   maxDB: 5.0),
+              (freq: 10000.0, minDB: 2.0,  maxDB: 5.0),
+          ] as [(freq: Double, minDB: Float, maxDB: Float)])
+    func kWeightingFrequencyResponse(freq: Double, minDB: Float, maxDB: Float) {
+        let sampleRate: Float = 48000
+        let filter = KWeightingFilter(sampleRate: sampleRate)
+        let frameCount = 8192
+        let skipFrames = 2048
+        let amplitude: Float = 0.5
+
+        // Generate sine wave and process through K-weighting
+        var outputSquaredSum: Double = 0
+        var sampleCount = 0
+        for i in 0..<frameCount {
+            let phase = Float(2.0 * Double.pi * freq * Double(i) / Double(sampleRate))
+            let sample = amplitude * sin(phase)
+            let output = filter.processSample(sample)
+
+            if i >= skipFrames {
+                outputSquaredSum += Double(output * output)
+                sampleCount += 1
+            }
+        }
+
+        // Measure output RMS and compute gain relative to input
+        let outputRMS = Float(sqrt(outputSquaredSum / Double(sampleCount)))
+        let inputRMS = amplitude / sqrt(2.0)  // RMS of sine = amplitude / √2
+        let gainDB = 20.0 * log10(outputRMS / inputRMS)
+
+        #expect(gainDB >= minDB,
+                "K-weighting gain at \(Int(freq)) Hz = \(gainDB) dB, expected >= \(minDB) dB")
+        #expect(gainDB <= maxDB,
+                "K-weighting gain at \(Int(freq)) Hz = \(gainDB) dB, expected <= \(maxDB) dB")
+    }
+
+    @Test("K-weighting applies monotonically increasing HF boost")
+    func kWeightingMonotonicHFBoost() {
+        let sampleRate: Float = 48000
+        let frameCount = 8192
+        let skipFrames = 2048
+        let amplitude: Float = 0.5
+
+        var gainAtFreq: [Double: Float] = [:]
+
+        for freq in [1000.0, 2000.0, 4000.0] {
+            let filter = KWeightingFilter(sampleRate: sampleRate)
+            var outputSquaredSum: Double = 0
+            for i in 0..<frameCount {
+                let phase = Float(2.0 * Double.pi * freq * Double(i) / Double(sampleRate))
+                let output = filter.processSample(amplitude * sin(phase))
+                if i >= skipFrames {
+                    outputSquaredSum += Double(output * output)
+                }
+            }
+            let outputRMS = Float(sqrt(outputSquaredSum / Double(frameCount - skipFrames)))
+            let inputRMS = amplitude / sqrt(2.0)
+            gainAtFreq[freq] = 20.0 * log10(outputRMS / inputRMS)
+        }
+
+        #expect(gainAtFreq[4000.0]! > gainAtFreq[2000.0]!,
+                "Gain at 4 kHz (\(gainAtFreq[4000.0]!) dB) should exceed gain at 2 kHz (\(gainAtFreq[2000.0]!) dB)")
+        #expect(gainAtFreq[2000.0]! > gainAtFreq[1000.0]!,
+                "Gain at 2 kHz (\(gainAtFreq[2000.0]!) dB) should exceed gain at 1 kHz (\(gainAtFreq[1000.0]!) dB)")
+    }
+
     // MARK: - LoudnessDetector
+
+    @Test("ingest() returns nil between hop boundaries and a level at boundaries")
+    func ingestReturnsAtHopBoundaries() {
+        var settings = LoudnessEqualizerSettings()
+        settings.analysisWindowMs = 30
+        settings.analysisHopMs = 15
+        let sampleRate: Float = 48000
+        let detector = LoudnessDetector(settings: settings, sampleRate: sampleRate)
+
+        // hopSamples = Int(15/1000 * 48000) = 720
+        let hopSamples = 720
+        let amplitude: Float = 0.5
+
+        var hopCount = 0
+        var nilCount = 0
+
+        // Feed exactly 2 hops worth of samples
+        for i in 0..<(hopSamples * 2) {
+            let result = detector.ingest(weightedSample: amplitude)
+            if i == hopSamples - 1 || i == hopSamples * 2 - 1 {
+                // At hop boundaries, should return a value
+                #expect(result != nil,
+                        "ingest() should return a level at hop boundary (sample \(i))")
+                hopCount += 1
+            } else {
+                if result == nil { nilCount += 1 }
+            }
+        }
+
+        #expect(hopCount == 2, "Should have exactly 2 hop boundaries in 1440 samples")
+        #expect(nilCount == hopSamples * 2 - 2,
+                "All non-boundary samples should return nil")
+    }
+
+    @Test("ingest() converges to analytically expected RMS level for constant-amplitude DC signal")
+    func ingestConvergesToExpectedLevel() {
+        var settings = LoudnessEqualizerSettings()
+        settings.analysisWindowMs = 30
+        settings.analysisHopMs = 15
+        // Use fast attack to speed convergence in test
+        settings.detectorAttackMs = 10
+        settings.detectorReleaseMs = 10
+        let sampleRate: Float = 48000
+        let detector = LoudnessDetector(settings: settings, sampleRate: sampleRate)
+
+        let amplitude: Float = 0.5
+        // Analytical expected level for DC signal:
+        // Mean square = A² = 0.25
+        // Level = 10 * log10(0.25) = 10 * (-0.60206) = -6.0206 dB
+        let expectedLevelDb: Float = 10.0 * log10(amplitude * amplitude)
+
+        // Feed enough samples for ring buffer to fill AND envelope to converge
+        // windowSamples=1440, hopSamples=720, need ~20 hops for convergence
+        let totalSamples = 720 * 25
+        var lastLevel: Float = -120.0
+
+        for _ in 0..<totalSamples {
+            if let level = detector.ingest(weightedSample: amplitude) {
+                lastLevel = level
+            }
+        }
+
+        // After convergence, the smoothed level should match the analytical value
+        #expect(abs(lastLevel - expectedLevelDb) < 0.5,
+                "Converged level \(lastLevel) dB should be within 0.5 dB of analytical \(expectedLevelDb) dB")
+    }
 
     @Test("Detector attack responds faster than release")
     func detectorAttackFasterThanRelease() {

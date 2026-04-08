@@ -980,3 +980,174 @@ struct BiquadProcessorSafetyTests {
         }
     }
 }
+
+// MARK: - Loudness Subsystem Integration
+
+@Suite("ProcessTapController — Loudness Integration")
+struct LoudnessIntegrationTests {
+
+    @Test("Loudness compensator modifies output vs nil-processor baseline at low volume")
+    func loudnessCompensatorModifiesOutput() {
+        let frames = 4096
+        let sampleRate = 48000.0
+
+        // Create a stereo sine wave input at 60 Hz — loudness compensation boosts bass
+        // at low volumes, so this frequency should show measurable gain change.
+        let inputABL = TestABL(buffers: [(channels: 2, frames: frames)])
+        let inData = inputABL.data(at: 0)
+        for f in 0..<frames {
+            let phase = Float(2.0 * Double.pi * 60.0 * Double(f) / sampleRate)
+            let sample = 0.3 * sin(phase)
+            inData[f * 2] = sample
+            inData[f * 2 + 1] = sample
+        }
+
+        // Baseline: no loudness processor
+        let baselineOutput = TestABL(buffers: [(channels: 2, frames: frames)])
+        var baseVol: Float = 1.0
+        processWithDefaults(
+            input: inputABL,
+            output: baselineOutput,
+            currentVol: &baseVol
+        )
+
+        // With loudness compensator at 25% volume (will produce non-flat EQ)
+        let compensator = LoudnessCompensator(sampleRate: sampleRate)
+        compensator.updateForVolume(0.25)
+        #expect(compensator.isEnabled,
+                "Compensator should enable at non-reference volume")
+
+        let compOutput = TestABL(buffers: [(channels: 2, frames: frames)])
+        var compVol: Float = 1.0
+        processWithDefaults(
+            input: inputABL,
+            output: compOutput,
+            currentVol: &compVol,
+            loudnessCompensatorProc: compensator
+        )
+
+        // Measure RMS of the second half (skip transient settling)
+        let startSample = (frames / 2) * 2
+        let endSample = frames * 2
+        var baselineSquaredSum: Double = 0
+        var compSquaredSum: Double = 0
+        for i in stride(from: startSample, to: endSample, by: 2) {
+            baselineSquaredSum += Double(baselineOutput.data(at: 0)[i] * baselineOutput.data(at: 0)[i])
+            compSquaredSum += Double(compOutput.data(at: 0)[i] * compOutput.data(at: 0)[i])
+        }
+        let baselineRMS = sqrt(baselineSquaredSum / Double((endSample - startSample) / 2))
+        let compRMS = sqrt(compSquaredSum / Double((endSample - startSample) / 2))
+
+        // Compensator at low volume boosts bass — output RMS should differ from baseline
+        #expect(abs(compRMS - baselineRMS) > 0.001,
+                "Compensated RMS (\(compRMS)) should differ measurably from baseline (\(baselineRMS))")
+        // At low volume, 60 Hz bass should be boosted (ISO 226 shows increased bass sensitivity loss at low phon)
+        #expect(compRMS > baselineRMS,
+                "60 Hz bass should be boosted at low volume: compensated RMS=\\(compRMS) vs baseline=\\(baselineRMS)")
+    }
+
+    @Test("Loudness equalizer modifies output vs nil-processor baseline when enabled")
+    func loudnessEqualizerModifiesOutput() {
+        let frames = 4096
+        let sampleRate: Float = 48000
+
+        // Create stereo input with moderate amplitude
+        let inputABL = TestABL(buffers: [(channels: 2, frames: frames)])
+        let inData = inputABL.data(at: 0)
+        for f in 0..<frames {
+            let phase = Float(2.0 * Double.pi * 440.0 * Double(f) / Double(sampleRate))
+            let sample: Float = 0.5 * sin(phase)
+            inData[f * 2] = sample
+            inData[f * 2 + 1] = sample
+        }
+
+        // Baseline: no loudness equalizer
+        let baselineOutput = TestABL(buffers: [(channels: 2, frames: frames)])
+        var baseVol: Float = 1.0
+        processWithDefaults(
+            input: inputABL,
+            output: baselineOutput,
+            currentVol: &baseVol
+        )
+
+        // With enabled loudness equalizer
+        var settings = LoudnessEqualizerSettings()
+        settings.enabled = true
+        let equalizer = LoudnessEqualizer(settings: settings, sampleRate: sampleRate, channelCount: 2)
+
+        let eqOutput = TestABL(buffers: [(channels: 2, frames: frames)])
+        var eqVol: Float = 1.0
+        processWithDefaults(
+            input: inputABL,
+            output: eqOutput,
+            currentVol: &eqVol,
+            loudnessEqualizerProc: equalizer
+        )
+
+        // Equalizer actively adjusts gain — output should differ from passthrough
+        var diffCount = 0
+        for i in 0..<(frames * 2) {
+            if abs(eqOutput.data(at: 0)[i] - baselineOutput.data(at: 0)[i]) > 1e-6 {
+                diffCount += 1
+            }
+        }
+
+        #expect(diffCount > 0,
+                "Enabled loudness equalizer should modify at least some samples vs baseline")
+    }
+
+    @Test("Loudness chain ordering: compensator shapes frequency, equalizer adjusts level")
+    func loudnessChainOrdering() {
+        let frames = 4096
+        let sampleRate = 48000.0
+
+        // Create a low-frequency stereo signal that compensator will boost
+        let inputABL = TestABL(buffers: [(channels: 2, frames: frames)])
+        let inData = inputABL.data(at: 0)
+        for f in 0..<frames {
+            let phase = Float(2.0 * Double.pi * 60.0 * Double(f) / sampleRate)
+            let sample: Float = 0.3 * sin(phase)
+            inData[f * 2] = sample
+            inData[f * 2 + 1] = sample
+        }
+
+        // Compensator only
+        let compensator = LoudnessCompensator(sampleRate: sampleRate)
+        compensator.updateForVolume(0.25)
+        let compOnlyOutput = TestABL(buffers: [(channels: 2, frames: frames)])
+        var compVol: Float = 1.0
+        processWithDefaults(
+            input: inputABL,
+            output: compOnlyOutput,
+            currentVol: &compVol,
+            loudnessCompensatorProc: compensator
+        )
+
+        // Both: equalizer + compensator
+        var eqSettings = LoudnessEqualizerSettings()
+        eqSettings.enabled = true
+        let equalizer = LoudnessEqualizer(settings: eqSettings, sampleRate: Float(sampleRate), channelCount: 2)
+        let compensator2 = LoudnessCompensator(sampleRate: sampleRate)
+        compensator2.updateForVolume(0.25)
+        let bothOutput = TestABL(buffers: [(channels: 2, frames: frames)])
+        var bothVol: Float = 1.0
+        processWithDefaults(
+            input: inputABL,
+            output: bothOutput,
+            currentVol: &bothVol,
+            loudnessEqualizerProc: equalizer,
+            loudnessCompensatorProc: compensator2
+        )
+
+        // When both are active, output should differ from compensator-only
+        // (equalizer adjusts the level after compensator shapes frequency)
+        var diffCount = 0
+        for i in 0..<(frames * 2) {
+            if abs(bothOutput.data(at: 0)[i] - compOnlyOutput.data(at: 0)[i]) > 1e-6 {
+                diffCount += 1
+            }
+        }
+        #expect(diffCount > 0,
+                "Adding loudness equalizer should change output beyond compensator alone")
+    }
+}

@@ -142,9 +142,6 @@ struct ISO226ContoursMigrationTests {
         7.5, 5.8, 4.3, 3.5, 3.0, 2.5, 1.5, 0.0, 5.0,
     ]
 
-    private func expectClose(_ actual: Double, _ expected: Double, tolerance: Double) {
-        #expect(abs(actual - expected) <= tolerance, "Expected \(expected), got \(actual)")
-    }
 }
 
 @Suite("LoudnessCompensator — headroom fitting")
@@ -236,6 +233,47 @@ struct LoudnessCompensatorEnableStateTests {
 
         processor.updateForVolume(0.25)
         #expect(processor.isEnabled, "Processor should re-enable immediately even if volume did not change")
+    }
+}
+
+// MARK: - estimatedPhon boundary tests
+
+@Suite("ISO226Contours — estimatedPhon boundaries")
+struct EstimatedPhonBoundaryTests {
+
+    @Test("Zero volume maps to lower bound of phon range (20 phon)")
+    func zeroVolumeMapsToLowerBound() {
+        // volume=0 → sqrt(0)=0 → 20 + 60*0 = 20 phon
+        let phon = ISO226Contours.estimatedPhon(fromSystemVolume: 0.0)
+        expectClose(phon, 20.0, tolerance: 0.001)
+    }
+
+    @Test("Full volume maps to reference phon (80 phon)")
+    func fullVolumeMapsToReferencePhon() {
+        // volume=1.0 → sqrt(1.0)=1.0 → 20 + 60*1.0 = 80 phon
+        let phon = ISO226Contours.estimatedPhon(fromSystemVolume: 1.0)
+        expectClose(phon, ISO226Contours.defaultReferencePhon, tolerance: 0.001)
+    }
+
+    @Test("Volume above 1.0 is clamped to reference phon")
+    func volumeAboveOneClampsToReferencePhon() {
+        // volume=1.5 → clamped to 1.0 → same as full volume
+        let phon = ISO226Contours.estimatedPhon(fromSystemVolume: 1.5)
+        expectClose(phon, ISO226Contours.defaultReferencePhon, tolerance: 0.001)
+    }
+
+    @Test("Negative volume is clamped to lower bound (20 phon)")
+    func negativeVolumeClampsToLowerBound() {
+        // volume=-0.5 → clamped to 0.0 → same as zero volume
+        let phon = ISO226Contours.estimatedPhon(fromSystemVolume: -0.5)
+        expectClose(phon, 20.0, tolerance: 0.001)
+    }
+
+    @Test("Quarter volume maps to midpoint via square-root curve")
+    func quarterVolumeMidpoint() {
+        // volume=0.25 → sqrt(0.25)=0.5 → 20 + 60*0.5 = 50 phon
+        let phon = ISO226Contours.estimatedPhon(fromSystemVolume: 0.25)
+        expectClose(phon, 50.0, tolerance: 0.01)
     }
 }
 
