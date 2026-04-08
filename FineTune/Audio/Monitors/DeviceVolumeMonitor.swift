@@ -685,7 +685,14 @@ final class DeviceVolumeMonitor: DeviceVolumeProviding {
     func setAlertVolume(_ volume: Float) {
         let clamped = max(0, min(1, volume))
         let pct = Int(round(clamped * 100))
-        alertVolume = Float(pct) / 100.0
+        let newVolume = Float(pct) / 100.0
+
+        // Deduplicate: @Observable update → SwiftUI re-render → Slider re-sends same value
+        // through Binding set. Without this guard, each re-render cancels the pending debounce
+        // task before the 100ms elapses, so the NSAppleScript write never fires.
+        guard newVolume != alertVolume else { return }
+
+        alertVolume = newVolume
 
         alertVolumeDebounceTask?.cancel()
         alertVolumeDebounceTask = Task { @MainActor [weak self] in
@@ -694,6 +701,9 @@ final class DeviceVolumeMonitor: DeviceVolumeProviding {
             let script = NSAppleScript(source: "set volume alert volume \(pct)")
             var scriptError: NSDictionary?
             script?.executeAndReturnError(&scriptError)
+            if let scriptError {
+                self.logger.warning("Failed to set alert volume: \(scriptError)")
+            }
             self.alertVolumeDebounceTask = nil
         }
     }
