@@ -76,7 +76,6 @@ final class LoudnessCompensator: BiquadProcessor, @unchecked Sendable {
         _currentPhon = phon
 
         let gains = computeBandGains(phon: phon)
-        let headroomDB = Self.requiredHeadroomDB(forBandGains: gains, sampleRate: sampleRate)
 
         // Bypass when all gains are negligible (near reference level)
         let allNegligible = gains.allSatisfy { abs($0) < 0.1 }
@@ -87,7 +86,12 @@ final class LoudnessCompensator: BiquadProcessor, @unchecked Sendable {
             return
         }
 
-        _preampLinear = Self.preampLinearGain(forHeadroomDB: headroomDB)
+        // No preamp cut — the downstream SoftLimiter handles any peaks that
+        // exceed unity after EQ boost. A static preamp cut was causing massive
+        // perceived volume loss at low volumes (the primary use case). At 30%
+        // system volume the headroom cut alone was -14 dB at 1 kHz, making
+        // audio nearly inaudible.
+        _preampLinear = 1.0
 
         let coefficients = Self.coefficientsForBands(gains: gains, sampleRate: sampleRate)
         let newSetup = coefficients.withUnsafeBufferPointer { ptr in
@@ -195,9 +199,9 @@ final class LoudnessCompensator: BiquadProcessor, @unchecked Sendable {
             _preampLinear = 1.0
             return nil
         }
-        _preampLinear = Self.preampLinearGain(
-            forHeadroomDB: Self.requiredHeadroomDB(forBandGains: gains, sampleRate: sampleRate)
-        )
+        // No preamp cut — the downstream SoftLimiter handles any peaks that
+        // exceed unity after EQ boost. See updateForVolume() for rationale.
+        _preampLinear = 1.0
         let coefficients = Self.coefficientsForBands(gains: gains, sampleRate: sampleRate)
         return (coefficients, Self.bandCount)
     }

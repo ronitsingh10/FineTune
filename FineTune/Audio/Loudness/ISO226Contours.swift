@@ -42,7 +42,15 @@ enum ISO226Contours {
 
     /// ISO 226:2023 reference loudness exponent αr at 1 kHz.
     static let referenceLoudnessExponent: Double = 0.300
-    static let defaultReferencePhon: Double = 90.0
+    /// Reference phon level representing 100% system volume.
+    ///
+    /// 80 phon ≈ 94 dB SPL — realistic for headphone listening.
+    /// 90 phon (≈115 dB SPL) was too high, producing enormous bass boosts at
+    /// moderate volumes and requiring equally large preamp cuts that made audio
+    /// nearly inaudible. Lowering to 80 keeps compensation gains moderate at
+    /// typical listening levels while still providing meaningful bass correction
+    /// at low volumes.
+    static let defaultReferencePhon: Double = 80.0
 
     private static let referenceFrequencyIndex = 17
     private static let referenceSoundPressureSquaredPa: Double = 4e-10
