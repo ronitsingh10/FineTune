@@ -88,16 +88,18 @@ struct ISO226ContoursReferenceTests {
 
     @Test("Reference phon contour produces flat compensation")
     func referencePhonIsFlat() {
-        let gains = ISO226Contours.compensationGains(atPhon: 80.0)
+        // defaultReferencePhon is 90 — compensation at the reference level must be flat
+        let gains = ISO226Contours.compensationGains(atPhon: 90.0)
         #expect(gains.allSatisfy { abs($0) < 1e-9 })
         #expect(abs(ISO226Contours.requiredHeadroomDB(forCompensationGains: gains)) < 1e-9)
     }
 
     @Test("Compensation amount scales the normalized contour strength")
     func compensationAmountScalesTargetCurve() {
-        let full = ISO226Contours.compensationGains(atPhon: 20.0, amount: 1.0)
-        let half = ISO226Contours.compensationGains(atPhon: 20.0, amount: 0.5)
-        let flat = ISO226Contours.compensationGains(atPhon: 20.0, amount: 0.0)
+        // Expected values computed against referencePhon=80 — pass explicitly
+        let full = ISO226Contours.compensationGains(atPhon: 20.0, referencePhon: 80.0, amount: 1.0)
+        let half = ISO226Contours.compensationGains(atPhon: 20.0, referencePhon: 80.0, amount: 0.5)
+        let flat = ISO226Contours.compensationGains(atPhon: 20.0, referencePhon: 80.0, amount: 0.0)
 
         expectClose(full[0], 29.323, tolerance: 0.01)
         expectClose(half[0], 14.6615, tolerance: 0.01)
