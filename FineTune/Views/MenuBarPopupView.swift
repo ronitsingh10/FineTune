@@ -51,6 +51,10 @@ struct MenuBarPopupView: View {
     /// Whether Bluetooth hardware is powered on
     @State private var isBluetoothOn = false
 
+    @State private var pendingAutoSelectNames: Set<String> = []
+
+    @State private var autoSelectTimeouts: [String: Task<Void, Never>] = [:]
+
     /// Whether edit mode is active (affects both device priority and app visibility)
     @State private var isEditingDevicePriority = false
 
@@ -141,11 +145,21 @@ struct MenuBarPopupView: View {
             isBluetoothOn = audioEngine.bluetoothDeviceMonitor.isBluetoothOn
             localAppSettings = audioEngine.settingsManager.appSettings
         }
-        .onChange(of: audioEngine.outputDevices) { _, _ in
+        .onChange(of: audioEngine.outputDevices) { _, newValue in
             if isEditingDevicePriority && !wasEditingInputDevices {
                 mergeDeviceChanges(from: audioEngine.outputDevices)
             }
             updateSortedDevices()
+
+            if !pendingAutoSelectNames.isEmpty {
+                for device in newValue where pendingAutoSelectNames.contains(device.name) {
+                    pendingAutoSelectNames.remove(device.name)
+                    autoSelectTimeouts[device.name]?.cancel()
+                    autoSelectTimeouts.removeValue(forKey: device.name)
+                    audioEngine.setDefaultOutputDevice(device.id)
+                    break
+                }
+            }
         }
         .onChange(of: audioEngine.inputDevices) { _, _ in
             if isEditingDevicePriority && wasEditingInputDevices {
@@ -506,16 +520,24 @@ struct MenuBarPopupView: View {
                                 .frame(maxWidth: .infinity, alignment: .leading)
                                 .padding(.top, DesignTokens.Spacing.xs)
 
-                            ForEach(filteredPaired) { device in
-                                PairedDeviceRow(
-                                    device: device,
-                                    isConnecting: audioEngine.bluetoothDeviceMonitor.connectingIDs.contains(device.id),
-                                    errorMessage: audioEngine.bluetoothDeviceMonitor.connectionErrors[device.id],
-                                    onConnect: {
-                                        audioEngine.bluetoothDeviceMonitor.connect(device: device)
-                                    }
-                                )
-                            }
+                         ForEach(filteredPaired) { device in
+                             PairedDeviceRow(
+                                 device: device,
+                                 isConnecting: audioEngine.bluetoothDeviceMonitor.connectingIDs.contains(device.id),
+                                 errorMessage: audioEngine.bluetoothDeviceMonitor.connectionErrors[device.id],
+                                 onConnect: {
+                                     pendingAutoSelectNames.insert(device.name)
+                                     audioEngine.bluetoothDeviceMonitor.connect(device: device)
+                                     autoSelectTimeouts[device.name]?.cancel()
+                                     autoSelectTimeouts[device.name] = Task {
+                                         try? await Task.sleep(for: .seconds(12))
+                                         guard !Task.isCancelled else { return }
+                                         pendingAutoSelectNames.remove(device.name)
+                                         autoSelectTimeouts.removeValue(forKey: device.name)
+                                     }
+                                 }
+                             )
+                         }
                         }
                     }
                 }
@@ -593,6 +615,31 @@ struct MenuBarPopupView: View {
                     )
                 }
 
+                if !isBluetoothOn {
+                    Text("Turn on Bluetooth to connect devices")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .padding(.top, DesignTokens.Spacing.xs)
+                } else {
+                    let connectedNames = Set(sortedDevices.map(\.name))
+                    let filteredPaired = pairedDevices.filter { !connectedNames.contains($0.name) }
+                    if !filteredPaired.isEmpty {
+                        SectionHeader(title: "Paired")
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.top, DesignTokens.Spacing.xs)
+
+                        ForEach(filteredPaired) { device in
+                            PairedDeviceRow(
+                                device: device,
+                                isConnecting: audioEngine.bluetoothDeviceMonitor.connectingIDs.contains(device.id),
+                                errorMessage: audioEngine.bluetoothDeviceMonitor.connectionErrors[device.id],
+                                onConnect: {
+                                    audioEngine.bluetoothDeviceMonitor.connect(device: device)
+                                }
+                            )
+                        }
+                    }
+                }
             }
         }
     }

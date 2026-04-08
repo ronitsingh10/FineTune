@@ -12,6 +12,8 @@ Control FineTune from Terminal, shell scripts, [Shortcuts](https://support.apple
 | Toggle mute | `finetune://toggle-mute?app=BUNDLE_ID` | Toggle mute state |
 | Set device | `finetune://set-device?app=BUNDLE_ID&device=DEVICE_UID` | Route an app to a specific output |
 | Reset | `finetune://reset` | Reset all apps to 100% and unmuted |
+| Connect device | `finetune://connect-device?name=DEVICE_NAME` | Connect a paired Bluetooth device |
+| Set default output | `finetune://set-default-output?device=DEVICE_UID` | Switch the system default output device |
 
 ## Examples
 
@@ -33,6 +35,12 @@ open "finetune://set-device?app=com.spotify.client&device=YOUR_DEVICE_UID"
 
 # Reset everything
 open "finetune://reset"
+
+# Connect AirPods Pro
+open "finetune://connect-device?name=AirPods+Pro"
+
+# Switch default output by name
+open "finetune://set-default-output?name=MacBook+Pro+Speakers"
 ```
 
 ## Use Cases
@@ -53,6 +61,13 @@ open "finetune://set-volumes?app=com.spotify.client&volume=30&app=com.apple.syst
 
 ```bash
 open "finetune://set-volumes?app=com.game.example&volume=400&app=com.hnc.Discord&volume=40"
+```
+
+**AirPods workflow** — Connect AirPods and lower music:
+
+```bash
+open "finetune://connect-device?name=AirPods+Pro"
+open "finetune://set-volumes?app=com.spotify.client&volume=30"
 ```
 
 These commands work in Terminal, shell scripts, Automator, Raycast script commands, macOS Shortcuts (using "Open URL"), and any other tool that can open URLs.

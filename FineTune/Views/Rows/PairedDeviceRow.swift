@@ -8,6 +8,7 @@ struct PairedDeviceRow: View {
     let isConnecting: Bool
     let errorMessage: String?
     let onConnect: () -> Void
+    var isDisconnected: Bool = true
 
     var body: some View {
         HStack(spacing: DesignTokens.Spacing.sm) {
@@ -31,12 +32,12 @@ struct PairedDeviceRow: View {
                 }
             }
             .frame(width: DesignTokens.Dimensions.iconSize, height: DesignTokens.Dimensions.iconSize)
-            .opacity(isConnecting ? 0.5 : 1.0)
+            .opacity(isConnecting ? 0.5 : (isDisconnected ? 0.6 : 1.0))
 
             // Device name
             Text(device.name)
                 .font(DesignTokens.Typography.rowName)
-                .foregroundStyle(isConnecting
+                .foregroundStyle((isConnecting || isDisconnected)
                     ? DesignTokens.Colors.textSecondary
                     : DesignTokens.Colors.textPrimary)
                 .lineLimit(1)

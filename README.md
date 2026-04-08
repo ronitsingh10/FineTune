@@ -61,7 +61,7 @@ That's it. Adjust sliders, route audio, and explore EQ from the menu bar.
 
 ### 🖥 Devices & System
 - **Input device control** — Monitor and adjust microphone levels
-- **Bluetooth device management** — Connect paired devices directly from the menu bar
+- **Bluetooth device management** — Connect paired devices directly from the menu bar; disconnected devices shown in main list with one-click connect
 - **Monitor speaker control** — Adjust volume on external displays via DDC
 - **Menu bar app** — Lightweight, always accessible
 - **URL schemes** — Automate volume, mute, device routing, and more from scripts
