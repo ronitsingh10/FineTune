@@ -58,6 +58,11 @@ final class AudioEngine {
         case pendingAutoSwitch(connectedDeviceUID: String, timeoutTask: Task<Void, Never>)
     }
 
+    enum PendingOutputAutoSwitchDecision: Equatable {
+        case acceptConnectedDevice
+        case restoreConfirmedDefault
+    }
+
     private var outputPriorityState: PriorityState = .stable
     private var inputPriorityState: PriorityState = .stable
 
@@ -178,6 +183,38 @@ final class AudioEngine {
         return connectedDevices.first {
             $0.uid != excluding && aliveCheck($0.id)
         }
+    }
+
+    static func shouldSwitchToConnectedOutputDevice(
+        connectedDeviceUID: String,
+        currentDefaultUID: String?,
+        highestPriorityUID: String?,
+        autoSwitchToConnectedOutputDevice: Bool
+    ) -> Bool {
+        guard connectedDeviceUID != currentDefaultUID else { return false }
+        if autoSwitchToConnectedOutputDevice {
+            return true
+        }
+        return connectedDeviceUID == highestPriorityUID
+    }
+
+    static func resolvePendingAutoSwitchDecision(
+        newDefaultUID: String,
+        pendingConnectedDeviceUID: String,
+        autoSwitchToConnectedOutputDevice: Bool,
+        lastAutoSwitchOverrideTime: Date?,
+        now: Date = Date()
+    ) -> PendingOutputAutoSwitchDecision {
+        if autoSwitchToConnectedOutputDevice {
+            return .acceptConnectedDevice
+        }
+
+        if let lastOverride = lastAutoSwitchOverrideTime,
+           now.timeIntervalSince(lastOverride) > 1.0 {
+            return .acceptConnectedDevice
+        }
+
+        return .restoreConfirmedDefault
     }
 
 
@@ -1243,6 +1280,24 @@ final class AudioEngine {
         }
     }
 
+    private func confirmOutputDefault(_ uid: String) {
+        lastConfirmedDefaultUID = uid
+        routeFollowsDefaultApps(to: uid)
+    }
+
+    @discardableResult
+    private func applyOutputDefault(to target: AudioDevice) -> Bool {
+        let currentDefault = deviceVolumeMonitor.defaultDeviceUID
+        if target.uid != currentDefault {
+            guard deviceVolumeMonitor.setDefaultDevice(target.id) else { return false }
+            outputEchoTracker.increment(target.uid)
+            logger.info("System default → \(target.name)")
+        }
+
+        confirmOutputDefault(target.uid)
+        return true
+    }
+
     /// Ensures system default matches highest-priority alive connected device.
     /// Routes followsDefault apps and switches their taps if default changes.
     /// Returns the resolved target UID.
@@ -1255,17 +1310,7 @@ final class AudioEngine {
             isAlive: isAliveCheck
         ) else { return nil }
 
-        let currentDefault = deviceVolumeMonitor.defaultDeviceUID
-        if target.uid != currentDefault {
-            if deviceVolumeMonitor.setDefaultDevice(target.id) {
-                outputEchoTracker.increment(target.uid)
-                logger.info("System default → \(target.name)")
-            }
-        }
-
-        lastConfirmedDefaultUID = target.uid
-        routeFollowsDefaultApps(to: target.uid)
-        return target.uid
+        return applyOutputDefault(to: target) ? target.uid : nil
     }
 
     /// Ensures system default input matches highest-priority alive connected input device.
@@ -1521,9 +1566,26 @@ final class AudioEngine {
             installAliveWatcher(deviceID: device.id, uid: deviceUID, name: deviceName)
         }
 
-        if isNewDeviceHigherPriority, deviceUID != currentDefault {
-            // A higher-priority device reconnected — switch to it
-            reEvaluateOutputDefault()
+        let autoSwitchConnectedOutput = settingsManager.appSettings.autoSwitchToConnectedOutputDevice
+        let shouldSwitchToConnectedOutput = Self.shouldSwitchToConnectedOutputDevice(
+            connectedDeviceUID: deviceUID,
+            currentDefaultUID: currentDefault,
+            highestPriorityUID: Self.resolveHighestPriority(
+                priorityOrder: settingsManager.devicePriorityOrder,
+                connectedDevices: outputDevices,
+                isAlive: isAliveCheck
+            )?.uid,
+            autoSwitchToConnectedOutputDevice: autoSwitchConnectedOutput
+        )
+        let shouldAcceptConnectedOutput = autoSwitchConnectedOutput || isNewDeviceHigherPriority
+
+        if shouldAcceptConnectedOutput,
+           let device = deviceMonitor.device(for: deviceUID),
+           isAliveCheck(device.id) {
+            _ = applyOutputDefault(to: device)
+        } else if shouldSwitchToConnectedOutput {
+            // Preserve the explicit intent in logs if the device became unavailable after resolution.
+            logger.debug("Connected output \(deviceName) matched auto-switch policy but is not ready yet")
         } else if !isNewDeviceHigherPriority, currentDefault == deviceUID {
             // macOS already auto-switched to the lower-priority device — restore
             // what the user was on (not highest priority — they may have chosen a mid-priority device)
@@ -1673,42 +1735,43 @@ final class AudioEngine {
             }
 
             if newDefaultUID == pendingUID {
-                // Settling heuristic: if >1s since last override, BT auto-switches have
-                // settled. This is likely the user changing via System Settings — accept it.
-                // BT auto-switches happen within ms; user actions take >1s.
-                if let lastOverride = lastAutoSwitchOverrideTime,
-                   Date().timeIntervalSince(lastOverride) > 1.0 {
+                switch Self.resolvePendingAutoSwitchDecision(
+                    newDefaultUID: newDefaultUID,
+                    pendingConnectedDeviceUID: pendingUID,
+                    autoSwitchToConnectedOutputDevice: settingsManager.appSettings.autoSwitchToConnectedOutputDevice,
+                    lastAutoSwitchOverrideTime: lastAutoSwitchOverrideTime
+                ) {
+                case .acceptConnectedDevice:
                     timeoutTask.cancel()
                     outputPriorityState = .stable
-                    lastConfirmedDefaultUID = newDefaultUID
+                    confirmOutputDefault(newDefaultUID)
                     lastAutoSwitchOverrideTime = nil
-                    routeFollowsDefaultApps(to: newDefaultUID)
                     let deviceName = deviceMonitor.device(for: newDefaultUID)?.name ?? newDefaultUID
-                    logger.info("Accepted user change to \(deviceName) (settled >1s)")
+                    logger.info("Accepted connected output change to \(deviceName)")
+                    return
+                case .restoreConfirmedDefault:
+                    // Case 1: macOS auto-switched to the newly connected device — restore what
+                    // the user was on. Re-enter PENDING_AUTOSWITCH for further auto-switches.
+                    timeoutTask.cancel()
+                    restoreConfirmedDefault()
+                    lastAutoSwitchOverrideTime = Date()
+                    let transport = deviceMonitor.device(for: pendingUID)?.id.readTransportType()
+                    let timeout = (transport == .bluetooth || transport == .bluetoothLE)
+                        ? btAutoSwitchGracePeriod
+                        : autoSwitchGracePeriod
+                    let newTimeoutTask = Task { @MainActor [weak self] in
+                        try? await Task.sleep(for: .seconds(timeout))
+                        guard let self, !Task.isCancelled else { return }
+                        self.outputPriorityState = .stable
+                        self.lastAutoSwitchOverrideTime = nil
+                        self.logger.debug("Auto-switch grace period expired after override")
+                    }
+                    outputPriorityState = .pendingAutoSwitch(
+                        connectedDeviceUID: pendingUID,
+                        timeoutTask: newTimeoutTask
+                    )
                     return
                 }
-
-                // Case 1: macOS auto-switched to the newly connected device — restore what
-                // the user was on. Re-enter PENDING_AUTOSWITCH for further auto-switches.
-                timeoutTask.cancel()
-                restoreConfirmedDefault()
-                lastAutoSwitchOverrideTime = Date()
-                let transport = deviceMonitor.device(for: pendingUID)?.id.readTransportType()
-                let timeout = (transport == .bluetooth || transport == .bluetoothLE)
-                    ? btAutoSwitchGracePeriod
-                    : autoSwitchGracePeriod
-                let newTimeoutTask = Task { @MainActor [weak self] in
-                    try? await Task.sleep(for: .seconds(timeout))
-                    guard let self, !Task.isCancelled else { return }
-                    self.outputPriorityState = .stable
-                    self.lastAutoSwitchOverrideTime = nil
-                    self.logger.debug("Auto-switch grace period expired after override")
-                }
-                outputPriorityState = .pendingAutoSwitch(
-                    connectedDeviceUID: pendingUID,
-                    timeoutTask: newTimeoutTask
-                )
-                return
             }
 
             // Case 3: Genuine user intent (different device, not our echo) — respect it.
