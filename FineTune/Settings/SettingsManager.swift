@@ -130,6 +130,10 @@ final class SettingsManager {
         var outputDevicePriority: [String] = []
         var inputDevicePriority: [String] = []
 
+        // Hidden devices (UIDs of devices suppressed from the main view)
+        var hiddenOutputDeviceUIDs: Set<String> = []
+        var hiddenInputDeviceUIDs: Set<String> = []
+
         // Per-device AutoEQ headphone correction
         var deviceAutoEQ: [String: AutoEQSelection] = [:]  // deviceUID → selection
         var favoriteAutoEQProfiles: Set<String> = []  // profile IDs
@@ -177,6 +181,8 @@ final class SettingsManager {
                 .mapValues { min($0, 1.0) }
             outputDevicePriority = try c.decodeIfPresent([String].self, forKey: .outputDevicePriority) ?? []
             inputDevicePriority = try c.decodeIfPresent([String].self, forKey: .inputDevicePriority) ?? []
+            hiddenOutputDeviceUIDs = try c.decodeIfPresent(Set<String>.self, forKey: .hiddenOutputDeviceUIDs) ?? []
+            hiddenInputDeviceUIDs = try c.decodeIfPresent(Set<String>.self, forKey: .hiddenInputDeviceUIDs) ?? []
             deviceAutoEQ = try c.decodeIfPresent([String: AutoEQSelection].self, forKey: .deviceAutoEQ) ?? [:]
             favoriteAutoEQProfiles = try c.decodeIfPresent(Set<String>.self, forKey: .favoriteAutoEQProfiles) ?? []
             autoEQPreampEnabled = try c.decodeIfPresent(Bool.self, forKey: .autoEQPreampEnabled) ?? true
@@ -450,6 +456,52 @@ final class SettingsManager {
         guard !settings.inputDevicePriority.contains(uid) else { return }
         settings.inputDevicePriority.append(uid)
         scheduleSave()
+    }
+
+    // MARK: - Hidden Devices
+
+    /// Hides an output device from the main view. Has no effect when the device is the current default.
+    func hideOutputDevice(uid: String) {
+        settings.hiddenOutputDeviceUIDs.insert(uid)
+        scheduleSave()
+    }
+
+    /// Reveals a previously hidden output device in the main view.
+    func unhideOutputDevice(uid: String) {
+        settings.hiddenOutputDeviceUIDs.remove(uid)
+        scheduleSave()
+    }
+
+    /// Returns true if the output device is hidden from the main view.
+    func isOutputDeviceHidden(_ uid: String) -> Bool {
+        settings.hiddenOutputDeviceUIDs.contains(uid)
+    }
+
+    /// All UIDs of hidden output devices.
+    var hiddenOutputDeviceUIDs: Set<String> {
+        settings.hiddenOutputDeviceUIDs
+    }
+
+    /// Hides an input device from the main view. Has no effect when the device is the current default.
+    func hideInputDevice(uid: String) {
+        settings.hiddenInputDeviceUIDs.insert(uid)
+        scheduleSave()
+    }
+
+    /// Reveals a previously hidden input device in the main view.
+    func unhideInputDevice(uid: String) {
+        settings.hiddenInputDeviceUIDs.remove(uid)
+        scheduleSave()
+    }
+
+    /// Returns true if the input device is hidden from the main view.
+    func isInputDeviceHidden(_ uid: String) -> Bool {
+        settings.hiddenInputDeviceUIDs.contains(uid)
+    }
+
+    /// All UIDs of hidden input devices.
+    var hiddenInputDeviceUIDs: Set<String> {
+        settings.hiddenInputDeviceUIDs
     }
 
     /// Merges reordered connected devices into the full priority list, preserving
@@ -733,6 +785,8 @@ final class SettingsManager {
         settings.softwareDeviceSavedVolumes.removeAll()
         settings.outputDevicePriority.removeAll()
         settings.inputDevicePriority.removeAll()
+        settings.hiddenOutputDeviceUIDs.removeAll()
+        settings.hiddenInputDeviceUIDs.removeAll()
         settings.autoEQPreampEnabled = true
         settings.deviceAutoEQ.removeAll()
         settings.favoriteAutoEQProfiles.removeAll()

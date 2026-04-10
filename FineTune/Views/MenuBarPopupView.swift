@@ -460,6 +460,9 @@ struct MenuBarPopupView: View {
                     ? deviceVolumeMonitor.defaultInputDeviceID
                     : deviceVolumeMonitor.defaultDeviceID
                 ForEach(Array(editableDeviceOrder.enumerated()), id: \.element.uid) { index, device in
+                    let isDeviceHidden = showingInputDevices
+                        ? audioEngine.settingsManager.isInputDeviceHidden(device.uid)
+                        : audioEngine.settingsManager.isOutputDeviceHidden(device.uid)
                     DeviceEditRow(
                         device: device,
                         priorityIndex: index,
@@ -474,6 +477,22 @@ struct MenuBarPopupView: View {
                                     fromOffsets: IndexSet(integer: fromIndex),
                                     toOffset: newIndex > fromIndex ? newIndex + 1 : newIndex
                                 )
+                            }
+                        },
+                        isHidden: isDeviceHidden,
+                        onToggleHidden: {
+                            if showingInputDevices {
+                                if audioEngine.settingsManager.isInputDeviceHidden(device.uid) {
+                                    audioEngine.settingsManager.unhideInputDevice(uid: device.uid)
+                                } else {
+                                    audioEngine.settingsManager.hideInputDevice(uid: device.uid)
+                                }
+                            } else {
+                                if audioEngine.settingsManager.isOutputDeviceHidden(device.uid) {
+                                    audioEngine.settingsManager.unhideOutputDevice(uid: device.uid)
+                                } else {
+                                    audioEngine.settingsManager.hideOutputDevice(uid: device.uid)
+                                }
                             }
                         }
                     )
@@ -927,9 +946,11 @@ struct MenuBarPopupView: View {
                 updateSortedDevices()
             }
         } else {
-            // Entering edit mode: copy the current tab's sorted devices
+            // Entering edit mode: use the full (unfiltered) device list so hidden devices are also shown.
             wasEditingInputDevices = showingInputDevices
-            editableDeviceOrder = showingInputDevices ? sortedInputDevices : sortedDevices
+            editableDeviceOrder = showingInputDevices
+                ? audioEngine.prioritySortedInputDevices
+                : audioEngine.prioritySortedOutputDevices
             isEditingDevicePriority = true
         }
     }
@@ -1023,14 +1044,22 @@ struct MenuBarPopupView: View {
 
     // MARK: - Helpers
 
-    /// Recomputes sorted output devices using priority order
+    /// Recomputes sorted output devices, filtering hidden ones.
+    /// The current default output device is always kept visible even if hidden.
     private func updateSortedDevices() {
-        sortedDevices = audioEngine.prioritySortedOutputDevices
+        let defaultUID = deviceVolumeMonitor.defaultDeviceUID
+        sortedDevices = audioEngine.prioritySortedOutputDevices.filter { device in
+            device.uid == defaultUID || !audioEngine.settingsManager.isOutputDeviceHidden(device.uid)
+        }
     }
 
-    /// Recomputes sorted input devices using priority order
+    /// Recomputes sorted input devices, filtering hidden ones.
+    /// The current default input device is always kept visible even if hidden.
     private func updateSortedInputDevices() {
-        sortedInputDevices = audioEngine.prioritySortedInputDevices
+        let defaultUID = deviceVolumeMonitor.defaultInputDeviceUID
+        sortedInputDevices = audioEngine.prioritySortedInputDevices.filter { device in
+            device.uid == defaultUID || !audioEngine.settingsManager.isInputDeviceHidden(device.uid)
+        }
     }
 
     /// Opens a file panel to import a ParametricEQ.txt for a device

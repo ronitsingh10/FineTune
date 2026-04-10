@@ -3,7 +3,7 @@ import SwiftUI
 import AppKit
 
 /// Simplified device row for priority edit mode.
-/// Shows drag handle, priority number, device icon + name, and DEFAULT badge.
+/// Shows drag handle, priority number, device icon + name, DEFAULT badge, hide toggle, and UID copy.
 struct DeviceEditRow: View {
     let device: AudioDevice
     let priorityIndex: Int
@@ -11,6 +11,9 @@ struct DeviceEditRow: View {
     let isInputDevice: Bool
     let deviceCount: Int
     let onReorder: (Int) -> Void
+
+    let isHidden: Bool
+    let onToggleHidden: () -> Void
 
     @State private var copied = false
 
@@ -63,6 +66,27 @@ struct DeviceEditRow: View {
                     )
             }
 
+            // Hide/show toggle button
+            // Disabled for the current default device — it stays visible while it's the default.
+            Button {
+                onToggleHidden()
+            } label: {
+                Image(systemName: isHidden ? "eye.slash" : "eye")
+                    .font(.system(size: 11))
+                    .foregroundStyle(
+                        isDefault
+                            ? DesignTokens.Colors.textTertiary.opacity(0.4)
+                            : (isHidden ? Color.orange : DesignTokens.Colors.textTertiary)
+                    )
+                    .contentTransition(.symbolEffect(.replace))
+            }
+            .buttonStyle(.plain)
+            .disabled(isDefault)
+            .help(isDefault
+                ? "Cannot hide the default device"
+                : (isHidden ? "Show in main view" : "Hide from main view")
+            )
+
             // Copy UID button (always at far right)
             Button {
                 NSPasteboard.general.clearContents()
@@ -82,9 +106,12 @@ struct DeviceEditRow: View {
             .help("Copy UID")
         }
         .frame(height: DesignTokens.Dimensions.rowContentHeight)
+        .opacity(isHidden && !isDefault ? 0.5 : 1.0)
+        .animation(.easeOut(duration: 0.2), value: isHidden)
         .hoverableRow()
     }
 }
+
 
 // MARK: - Editable Priority Number
 
