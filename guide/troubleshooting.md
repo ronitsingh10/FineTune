@@ -39,6 +39,8 @@ Some apps use helper processes to play audio rather than the main app process. T
 
 FineTune uses a **device priority list** to decide which output device to use. When a device connects, FineTune only switches to it if it's ranked higher than the current device. When a device disconnects, FineTune falls back to the next highest-priority device that's still connected.
 
+If you want newly connected outputs to take over immediately regardless of priority, enable **Settings → Audio → Auto-Switch New Output**.
+
 By default, devices are added to the bottom of the list in the order they're first seen. Since your Mac's built-in speakers are always connected, they end up at the top (highest priority), so FineTune won't auto-switch to headphones, external speakers, or other devices when they connect.
 
 **This is a one-time setup.** Once you set your preferred order, it's saved permanently and works across app restarts.

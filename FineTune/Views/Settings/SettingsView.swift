@@ -89,6 +89,13 @@ struct SettingsView: View {
             )
 
             SettingsToggleRow(
+                icon: "arrow.trianglehead.2.clockwise.rotate.90",
+                title: "Auto-Switch New Output",
+                description: "Automatically use newly connected output devices",
+                isOn: $settings.autoSwitchToConnectedOutputDevice
+            )
+
+            SettingsToggleRow(
                 icon: "speaker.badge.exclamationmark",
                 title: "Software Volume for Unsupported Devices",
                 description: "Add volume sliders for outputs without native controls (e.g. HDMI TVs)",
