@@ -206,7 +206,7 @@ final class AudioEngine {
             realDeviceMonitor = provider as? AudioDeviceMonitor
             self.deviceMonitor = provider
         } else {
-            let monitor = AudioDeviceMonitor()
+            let monitor = AudioDeviceMonitor(settingsManager: manager)
             realDeviceMonitor = monitor
             self.deviceMonitor = monitor
         }

@@ -96,6 +96,13 @@ struct SettingsView: View {
             )
 
             SettingsToggleRow(
+                icon: "square.stack.3d.up",
+                title: "Show Virtual Output Devices",
+                description: "Include virtual outputs like BlackHole and Loopback in the device list",
+                isOn: $settings.showVirtualOutputDevices
+            )
+
+            SettingsToggleRow(
                 icon: "mic",
                 title: "Lock Input Device",
                 description: "Prevent auto-switching when devices connect",

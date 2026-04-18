@@ -164,6 +164,9 @@ struct MenuBarPopupView: View {
             if oldValue.softwareDeviceVolumeEnabled != newValue.softwareDeviceVolumeEnabled {
                 audioEngine.handleSoftwareVolumeSettingChanged()
             }
+            if oldValue.showVirtualOutputDevices != newValue.showVirtualOutputDevices {
+                (audioEngine.deviceMonitor as? AudioDeviceMonitor)?.refreshForSettingsChange()
+            }
             if oldValue.loudnessCompensationEnabled != newValue.loudnessCompensationEnabled {
                 audioEngine.setLoudnessCompensationEnabled(newValue.loudnessCompensationEnabled)
             }
