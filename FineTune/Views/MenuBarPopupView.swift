@@ -158,6 +158,12 @@ struct MenuBarPopupView: View {
         }
         .onChange(of: localAppSettings) { oldValue, newValue in
             audioEngine.settingsManager.updateAppSettings(newValue)
+
+            if oldValue.showAllDevices != newValue.showAllDevices {
+                audioEngine.refreshDeviceLists()
+                updateSortedDevices()
+                updateSortedInputDevices()
+            }
             if !oldValue.lockInputDevice && newValue.lockInputDevice {
                 audioEngine.handleInputLockEnabled()
             }

@@ -102,6 +102,13 @@ struct SettingsView: View {
                 isOn: $settings.lockInputDevice
             )
 
+            SettingsToggleRow(
+                icon: "square.stack.3d.up",
+                title: "Show All Devices",
+                description: "Include all (combined/virtual) devices in device lists",
+                isOn: $settings.showAllDevices
+            )
+
             // Sound Effects device selection
             SoundEffectsDeviceRow(
                 devices: outputDevices,

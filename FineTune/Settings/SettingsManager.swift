@@ -54,6 +54,10 @@ struct AppSettings: Codable, Equatable {
 
     // Audio
     var defaultNewAppVolume: Float = 1.0      // 100% (unity gain)
+    var maxVolumeBoost: Float = 2.0           // 200% max
+        
+    // Whether to show all devices (including combined/virtual) in device lists
+    var showAllDevices: Bool = false
 
     // Input Device Lock
     var lockInputDevice: Bool = true          // Prevent auto-switching input device
@@ -686,6 +690,17 @@ final class SettingsManager {
             setLaunchAtLogin(newSettings.launchAtLogin)
         }
         settings.appSettings = newSettings
+        scheduleSave()
+    }
+
+    // MARK: - All Devices
+    
+    var showAllDevices: Bool {
+        settings.appSettings.showAllDevices
+    }
+
+    func setShowAllDevices(_ show: Bool) {
+        settings.appSettings.showAllDevices = show
         scheduleSave()
     }
 

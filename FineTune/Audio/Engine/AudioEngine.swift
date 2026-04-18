@@ -8,7 +8,7 @@ import UserNotifications
 @MainActor
 final class AudioEngine {
     let processMonitor: any AudioProcessMonitoring
-    let deviceMonitor: any AudioDeviceProviding
+    var deviceMonitor: any AudioDeviceProviding
     let bluetoothDeviceMonitor: BluetoothDeviceMonitor
     let deviceVolumeMonitor: any DeviceVolumeProviding
     let volumeState: VolumeState
@@ -195,6 +195,7 @@ final class AudioEngine {
         self.permission = permission ?? AudioRecordingPermission()
         let manager = settingsManager ?? SettingsManager()
         self.settingsManager = manager
+        self.deviceMonitor = AudioDeviceMonitor(settingsManager: manager)
         self.autoEQProfileManager = autoEQProfileManager ?? AutoEQProfileManager()
         self.volumeState = VolumeState(settingsManager: manager)
         self.isAliveCheck = isAlive ?? { $0.isDeviceAlive() }
@@ -206,7 +207,7 @@ final class AudioEngine {
             realDeviceMonitor = provider as? AudioDeviceMonitor
             self.deviceMonitor = provider
         } else {
-            let monitor = AudioDeviceMonitor()
+            let monitor = AudioDeviceMonitor(settingsManager: manager)
             realDeviceMonitor = monitor
             self.deviceMonitor = monitor
         }
@@ -623,6 +624,17 @@ final class AudioEngine {
         }
         taps.removeAll()
         logger.info("AudioEngine stopped")
+    }
+
+    /// Rebuilds device lists immediately (used by settings-driven filters).
+    func refreshDeviceLists() {
+        if let realMonitor = deviceMonitor as? AudioDeviceMonitor {
+            realMonitor.refreshNow()
+        } else {
+            // Fallback for test doubles that only conform to AudioDeviceProviding
+            deviceMonitor.start()
+        }
+        registerNewDevicesInPriority()
     }
 
     /// Explicit shutdown for app termination. Ensures all listeners are cleaned up.
@@ -1838,8 +1850,7 @@ final class AudioEngine {
                     self.logger.debug("Cleaned up stale tap for PID \(pid)")
                 }
                 self.appDeviceRouting.removeValue(forKey: pid)
-                self.followsDefault.remove(pid)
-                self.appliedPIDs.remove(pid)  // Allow re-initialization if app resumes
+                self.followsDefault.remove(pid)  // Allow re-initialization if app resumes
                 self.pendingCleanup.removeValue(forKey: pid)
             }
         }
