@@ -22,7 +22,6 @@ struct DeviceRow: View {
     let isDefault: Bool
     let volume: Float
     let isMuted: Bool
-    let hasVolumeControl: Bool
     /// The device's volume backend. Determines which slider ↔ value mapping to use.
     let volumeBackend: VolumeControlTier
     let onSetDefault: () -> Void
@@ -68,7 +67,6 @@ struct DeviceRow: View {
         isDefault: Bool,
         volume: Float,
         isMuted: Bool,
-        hasVolumeControl: Bool = true,
         volumeBackend: VolumeControlTier = .hardware,
         onSetDefault: @escaping () -> Void,
         onVolumeChange: @escaping (Float) -> Void,
@@ -90,7 +88,6 @@ struct DeviceRow: View {
         self.isDefault = isDefault
         self.volume = volume
         self.isMuted = isMuted
-        self.hasVolumeControl = hasVolumeControl
         self.volumeBackend = volumeBackend
         self.onSetDefault = onSetDefault
         self.onVolumeChange = onVolumeChange
@@ -177,58 +174,56 @@ struct DeviceRow: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
 
-            if hasVolumeControl {
-                // Mute button
-                MuteButton(isMuted: showMutedIcon) {
-                    if showMutedIcon {
-                        // Unmute: restore to default if displayed as 0%
-                        if displayedPercentage == 0 {
-                            suppressSliderAutoUnmute = isMuted
-                            sliderValue = defaultUnmuteVolume
-                        }
-                        if isMuted {
-                            onMuteToggle()  // Toggle system mute
-                        }
-                    } else {
-                        // Mute
+            // Mute button
+            MuteButton(isMuted: showMutedIcon) {
+                if showMutedIcon {
+                    // Unmute: restore to default if displayed as 0%
+                    if displayedPercentage == 0 {
+                        suppressSliderAutoUnmute = isMuted
+                        sliderValue = defaultUnmuteVolume
+                    }
+                    if isMuted {
                         onMuteToggle()  // Toggle system mute
                     }
+                } else {
+                    // Mute
+                    onMuteToggle()  // Toggle system mute
                 }
-
-                // Volume slider (Liquid Glass)
-                LiquidGlassSlider(
-                    value: $sliderValue,
-                    onEditingChanged: { editing in
-                        isEditing = editing
-                    }
-                )
-                .opacity(showMutedIcon ? 0.5 : 1.0)
-                .onChange(of: sliderValue) { _, newValue in
-                    // Skip write-back when syncing from device (breaks USB DAC quantization spiral)
-                    if isUpdatingSliderFromDevice {
-                        isUpdatingSliderFromDevice = false
-                        return
-                    }
-                    onVolumeChange(Self.sliderToVolume(newValue, backend: volumeBackend))
-                    if suppressSliderAutoUnmute {
-                        suppressSliderAutoUnmute = false
-                        return
-                    }
-                    // Auto-unmute when slider moved while muted
-                    if isMuted && newValue > 0 {
-                        onMuteToggle()
-                    }
-                }
-
-                // Editable volume percentage
-                EditablePercentage(
-                    percentage: Binding(
-                        get: { Int(round(sliderValue * 100)) },
-                        set: { sliderValue = Double($0) / 100.0 }
-                    ),
-                    range: 0...100
-                )
             }
+
+            // Volume slider (Liquid Glass)
+            LiquidGlassSlider(
+                value: $sliderValue,
+                onEditingChanged: { editing in
+                    isEditing = editing
+                }
+            )
+            .opacity(showMutedIcon ? 0.5 : 1.0)
+            .onChange(of: sliderValue) { _, newValue in
+                // Skip write-back when syncing from device (breaks USB DAC quantization spiral)
+                if isUpdatingSliderFromDevice {
+                    isUpdatingSliderFromDevice = false
+                    return
+                }
+                onVolumeChange(Self.sliderToVolume(newValue, backend: volumeBackend))
+                if suppressSliderAutoUnmute {
+                    suppressSliderAutoUnmute = false
+                    return
+                }
+                // Auto-unmute when slider moved while muted
+                if isMuted && newValue > 0 {
+                    onMuteToggle()
+                }
+            }
+
+            // Editable volume percentage
+            EditablePercentage(
+                percentage: Binding(
+                    get: { Int(round(sliderValue * 100)) },
+                    set: { sliderValue = Double($0) / 100.0 }
+                ),
+                range: 0...100
+            )
         }
         .frame(height: DesignTokens.Dimensions.rowContentHeight)
         .onChange(of: volume) { _, newValue in
