@@ -1,0 +1,15 @@
+{
+  "_comment": "HID data1 fixture values for IOKit media-key events. Bitfield: keyType=(data1>>16)&0xFFFF, keyFlags=data1&0xFFFF, isDown=((keyFlags>>8)&0xFF)==0x0A, isRepeat=(keyFlags&0xFF)!=0. Tests use these inline rather than loading from bundle.",
+  "events": [
+    { "name": "SOUND_UP key-down",    "keyType": 0, "data1": 2560,   "hex": "0x00000A00", "isDown": true,  "isRepeat": false },
+    { "name": "SOUND_UP repeat",      "keyType": 0, "data1": 2561,   "hex": "0x00000A01", "isDown": true,  "isRepeat": true  },
+    { "name": "SOUND_UP key-up",      "keyType": 0, "data1": 2816,   "hex": "0x00000B00", "isDown": false, "isRepeat": false },
+    { "name": "SOUND_DOWN key-down",  "keyType": 1, "data1": 68096,  "hex": "0x00010A00", "isDown": true,  "isRepeat": false },
+    { "name": "SOUND_DOWN repeat",    "keyType": 1, "data1": 68097,  "hex": "0x00010A01", "isDown": true,  "isRepeat": true  },
+    { "name": "SOUND_DOWN key-up",    "keyType": 1, "data1": 68352,  "hex": "0x00010B00", "isDown": false, "isRepeat": false },
+    { "name": "MUTE key-down",        "keyType": 7, "data1": 460288, "hex": "0x00070A00", "isDown": true,  "isRepeat": false },
+    { "name": "MUTE repeat",          "keyType": 7, "data1": 460289, "hex": "0x00070A01", "isDown": true,  "isRepeat": true  },
+    { "name": "MUTE key-up",          "keyType": 7, "data1": 460544, "hex": "0x00070B00", "isDown": false, "isRepeat": false },
+    { "name": "BRIGHTNESS_UP key-down (unknown, fail-open)", "keyType": 2, "data1": 134656, "hex": "0x00020A00", "isDown": true, "isRepeat": false }
+  ]
+}
