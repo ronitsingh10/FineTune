@@ -95,7 +95,7 @@ final class SettingsManager {
     private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "FineTune", category: "SettingsManager")
 
     struct Settings: Codable {
-        var version: Int = 10
+        var version: Int = 11
         var appVolumes: [String: Float] = [:]
         var appDeviceRouting: [String: String] = [:]  // bundleID → deviceUID
         var appMutes: [String: Bool] = [:]  // bundleID → isMuted
@@ -121,6 +121,11 @@ final class SettingsManager {
         var softwareDeviceVolumes: [String: Float] = [:]      // device UID → visible volume (0.0-1.0)
         var softwareDeviceMuteStates: [String: Bool] = [:]    // device UID → software mute state
         var softwareDeviceSavedVolumes: [String: Float] = [:] // device UID → volume before mute
+
+        // Per-device volume control tier override (overrides auto-detection).
+        // nil/missing → auto-detect (hardware/ddc/software). Populated only by
+        // the user via the device detail sheet's manual override toggle.
+        var deviceVolumeTierOverride: [String: VolumeControlTier] = [:]
 
         // Device priority (ordered device UIDs, highest priority first)
         var outputDevicePriority: [String] = []
@@ -171,6 +176,7 @@ final class SettingsManager {
             softwareDeviceSavedVolumes = (try c.decodeIfPresent([String: Float].self, forKey: .softwareDeviceSavedVolumes) ?? [:])
                 .filter { $0.value.isFinite && $0.value >= 0 }
                 .mapValues { min($0, 1.0) }
+            deviceVolumeTierOverride = try c.decodeIfPresent([String: VolumeControlTier].self, forKey: .deviceVolumeTierOverride) ?? [:]
             outputDevicePriority = try c.decodeIfPresent([String].self, forKey: .outputDevicePriority) ?? []
             inputDevicePriority = try c.decodeIfPresent([String].self, forKey: .inputDevicePriority) ?? []
             deviceAutoEQ = try c.decodeIfPresent([String: AutoEQSelection].self, forKey: .deviceAutoEQ) ?? [:]
@@ -413,6 +419,25 @@ final class SettingsManager {
 
     func setSoftwareDeviceSavedVolume(for deviceUID: String, to volume: Float) {
         settings.softwareDeviceSavedVolumes[deviceUID] = normalizedDeviceVolume(volume)
+        scheduleSave()
+    }
+
+    // MARK: - Per-Device Volume Tier Override
+
+    /// Returns the user-set override tier for a device, or nil when
+    /// auto-detection should take effect.
+    func getDeviceVolumeTierOverride(for deviceUID: String) -> VolumeControlTier? {
+        settings.deviceVolumeTierOverride[deviceUID]
+    }
+
+    /// Sets or clears the volume tier override for a device. Passing `nil` removes
+    /// the override, returning the device to auto-detection.
+    func setDeviceVolumeTierOverride(for deviceUID: String, to tier: VolumeControlTier?) {
+        if let tier {
+            settings.deviceVolumeTierOverride[deviceUID] = tier
+        } else {
+            settings.deviceVolumeTierOverride.removeValue(forKey: deviceUID)
+        }
         scheduleSave()
     }
 
@@ -727,6 +752,7 @@ final class SettingsManager {
         settings.softwareDeviceVolumes.removeAll()
         settings.softwareDeviceMuteStates.removeAll()
         settings.softwareDeviceSavedVolumes.removeAll()
+        settings.deviceVolumeTierOverride.removeAll()
         settings.outputDevicePriority.removeAll()
         settings.inputDevicePriority.removeAll()
         settings.autoEQPreampEnabled = true

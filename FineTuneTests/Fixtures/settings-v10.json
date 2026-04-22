@@ -1,0 +1,13 @@
+{
+  "version": 10,
+  "appVolumes": {},
+  "appSettings": {
+    "defaultNewAppVolume": 1.0,
+    "launchAtLogin": false,
+    "menuBarIconStyle": "Default",
+    "lockInputDevice": true,
+    "showDeviceDisconnectAlerts": true,
+    "loudnessCompensationEnabled": false,
+    "loudnessEqualizationEnabled": false
+  }
+}

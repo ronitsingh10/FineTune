@@ -1,0 +1,28 @@
+{
+  "version": 11,
+  "appVolumes": {},
+  "appSettings": {
+    "defaultNewAppVolume": 1.0,
+    "launchAtLogin": false,
+    "menuBarIconStyle": "Default",
+    "lockInputDevice": true,
+    "showDeviceDisconnectAlerts": true,
+    "loudnessCompensationEnabled": false,
+    "loudnessEqualizationEnabled": false,
+    "mediaKeyControlEnabled": true,
+    "hudStyle": "tahoe"
+  },
+  "deviceVolumeTierOverride": {
+    "uid-usb-interface": "software",
+    "uid-external-display": "ddc"
+  },
+  "softwareDeviceVolumes": {
+    "uid-usb-interface": 0.6
+  },
+  "softwareDeviceMuteStates": {
+    "uid-usb-interface": false
+  },
+  "softwareDeviceSavedVolumes": {
+    "uid-usb-interface": 0.6
+  }
+}

@@ -158,7 +158,21 @@ final class DeviceVolumeMonitor: DeviceVolumeProviding {
 
     func outputVolumeBackend(for deviceID: AudioDeviceID) -> VolumeControlTier {
         guard deviceID.isValid else { return .software }
+        if let uid = deviceMonitor.device(for: deviceID)?.uid,
+           let override = settingsManager.getDeviceVolumeTierOverride(for: uid) {
+            return override
+        }
+        return autoDetectBackend(for: deviceID)
+    }
 
+    /// Returns the tier that auto-detection would pick, ignoring any saved override.
+    /// Used by the detail sheet to display the "Auto: <tier>" badge.
+    func autoDetectedOutputVolumeBackend(for deviceID: AudioDeviceID) -> VolumeControlTier {
+        guard deviceID.isValid else { return .software }
+        return autoDetectBackend(for: deviceID)
+    }
+
+    private func autoDetectBackend(for deviceID: AudioDeviceID) -> VolumeControlTier {
         if deviceID.hasOutputVolumeControl() {
             return .hardware
         }
@@ -927,47 +941,89 @@ final class DeviceVolumeMonitor: DeviceVolumeProviding {
     /// default volume (1.0) for 50-200ms after the device appears.
     private func readAllStates() {
         for device in deviceMonitor.outputDevices {
-            // Skip devices that HAL reports as dead (mid-disconnect)
-            guard device.id.isDeviceAlive() else { continue }
+            readOneState(for: device.id, device: device)
+        }
+    }
 
-            let backend = outputVolumeBackend(for: device.id)
+    /// Reads the current volume and mute state for a single tracked device.
+    /// Extracted from `readAllStates()` so a tier override change can refresh
+    /// one device without enumerating the whole device list.
+    private func readOneState(for deviceID: AudioDeviceID, device: AudioDevice) {
+        // Skip devices that HAL reports as dead (mid-disconnect)
+        guard deviceID.isDeviceAlive() else { return }
 
-            if backend == .software {
-                let muted = settingsManager.getSoftwareDeviceMuteState(for: device.uid)
-                let defaultVolume: Float = muted ? 0 : 1.0
-                let visibleVolume = settingsManager.getSoftwareDeviceVolume(for: device.uid) ?? defaultVolume
-                volumes[device.id] = clampedVolume(visibleVolume)
-                muteStates[device.id] = muted
-                continue
+        let backend = outputVolumeBackend(for: deviceID)
+
+        if backend == .software {
+            let muted = settingsManager.getSoftwareDeviceMuteState(for: device.uid)
+            let defaultVolume: Float = muted ? 0 : 1.0
+            let visibleVolume = settingsManager.getSoftwareDeviceVolume(for: device.uid) ?? defaultVolume
+            volumes[deviceID] = clampedVolume(visibleVolume)
+            muteStates[deviceID] = muted
+            return
+        }
+
+        #if !APP_STORE
+        // For DDC-backed devices, use cached DDC volume instead of CoreAudio
+        if backend == .ddc, let ddcController {
+            if let ddcVolume = ddcController.getVolume(for: deviceID) {
+                volumes[deviceID] = Float(ddcVolume) / 100.0
+            } else {
+                volumes[deviceID] = 0.5
             }
+            muteStates[deviceID] = ddcController.isMuted(for: deviceID)
+            return
+        }
+        #endif
 
-            #if !APP_STORE
-            // For DDC-backed devices, use cached DDC volume instead of CoreAudio
-            if backend == .ddc, let ddcController {
-                if let ddcVolume = ddcController.getVolume(for: device.id) {
-                    volumes[device.id] = Float(ddcVolume) / 100.0
-                } else {
-                    volumes[device.id] = 0.5
+        let volume = clampedVolume(deviceID.readOutputVolumeScalar())
+        volumes[deviceID] = volume
+
+        let muted = deviceID.readMuteState()
+        muteStates[deviceID] = muted
+
+        // Bluetooth devices may not have valid volume immediately after appearing.
+        // The HAL returns 1.0 (default) until the BT firmware handshake completes.
+        // Schedule a delayed re-read to get the actual volume.
+        let transportType = deviceID.readTransportType()
+        if transportType == .bluetooth || transportType == .bluetoothLE {
+            scheduleBluetoothOutputConfirmation(for: deviceID)
+        }
+    }
+
+    /// Refreshes volume/mute state for a single device after a tier override change.
+    /// Syncs mute authority across the tier boundary so the user's mute intent
+    /// survives the transition in either direction without a user-visible jump.
+    func applyTierOverrideChange(for deviceID: AudioDeviceID) {
+        guard let device = deviceMonitor.device(for: deviceID) else { return }
+        let newBackend = outputVolumeBackend(for: deviceID)
+        let previousMute = muteStates[deviceID] ?? false
+        switch newBackend {
+        case .software:
+            // Promote to software: hand authority to the software gain path and
+            // clear hardware mute so it isn't double-attenuating.
+            settingsManager.setSoftwareDeviceMuteState(for: device.uid, to: previousMute)
+            if previousMute {
+                _ = deviceID.setMuteState(false)
+            }
+        case .hardware, .ddc:
+            // Revert to hardware/DDC: if the software path was muted, re-apply
+            // that mute at the hardware/DDC layer so the user's mute intent
+            // doesn't silently get dropped when the software attenuator is no
+            // longer the authority.
+            let softwareMute = settingsManager.getSoftwareDeviceMuteState(for: device.uid)
+            if softwareMute {
+                if newBackend == .hardware {
+                    _ = deviceID.setMuteState(true)
                 }
-                muteStates[device.id] = ddcController.isMuted(for: device.id)
-                continue
-            }
-            #endif
-
-            let volume = clampedVolume(device.id.readOutputVolumeScalar())
-            volumes[device.id] = volume
-
-            let muted = device.id.readMuteState()
-            muteStates[device.id] = muted
-
-            // Bluetooth devices may not have valid volume immediately after appearing.
-            // The HAL returns 1.0 (default) until the BT firmware handshake completes.
-            // Schedule a delayed re-read to get the actual volume.
-            let transportType = device.id.readTransportType()
-            if transportType == .bluetooth || transportType == .bluetoothLE {
-                scheduleBluetoothOutputConfirmation(for: device.id)
+                #if !APP_STORE
+                if newBackend == .ddc, let ddcController {
+                    ddcController.mute(for: deviceID)
+                }
+                #endif
             }
         }
+        readOneState(for: deviceID, device: device)
     }
 
     private func outputDeviceUID(for deviceID: AudioDeviceID) -> String? {
