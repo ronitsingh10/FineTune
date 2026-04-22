@@ -34,10 +34,7 @@ final class MediaKeyMonitor {
     /// 80 ms floor between DDC-tier repeats — DDC write queues saturate at key-repeat rate.
     var lastDDCRepeatTime: DispatchTime?
 
-    var lastEventSeenTime: DispatchTime?
-
     private var ghostTapProbeTask: Task<Void, Never>?
-    private var postTrustRegrant: Bool = false
 
     /// CGEventTaps are per-session; wake leaves them enabled-but-inert.
     private var workspaceObservers: [NSObjectProtocol] = []
@@ -123,11 +120,9 @@ final class MediaKeyMonitor {
             let wasOffline = (tap == nil)
             start()
             if wasOffline && tap != nil {
-                postTrustRegrant = true
                 armGhostTapProbe()
             }
         } else {
-            postTrustRegrant = false
             cancelGhostTapProbe()
             stop()
         }
@@ -178,7 +173,6 @@ final class MediaKeyMonitor {
                 self.logger.error("Ghost-tap probe: tap reports disabled after regrant/wake — marking offline")
                 self.mediaKeyStatus.isOffline = true
             }
-            self.postTrustRegrant = false
             self.ghostTapProbeTask = nil
         }
     }
@@ -354,7 +348,6 @@ final class MediaKeyMonitor {
         guard let mediaEvent = decoder.decode(data1: data1) else { return false }
 
         hudController.swallowObserved()
-        lastEventSeenTime = DispatchTime.now()
         handle(mediaEvent)
         return true
     }

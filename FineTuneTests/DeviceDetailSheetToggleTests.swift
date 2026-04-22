@@ -1,10 +1,10 @@
 // FineTuneTests/DeviceDetailSheetToggleTests.swift
-// AC #1–#5 for the binary software-volume toggle + "Reset to Auto-detect" menu.
+// AC #1–#5 for the binary software-volume toggle.
 //
 // Strategy: DeviceDetailSheet is a pure SwiftUI view; the load-bearing logic is
-// the binding-to-tier mapping (useSoftwareBinding) and the visibility predicates
-// (shouldShowToggle, shouldShowResetMenu). Those are static helpers and a
-// synthesized Binding — unit-testable without rendering.
+// the binding-to-tier mapping (useSoftwareBinding) and the visibility predicate
+// (shouldShowToggle). These are a static helper and a synthesized Binding —
+// unit-testable without rendering.
 //
 // We construct a minimal DeviceDetailSheet with captured onOverrideChange to
 // observe binding writes. No NSHostingView / preview machinery required.
@@ -15,7 +15,7 @@ import SwiftUI
 import AudioToolbox
 @testable import FineTune
 
-@Suite("DeviceDetailSheet — binary toggle + reset menu (AC #1–#5)")
+@Suite("DeviceDetailSheet — binary software-volume toggle (AC #1–#5)")
 @MainActor
 struct DeviceDetailSheetToggleTests {
 
