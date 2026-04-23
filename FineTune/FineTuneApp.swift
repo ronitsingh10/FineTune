@@ -23,6 +23,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     private var hidPrimerWindow: NSWindow?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        logger.info("DIAG applicationDidFinishLaunching fired; activationPolicy=\(NSApp.activationPolicy().rawValue) isActive=\(NSApp.isActive) windows=\(NSApp.windows.count)")
         primeEventTapPipeline()
     }
 
@@ -40,6 +41,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         window.level = .floating
         window.orderFront(nil)
         hidPrimerWindow = window
+        logger.info("DIAG primer window created; windows=\(NSApp.windows.count) isVisible=\(window.isVisible)")
     }
 
     func application(_ application: NSApplication, open urls: [URL]) {

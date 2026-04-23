@@ -80,6 +80,7 @@ final class MediaKeyMonitor {
 
     /// Idempotent. No-op unless media keys are enabled and Accessibility is trusted.
     func start() {
+        logger.info("DIAG start() entry tap=\(self.tap != nil ? "present" : "nil") enabled=\(self.settingsManager.appSettings.mediaKeyControlEnabled) axTrusted=\(self.accessibility.isTrusted) listenAccess=\(CGPreflightListenEventAccess()) postAccess=\(CGPreflightPostEventAccess())")
         guard tap == nil else { return }
         guard settingsManager.appSettings.mediaKeyControlEnabled else {
             logger.debug("Media key control disabled in settings; tap not installed")
@@ -114,7 +115,7 @@ final class MediaKeyMonitor {
         self.tap = newTap
         self.runLoopSource = source
         self.mediaKeyStatus.isOffline = false
-        logger.info("Media key tap installed")
+        logger.info("DIAG tap installed tapIsEnabled=\(CGEvent.tapIsEnabled(tap: newTap))")
     }
 
     /// Reconciles tap state against settings + Accessibility trust. Idempotent.
@@ -242,6 +243,7 @@ final class MediaKeyMonitor {
         setMute: (AudioDeviceID, Bool) -> Void
     ) {
         let shouldShowHUD = !popupVisibility.isVisible
+        logger.info("DIAG handleCore event=\(String(describing: event)) shouldShowHUD=\(shouldShowHUD) popupVisible=\(self.popupVisibility.isVisible) device=\(deviceName, privacy: .public)")
 
         switch event {
         case .volumeUp(let isRepeat):

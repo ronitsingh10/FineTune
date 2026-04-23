@@ -76,12 +76,16 @@ final class HUDWindowController {
         showCallCount += 1
         showDidUpdatePanel = false
 
-        guard !isForegroundAppFullscreen() else {
-            logger.debug("Skipping HUD show: foreground app is fullscreen")
+        let fullscreen = isForegroundAppFullscreen()
+        let popupVisible = popupVisibility.isVisible
+        logger.info("DIAG show() call=\(self.showCallCount) fullscreen=\(fullscreen) popupVisible=\(popupVisible) panelExists=\(self.panel != nil) panelIsVisible=\(self.panel?.isVisible ?? false)")
+
+        guard !fullscreen else {
+            logger.info("DIAG show() skipped: foreground fullscreen")
             return
         }
-        guard !popupVisibility.isVisible else {
-            logger.debug("Skipping HUD show: popup is visible")
+        guard !popupVisible else {
+            logger.info("DIAG show() skipped: popup visible")
             return
         }
 
@@ -128,6 +132,7 @@ final class HUDWindowController {
         panel.setContentSize(size)
         panel.setFrameOrigin(position(for: style, size: size))
 
+        let wasVisible = panel.isVisible
         if panel.isVisible {
             panel.orderFrontRegardless()
         } else {
@@ -140,6 +145,7 @@ final class HUDWindowController {
                 panel.animator().alphaValue = 1.0
             }
         }
+        logger.info("DIAG show() after-orderFront wasVisible=\(wasVisible) nowVisible=\(panel.isVisible) occluded=\(panel.occlusionState.contains(.visible) ? false : true) frame=\(NSStringFromRect(panel.frame), privacy: .public) level=\(panel.level.rawValue) screen=\(panel.screen?.localizedName ?? "nil", privacy: .public)")
 
         scheduleHide(for: style)
         postAccessibilityAnnouncement(panel: panel, volume: volume, mute: mute, deviceName: deviceName)
