@@ -31,9 +31,17 @@ Common apps that may need to be ignored:
 
 ## Volume slider not working
 
-Some apps use helper processes to play audio rather than the main app process. The slider you see might be controlling the wrong process.
+There are two cases.
 
-**Fix:** Try restarting the app. If the issue persists, check edit mode to see if the app appears as a different process name.
+**Per-app slider.** Some apps use helper processes to play audio rather than the main app process, so the slider you see might be controlling the wrong process. Try restarting the app. If the issue persists, check edit mode to see if the app appears as a different process name.
+
+**Per-device slider.** When you open a device, FineTune picks a volume backend automatically:
+
+- **Hardware**: the device reports a native volume control (most USB DACs, AirPods, built-in speakers).
+- **DDC**: an external display that responds to the monitor-control protocol.
+- **Software**: FineTune attenuates inside its own audio graph.
+
+Auto-detection gets it right for most devices, but some USB DACs and HDMI/DisplayPort outputs advertise a hardware slider that doesn't actually move the output level. If the device slider doesn't change the volume, open the device inspector (the info button on the device row) and turn on **Software volume**. FineTune remembers the choice per device. The toggle is hidden when auto-detect already picked Software, because there's no alternative backend to switch to.
 
 ## Audio device not switching automatically
 
@@ -62,6 +70,21 @@ FineTune's input device monitoring requires separate microphone permission.
 1. Open **System Settings** → **Privacy & Security** → **Microphone**
 2. Find FineTune and enable it
 3. Restart FineTune
+
+## Media keys don't control FineTune
+
+Media keys (F10 / F11 / F12) are opt-in and require the **Accessibility** permission so FineTune can observe the keystrokes.
+
+1. Open **System Settings** → **Privacy & Security** → **Accessibility**
+2. Enable FineTune in the list. If it's already on, toggle it off and back on to clear a rare permission-bootstrap race.
+3. Open FineTune Settings → **Media Keys & HUD**, turn on **Control volume with media keys**, and pick a HUD style (Tahoe or Classic) or disable the HUD
+
+If the keys still don't work right after launch, a WindowServer handoff can briefly swallow the first keypress. Try once more; subsequent presses are reliable.
+
+## Volume HUD not appearing
+
+- Check Settings → **Media Keys & HUD**. The HUD is off by default and has to be enabled separately from the media-key toggle.
+- Switch HUD styles if one isn't rendering. Tahoe uses macOS 26's system HUD look; Classic matches the older translucent rounded-rect style.
 
 ## EQ not applying / sounds the same
 

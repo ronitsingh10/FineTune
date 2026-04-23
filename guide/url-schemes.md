@@ -81,4 +81,4 @@ osascript -e 'id of app "App Name"'
 
 ## Finding Device UIDs
 
-In FineTune, click the pencil icon to enter edit mode, then click the copy button next to a device name to copy its UID.
+In FineTune, click the pencil icon to enter edit mode, tap the **info button** on a device row to open the device inspector, then click the copy button next to the UID to put it on the clipboard.

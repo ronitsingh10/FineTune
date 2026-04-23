@@ -64,9 +64,13 @@ That's it. Adjust sliders, route audio, and explore EQ from the menu bar.
 ### 🖥 Devices & System
 - **Input device control** — Monitor and adjust microphone levels
 - **Alert volume** — Control macOS notification and alert volume from settings
-- **Software device volume** — Volume control for outputs that don't support hardware volume
+- **Smart volume backend** — FineTune auto-picks hardware, DDC, or software volume per device. If the hardware slider on a USB DAC or HDMI output doesn't actually control level, force software volume from the device inspector and FineTune remembers the choice for that device
+- **Device inspector** — Tap the info button on any device row for sample rate (with picker), transport, UID copy, hog-mode banner, and the software-volume override
+- **Hide devices** — Eye toggle in edit mode hides output and input devices you don't want in the list, mirroring the app-hide flow
 - **Bluetooth device management** — Connect paired devices directly from the menu bar
 - **Monitor speaker control** — Adjust volume on external displays via DDC
+- **Media keys & Volume HUD** — Opt-in media-key control with a Tahoe-style or Classic-style on-screen HUD; keys route through FineTune's per-app volume instead of the system master
+- **Dynamic menu bar icon** — Pick from four styles in Settings (Default, Speaker, Waveform, Equalizer). The **Speaker** style tracks volume live (zero / low / mid / high glyphs) and switches to a slashed speaker when muted. All styles briefly flash the new output's SF Symbol on device switch. Changing style applies instantly, no relaunch required.
 - **Menu bar app** — Lightweight, always accessible
 - **URL schemes** — Automate volume, mute, device routing, and more from scripts
 
