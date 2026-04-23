@@ -41,6 +41,10 @@ final class MediaKeyMonitor {
 
     var onRunLoopSourceRemoved: (() -> Void)?
 
+    /// Optional coordinator notified on every volume/mute key event so the menu bar icon
+    /// can flash the current device's transport symbol. Wired by FineTuneApp after init.
+    var iconCoordinator: MenuBarIconCoordinator?
+
     init(
         decoder: any MediaKeyEventDecoding,
         audioEngine: AudioEngine,
@@ -254,6 +258,7 @@ final class MediaKeyMonitor {
             if shouldShowHUD {
                 hudController.show(volume: newVolume, mute: false, deviceName: deviceName)
             }
+            iconCoordinator?.flashDevice()
 
         case .volumeDown(let isRepeat):
             if isRepeat && tier == .ddc && isDDCRepeatCoalesced() {
@@ -272,6 +277,7 @@ final class MediaKeyMonitor {
             if shouldShowHUD {
                 hudController.show(volume: newVolume, mute: willBeSilent, deviceName: deviceName)
             }
+            iconCoordinator?.flashDevice()
 
         case .muteToggle:
             let newMute = !currentMute
@@ -279,6 +285,7 @@ final class MediaKeyMonitor {
             if shouldShowHUD {
                 hudController.show(volume: currentVolume, mute: newMute, deviceName: deviceName)
             }
+            iconCoordinator?.flashDevice()
         }
     }
 

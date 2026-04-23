@@ -40,6 +40,7 @@ struct FineTuneApp: App {
     @State private var popupVisibility: PopupVisibilityService
     @State private var hudController: HUDWindowController
     @State private var mediaKeyMonitor: MediaKeyMonitor
+    @State private var iconCoordinator: MenuBarIconCoordinator
     @StateObject private var updateManager = UpdateManager()
     @State private var showMenuBarExtra = true
 
@@ -153,6 +154,12 @@ struct FineTuneApp: App {
         _popupVisibility = State(initialValue: popupService)
         _hudController = State(initialValue: hud)
         _mediaKeyMonitor = State(initialValue: monitor)
+
+        let coordinator = MenuBarIconCoordinator(deviceVolumeMonitor: engine.deviceVolumeMonitor as! DeviceVolumeMonitor, settings: settings)
+        monitor.iconCoordinator = coordinator
+        // Defer start() so NSApplication.shared is fully bootstrapped before we walk NSApp.windows.
+        DispatchQueue.main.async { [coordinator] in coordinator.start() }
+        _iconCoordinator = State(initialValue: coordinator)
 
         // Start Accessibility polling immediately so `isTrustedCached` is live
         // before the user first opens Settings. The trust-flip callback wires
