@@ -141,6 +141,49 @@ final class AudioProcessMonitor: AudioProcessMonitoring {
         return nil
     }
 
+    /// Resolves a helper process to its parent app using bundle ID prefix matching.
+    /// Electron apps (Discord, Slack, VS Code, etc.) use bundle IDs like:
+    ///   com.hnc.Discord.helper, com.hnc.Discord.Helper.Renderer
+    /// This progressively strips trailing components to find a registered parent app.
+    /// Returns (name, icon, bundleID, parentPID) if found.
+    private func resolveAppByBundleID(
+        _ helperBundleID: String,
+        runningAppsByPID: [pid_t: NSRunningApplication]
+    ) -> (name: String, icon: NSImage, bundleID: String, parentPID: pid_t)? {
+        var components = helperBundleID.components(separatedBy: ".")
+        // Need at least 3 components for a valid parent (e.g., com.company.App)
+        while components.count > 3 {
+            components.removeLast()
+            let candidateID = components.joined(separator: ".")
+
+            // Check if any running app matches this bundle ID
+            if let app = runningAppsByPID.values.first(where: {
+                $0.bundleIdentifier == candidateID && $0.bundleURL?.pathExtension == "app"
+            }) {
+                return (
+                    name: app.localizedName ?? candidateID.components(separatedBy: ".").last ?? "Unknown",
+                    icon: app.icon ?? NSImage(systemSymbolName: "app.fill", accessibilityDescription: nil) ?? NSImage(),
+                    bundleID: candidateID,
+                    parentPID: app.processIdentifier
+                )
+            }
+
+            // Not in running apps — try NSWorkspace to find the app on disk
+            if let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: candidateID) {
+                let icon = NSWorkspace.shared.icon(forFile: appURL.path)
+                let name = FileManager.default.displayName(atPath: appURL.path)
+                    .replacingOccurrences(of: ".app", with: "")
+                return (
+                    name: name,
+                    icon: icon,
+                    bundleID: candidateID,
+                    parentPID: 0 // no running PID found, will use the helper's PID as key
+                )
+            }
+        }
+        return nil
+    }
+
     func start() {
         guard processListListenerBlock == nil else { return }
 
@@ -217,23 +260,60 @@ final class AudioProcessMonitor: AudioProcessMonitoring {
                 guard let pid = try? objectID.readProcessPID(), pid != myPID else { continue }
                 guard objectID.readProcessIsRunning() else { continue }
 
+                let coreAudioBundleIDRaw = objectID.readProcessBundleID()
+
                 // Try to find the parent app (for helper processes like Safari Graphics and Media)
                 let directApp = runningAppsByPID[pid]
 
-                // Check if it's a real app bundle (.app), not an XPC service (.xpc)
-                let isRealApp = directApp?.bundleURL?.pathExtension == "app"
+                // Check if it's a real top-level app bundle (.app), not an XPC service (.xpc)
+                // or a helper .app nested inside another .app (e.g., Electron helpers at
+                // SomeApp.app/Contents/Frameworks/SomeApp Helper (Renderer).app)
+                let isRealApp: Bool = {
+                    guard let url = directApp?.bundleURL, url.pathExtension == "app" else { return false }
+                    // If the path contains ".app/" before the final .app, it's a nested helper
+                    let pathStr = url.path
+                    if pathStr.contains(".app/") {
+                        return false
+                    }
+                    return true
+                }()
                 let resolvedApp = isRealApp ? directApp : findResponsibleApp(for: pid, in: runningAppsByPID)
-                let parentPID = resolvedApp?.processIdentifier ?? pid
-                let isHelper = parentPID != pid
 
-                // Use resolved app's info, fall back to Core Audio bundle ID
-                let name = resolvedApp?.localizedName
-                    ?? objectID.readProcessBundleID()?.components(separatedBy: ".").last
-                    ?? "Unknown"
-                let icon = resolvedApp?.icon
-                    ?? NSImage(systemSymbolName: "app.fill", accessibilityDescription: nil)
-                    ?? NSImage()
-                let bundleID = resolvedApp?.bundleIdentifier ?? objectID.readProcessBundleID()
+                let name: String
+                let icon: NSImage
+                let bundleID: String?
+                let parentPID: pid_t
+                let isHelper: Bool
+
+                if let resolvedApp {
+                    // PID-based resolution succeeded (responsibility API or process tree)
+                    parentPID = resolvedApp.processIdentifier
+                    isHelper = parentPID != pid
+                    name = resolvedApp.localizedName
+                        ?? objectID.readProcessBundleID()?.components(separatedBy: ".").last
+                        ?? "Unknown"
+                    icon = resolvedApp.icon
+                        ?? NSImage(systemSymbolName: "app.fill", accessibilityDescription: nil)
+                        ?? NSImage()
+                    bundleID = resolvedApp.bundleIdentifier ?? objectID.readProcessBundleID()
+                } else if let coreAudioBundleID = coreAudioBundleIDRaw,
+                          let resolved = resolveAppByBundleID(coreAudioBundleID, runningAppsByPID: runningAppsByPID) {
+                    // Bundle ID prefix matching succeeded (Electron helpers like Discord, Slack, VS Code)
+                    name = resolved.name
+                    icon = resolved.icon
+                    bundleID = resolved.bundleID
+                    parentPID = resolved.parentPID > 0 ? resolved.parentPID : pid
+                    isHelper = resolved.parentPID > 0
+                } else {
+                    // All resolution failed — use raw CoreAudio info
+                    parentPID = pid
+                    isHelper = false
+                    name = coreAudioBundleIDRaw?.components(separatedBy: ".").last
+                        ?? "Unknown"
+                    icon = NSImage(systemSymbolName: "app.fill", accessibilityDescription: nil)
+                        ?? NSImage()
+                    bundleID = coreAudioBundleIDRaw
+                }
 
                 // Skip system daemons (siri, coreaudio, etc.) - they shouldn't appear in the apps list
                 if isSystemDaemon(bundleID: bundleID, name: name) { continue }
