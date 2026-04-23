@@ -82,7 +82,10 @@ That's it. Adjust sliders, route audio, and explore EQ from the menu bar.
 </p>
 <p align="center">
   <img src="assets/screenshot-autoeq.png" alt="FineTune AutoEQ headphone correction picker with search and favorites" width="400">
-  <img src="assets/screenshot-settings.png" alt="FineTune settings panel" width="400">
+  <img src="assets/screenshot-settings.png" alt="FineTune settings panel with Media Keys and HUD section" width="400">
+</p>
+<p align="center">
+  <img src="assets/screenshot-device-inspector.png" alt="FineTune device inspector showing sample rate, format, UID, and software-volume override, with hidden devices below" width="400">
 </p>
 
 ## Documentation
