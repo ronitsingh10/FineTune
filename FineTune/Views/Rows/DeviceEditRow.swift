@@ -15,13 +15,23 @@ struct DeviceEditRow<ExpandedContent: View>: View {
     let onToggleExpand: () -> Void
     @ViewBuilder let expandedContent: () -> ExpandedContent
 
-    @State private var copied = false
+    @State private var isInfoButtonHovered = false
 
     var body: some View {
         ExpandableGlassRow(isExpanded: isExpanded) {
             headerRow
         } expandedContent: {
             expandedContent()
+        }
+    }
+
+    private var infoButtonColor: Color {
+        if isExpanded {
+            return DesignTokens.Colors.interactiveActive
+        } else if isInfoButtonHovered {
+            return DesignTokens.Colors.interactiveHover
+        } else {
+            return DesignTokens.Colors.interactiveDefault
         }
     }
 
@@ -76,30 +86,39 @@ struct DeviceEditRow<ExpandedContent: View>: View {
             .accessibilityAddTraits(.isButton)
             .accessibilityLabel(isExpanded ? "Collapse device details" : "Expand device details")
 
-            Image(systemName: "chevron.right")
-                .font(.system(size: 11))
-                .foregroundStyle(DesignTokens.Colors.textTertiary)
-                .rotationEffect(.degrees(isExpanded ? 90 : 0))
-                .animation(.spring(response: 0.3, dampingFraction: 0.8), value: isExpanded)
-
-            Button {
-                NSPasteboard.general.clearContents()
-                NSPasteboard.general.setString(device.uid, forType: .string)
-                copied = true
-                Task {
-                    try? await Task.sleep(for: .seconds(1.5))
-                    copied = false
-                }
-            } label: {
-                Image(systemName: copied ? "checkmark" : "doc.on.doc")
-                    .font(.system(size: 11))
-                    .foregroundStyle(copied ? .green : DesignTokens.Colors.textTertiary)
-                    .contentTransition(.symbolEffect(.replace))
-            }
-            .buttonStyle(.plain)
-            .help("Copy UID")
+            infoButton
         }
         .frame(height: DesignTokens.Dimensions.rowContentHeight)
+    }
+
+    private var infoButton: some View {
+        Button {
+            onToggleExpand()
+        } label: {
+            ZStack {
+                Image(systemName: "info.circle")
+                    .opacity(isExpanded ? 0 : 1)
+                    .rotationEffect(.degrees(isExpanded ? 90 : 0))
+
+                Image(systemName: "xmark")
+                    .opacity(isExpanded ? 1 : 0)
+                    .rotationEffect(.degrees(isExpanded ? 0 : -90))
+            }
+            .font(.system(size: 12))
+            .symbolRenderingMode(.hierarchical)
+            .foregroundStyle(infoButtonColor)
+            .frame(
+                minWidth: DesignTokens.Dimensions.minTouchTarget,
+                minHeight: DesignTokens.Dimensions.minTouchTarget
+            )
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { isInfoButtonHovered = $0 }
+        .help(isExpanded ? "Close device inspector" : "Device inspector")
+        .accessibilityLabel(isExpanded ? "Close device inspector" : "Open device inspector")
+        .animation(.spring(response: 0.3, dampingFraction: 0.75), value: isExpanded)
+        .animation(DesignTokens.Animation.hover, value: isInfoButtonHovered)
     }
 }
 
