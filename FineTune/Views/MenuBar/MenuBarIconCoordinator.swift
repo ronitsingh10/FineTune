@@ -125,13 +125,15 @@ final class MenuBarIconCoordinator {
             _ = settings.appSettings.menuBarIconStyle
             _ = settings.appSettings.hudStyle
         } onChange: { [weak self] in
-            // The tracked properties are all @MainActor-isolated, so mutations (and thus this
-            // callback) always land on the main actor. Re-register synchronously before the
-            // setter returns — a Task hop would drop any mutation that lands in the window.
+            // onChange fires in willSet — the tracked properties are still at their
+            // pre-change values inside this closure. Re-register synchronously so the
+            // next mutation isn't dropped, then defer apply() to a Task so it reads
+            // committed (post-setter) values.
             MainActor.assumeIsolated {
-                guard let self else { return }
-                self.scheduleApplyTracking()
-                self.apply()
+                self?.scheduleApplyTracking()
+            }
+            Task { @MainActor [weak self] in
+                self?.apply()
             }
         }
     }
@@ -140,9 +142,14 @@ final class MenuBarIconCoordinator {
         withObservationTracking {
             _ = deviceVolumeMonitor.defaultDeviceID
         } onChange: { [weak self] in
+            // See scheduleApplyTracking — deferred read so flashDevice sees the NEW
+            // defaultDeviceID, not the pre-change value. Otherwise the flash shows
+            // the old device's icon (e.g. AirPods while we just switched to MacBook).
             MainActor.assumeIsolated {
+                self?.scheduleDeviceChangeTracking()
+            }
+            Task { @MainActor [weak self] in
                 guard let self else { return }
-                self.scheduleDeviceChangeTracking()
                 let newID = self.deviceVolumeMonitor.defaultDeviceID
                 if let prev = self.lastObservedDeviceID, prev != newID, newID.isValid {
                     self.flashDevice()
