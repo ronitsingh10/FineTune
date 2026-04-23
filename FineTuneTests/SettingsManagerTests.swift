@@ -35,6 +35,8 @@ struct SettingsJSONTests {
         original.ddcVolumes = ["monitor-1": 75]
         original.ddcMuteStates = ["monitor-1": false]
         original.autoEQPreampEnabled = false
+        original.hiddenOutputDeviceUIDs = ["uid-hidden-out-1", "uid-hidden-out-2"]
+        original.hiddenInputDeviceUIDs = ["uid-hidden-in-1"]
 
         let data = try JSONEncoder().encode(original)
         let decoded = try JSONDecoder().decode(SettingsManager.Settings.self, from: data)
@@ -48,6 +50,8 @@ struct SettingsJSONTests {
         #expect(decoded.ddcVolumes == original.ddcVolumes)
         #expect(decoded.ddcMuteStates == original.ddcMuteStates)
         #expect(decoded.autoEQPreampEnabled == false)
+        #expect(decoded.hiddenOutputDeviceUIDs == original.hiddenOutputDeviceUIDs)
+        #expect(decoded.hiddenInputDeviceUIDs == original.hiddenInputDeviceUIDs)
     }
 
     @Test("Decoding empty JSON produces valid defaults")
@@ -60,6 +64,8 @@ struct SettingsJSONTests {
         #expect(decoded.appMutes.isEmpty)
         #expect(decoded.systemSoundsFollowsDefault == true)
         #expect(decoded.autoEQPreampEnabled == true)
+        #expect(decoded.hiddenOutputDeviceUIDs.isEmpty)
+        #expect(decoded.hiddenInputDeviceUIDs.isEmpty)
     }
 
     @Test("Decoding with extra unknown keys is tolerated")
@@ -259,6 +265,75 @@ struct AppSettingsDefaultTests {
         #expect(manager.appSettings.loudnessEqualizationEnabled == true)
     }
 
+}
+
+// MARK: - Hidden Devices
+
+@Suite("SettingsManager — hidden device UIDs")
+@MainActor
+struct SettingsManagerHiddenDevicesTests {
+
+    private func makeManager() -> SettingsManager {
+        let tempDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+        return SettingsManager(directory: tempDir)
+    }
+
+    @Test("hideOutputDevice / unhideOutputDevice / isOutputDeviceHidden round-trip")
+    func outputHideUnhideParity() {
+        let m = makeManager()
+        let uid = "uid-output-1"
+
+        #expect(m.isOutputDeviceHidden(uid) == false)
+        m.hideOutputDevice(uid: uid)
+        #expect(m.isOutputDeviceHidden(uid) == true)
+        #expect(m.hiddenOutputDeviceUIDs.contains(uid))
+        m.unhideOutputDevice(uid: uid)
+        #expect(m.isOutputDeviceHidden(uid) == false)
+        #expect(m.hiddenOutputDeviceUIDs.contains(uid) == false)
+    }
+
+    @Test("hideInputDevice / unhideInputDevice / isInputDeviceHidden round-trip")
+    func inputHideUnhideParity() {
+        let m = makeManager()
+        let uid = "uid-input-1"
+
+        #expect(m.isInputDeviceHidden(uid) == false)
+        m.hideInputDevice(uid: uid)
+        #expect(m.isInputDeviceHidden(uid) == true)
+        m.unhideInputDevice(uid: uid)
+        #expect(m.isInputDeviceHidden(uid) == false)
+    }
+
+    @Test("toggleOutputDeviceHidden flips based on persisted state")
+    func toggleOutputFlipsFromPersisted() {
+        let m = makeManager()
+        let uid = "uid-output-2"
+
+        m.toggleOutputDeviceHidden(uid: uid)
+        #expect(m.isOutputDeviceHidden(uid) == true)
+        m.toggleOutputDeviceHidden(uid: uid)
+        #expect(m.isOutputDeviceHidden(uid) == false)
+    }
+
+    @Test("toggleInputDeviceHidden flips based on persisted state")
+    func toggleInputFlipsFromPersisted() {
+        let m = makeManager()
+        let uid = "uid-input-2"
+
+        m.toggleInputDeviceHidden(uid: uid)
+        #expect(m.isInputDeviceHidden(uid) == true)
+        m.toggleInputDeviceHidden(uid: uid)
+        #expect(m.isInputDeviceHidden(uid) == false)
+    }
+
+    @Test("Hidden output and input sets are independent")
+    func outputAndInputSetsIndependent() {
+        let m = makeManager()
+        m.hideOutputDevice(uid: "shared-uid")
+        #expect(m.isOutputDeviceHidden("shared-uid") == true)
+        #expect(m.isInputDeviceHidden("shared-uid") == false)
+    }
 }
 
 // MARK: - MenuBarIconStyle

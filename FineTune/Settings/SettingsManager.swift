@@ -482,6 +482,18 @@ final class SettingsManager {
         settings.hiddenOutputDeviceUIDs
     }
 
+    /// Flips the hidden state of an output device based on the persisted set.
+    /// Prefer this over read-then-hide/unhide from the view layer, which can
+    /// desync under rapid taps that re-read stale captured state.
+    func toggleOutputDeviceHidden(uid: String) {
+        if settings.hiddenOutputDeviceUIDs.contains(uid) {
+            settings.hiddenOutputDeviceUIDs.remove(uid)
+        } else {
+            settings.hiddenOutputDeviceUIDs.insert(uid)
+        }
+        scheduleSave()
+    }
+
     /// Hides an input device from the main view. Has no effect when the device is the current default.
     func hideInputDevice(uid: String) {
         settings.hiddenInputDeviceUIDs.insert(uid)
@@ -502,6 +514,16 @@ final class SettingsManager {
     /// All UIDs of hidden input devices.
     var hiddenInputDeviceUIDs: Set<String> {
         settings.hiddenInputDeviceUIDs
+    }
+
+    /// Flips the hidden state of an input device based on the persisted set.
+    func toggleInputDeviceHidden(uid: String) {
+        if settings.hiddenInputDeviceUIDs.contains(uid) {
+            settings.hiddenInputDeviceUIDs.remove(uid)
+        } else {
+            settings.hiddenInputDeviceUIDs.insert(uid)
+        }
+        scheduleSave()
     }
 
     /// Merges reordered connected devices into the full priority list, preserving
