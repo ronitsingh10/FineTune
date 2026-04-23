@@ -482,17 +482,9 @@ struct MenuBarPopupView: View {
                         isHidden: isDeviceHidden,
                         onToggleHidden: {
                             if showingInputDevices {
-                                if audioEngine.settingsManager.isInputDeviceHidden(device.uid) {
-                                    audioEngine.settingsManager.unhideInputDevice(uid: device.uid)
-                                } else {
-                                    audioEngine.settingsManager.hideInputDevice(uid: device.uid)
-                                }
+                                audioEngine.settingsManager.toggleInputDeviceHidden(uid: device.uid)
                             } else {
-                                if audioEngine.settingsManager.isOutputDeviceHidden(device.uid) {
-                                    audioEngine.settingsManager.unhideOutputDevice(uid: device.uid)
-                                } else {
-                                    audioEngine.settingsManager.hideOutputDevice(uid: device.uid)
-                                }
+                                audioEngine.settingsManager.toggleOutputDeviceHidden(uid: device.uid)
                             }
                         }
                     )
@@ -1046,20 +1038,28 @@ struct MenuBarPopupView: View {
 
     /// Recomputes sorted output devices, filtering hidden ones.
     /// The current default output device is always kept visible even if hidden.
+    /// Falls back to the unfiltered list if the filter produces an empty
+    /// result — `defaultDeviceUID` can be briefly nil during device switchover
+    /// and we don't want the main view to show zero rows in that window.
     private func updateSortedDevices() {
+        let all = audioEngine.prioritySortedOutputDevices
         let defaultUID = deviceVolumeMonitor.defaultDeviceUID
-        sortedDevices = audioEngine.prioritySortedOutputDevices.filter { device in
+        let filtered = all.filter { device in
             device.uid == defaultUID || !audioEngine.settingsManager.isOutputDeviceHidden(device.uid)
         }
+        sortedDevices = filtered.isEmpty ? all : filtered
     }
 
     /// Recomputes sorted input devices, filtering hidden ones.
     /// The current default input device is always kept visible even if hidden.
+    /// Empty-filter fallback mirrors `updateSortedDevices`.
     private func updateSortedInputDevices() {
+        let all = audioEngine.prioritySortedInputDevices
         let defaultUID = deviceVolumeMonitor.defaultInputDeviceUID
-        sortedInputDevices = audioEngine.prioritySortedInputDevices.filter { device in
+        let filtered = all.filter { device in
             device.uid == defaultUID || !audioEngine.settingsManager.isInputDeviceHidden(device.uid)
         }
+        sortedInputDevices = filtered.isEmpty ? all : filtered
     }
 
     /// Opens a file panel to import a ParametricEQ.txt for a device

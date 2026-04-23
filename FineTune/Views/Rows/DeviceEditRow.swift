@@ -3,7 +3,7 @@ import SwiftUI
 import AppKit
 
 /// Simplified device row for priority edit mode.
-/// Shows drag handle, priority number, device icon + name, DEFAULT badge, hide toggle, and UID copy.
+/// Shows drag handle, priority number, device icon + name, DEFAULT badge, hide toggle, and UID copy button.
 struct DeviceEditRow: View {
     let device: AudioDevice
     let priorityIndex: Int
@@ -76,7 +76,7 @@ struct DeviceEditRow: View {
                     .foregroundStyle(
                         isDefault
                             ? DesignTokens.Colors.textTertiary.opacity(0.4)
-                            : (isHidden ? Color.orange : DesignTokens.Colors.textTertiary)
+                            : (isHidden ? DesignTokens.Colors.mutedIndicator : DesignTokens.Colors.textTertiary)
                     )
                     .contentTransition(.symbolEffect(.replace))
             }
@@ -111,7 +111,6 @@ struct DeviceEditRow: View {
         .hoverableRow()
     }
 }
-
 
 // MARK: - Editable Priority Number
 
