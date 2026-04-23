@@ -89,11 +89,8 @@ final class MenuBarIconCoordinator {
     }
 
     private func flashDuration() -> TimeInterval {
-        // Matches HUDWindowController.hide delay so the icon and HUD fade in lockstep.
-        switch settings.appSettings.hudStyle {
-        case .tahoe:   return 0.8
-        case .classic: return 1.1
-        }
+        // Matches HUDWindowController.hideDelay so the icon and HUD fade in lockstep.
+        return 1.1
     }
 
     // MARK: - Apply

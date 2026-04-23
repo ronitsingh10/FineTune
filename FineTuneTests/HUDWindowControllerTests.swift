@@ -169,15 +169,10 @@ struct HUDWindowControllerTimerTests {
 
     // MARK: - Per-style hide delay (AC #17)
 
-    @Test("hideDelay(for: .tahoe) == .milliseconds(800)")
-    func tahoeHideDelayIs800ms() {
+    @Test("hideDelay is 1100 ms for both styles")
+    func hideDelayIs1100msForBothStyles() {
         let hud = makeController()
-        #expect(hud.hideDelay(for: .tahoe) == .milliseconds(800))
-    }
-
-    @Test("hideDelay(for: .classic) == .milliseconds(1100)")
-    func classicHideDelayIs1100ms() {
-        let hud = makeController()
+        #expect(hud.hideDelay(for: .tahoe) == .milliseconds(1100))
         #expect(hud.hideDelay(for: .classic) == .milliseconds(1100))
     }
 

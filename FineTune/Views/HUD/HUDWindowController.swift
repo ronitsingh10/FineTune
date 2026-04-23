@@ -63,10 +63,7 @@ final class HUDWindowController {
 
     func hideDelay(for style: HUDStyle) -> Duration {
         if let override = hideDelayOverride { return override }
-        switch style {
-        case .tahoe: return .milliseconds(800)
-        case .classic: return .milliseconds(1100)
-        }
+        return .milliseconds(1100)
     }
 
     // MARK: - Public API
