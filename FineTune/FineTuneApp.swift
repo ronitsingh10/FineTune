@@ -10,7 +10,34 @@ private let logger = Logger(subsystem: "com.finetuneapp.FineTune", category: "Ap
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelegate {
     var audioEngine: AudioEngine?
-    
+
+    /// Off-screen NSWindow kept alive for the process lifetime so WindowServer wires
+    /// `.cghidEventTap` into our event routing. Without this, a pure LSUIElement menu
+    /// bar app receives no media-key events from the HID tap until the first real
+    /// window (the FluidMenuBarExtra popup) is shown — the "first window primes event
+    /// taps" AppKit activation cycle. See fix/media-key-cold-launch-prime.
+    private var hidPrimerWindow: NSWindow?
+
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        primeEventTapPipeline()
+    }
+
+    private func primeEventTapPipeline() {
+        let window = NSWindow(
+            contentRect: NSRect(x: -10_000, y: -10_000, width: 1, height: 1),
+            styleMask: [.borderless],
+            backing: .buffered,
+            defer: false
+        )
+        window.alphaValue = 0
+        window.ignoresMouseEvents = true
+        window.isReleasedWhenClosed = false
+        window.level = .floating
+        window.orderFront(nil)
+        window.orderOut(nil)
+        hidPrimerWindow = window
+    }
+
     func application(_ application: NSApplication, open urls: [URL]) {
         guard let audioEngine = audioEngine else {
             return
@@ -156,15 +183,6 @@ struct FineTuneApp: App {
         }
         accessibilityService.start()
         monitor.reconcile()
-
-        // TCC bootstrap race: AXIsProcessTrusted() can return false during the first
-        // few hundred ms of launch even when Accessibility is already granted. The only
-        // retry paths today (com.apple.accessibility.api notification + session activate)
-        // don't fire on a pre-granted cold start, so without this retry the media-key
-        // tap never installs until the user opens the popup. reconcile() is idempotent.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak monitor] in
-            monitor?.reconcile()
-        }
 
         // Pass engine to AppDelegate
         _appDelegate.wrappedValue.audioEngine = engine
