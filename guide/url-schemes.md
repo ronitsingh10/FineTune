@@ -6,7 +6,8 @@ Control FineTune from Terminal, shell scripts, [Shortcuts](https://support.apple
 
 | Action | Format | Description |
 |--------|--------|-------------|
-| Set volume | `finetune://set-volumes?app=BUNDLE_ID&volume=PERCENT` | Set volume (0–100, or up to 400 with boost) |
+| Set volume of an application | `finetune://set-volumes?app=BUNDLE_ID&volume=PERCENT` | Set volume (0–100, or up to 400 with boost) |
+| Set volume of audio device | `finetune://set-volumes?device=NAME&volume=PERCENT` | Set volume (0–100) |
 | Step volume | `finetune://step-volume?app=BUNDLE_ID&direction=up` | Nudge volume up or down by ~5% |
 | Set mute | `finetune://set-mute?app=BUNDLE_ID&muted=true` | Mute or unmute an app |
 | Toggle mute | `finetune://toggle-mute?app=BUNDLE_ID` | Toggle mute state |
@@ -27,6 +28,17 @@ open "finetune://set-mute?app=com.spotify.client&muted=true&app=com.apple.Music&
 
 # Step Discord volume down
 open "finetune://step-volume?app=com.hnc.Discord&direction=down"
+
+# Set volume of Macbook Pro Speakers to 75%
+open "finetune://set-volumes?device=MacBook Pro Speakers&volume=75"
+
+# Set volume of AirPods to 30%
+open "finetune://set-volumes?device=AirPods ✌️✌️&volume=30"
+
+
+# Set Macbook Pro Speakers and AirPods to 10%
+open "finetune://set-volumes?device=MacBook Pro Speakers&volume=10&device=AirPods ✌️✌️&volume=30"
+
 
 # Route an app to a specific device
 open "finetune://set-device?app=com.spotify.client&device=YOUR_DEVICE_UID"

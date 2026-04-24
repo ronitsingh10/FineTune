@@ -7,6 +7,7 @@ import os
 @MainActor
 protocol URLHandlerEngine {
     var apps: [AudioApp] { get }
+    var audioDevices: [AudioDevice] { get }
     var settingsManager: SettingsManager { get }
     func setVolume(for app: AudioApp, to volume: Float)
     func getVolume(for app: AudioApp) -> Float
@@ -21,6 +22,11 @@ protocol URLHandlerEngine {
 /// Handles URL scheme actions for FineTune (finetune://...)
 @MainActor
 final class URLHandler {
+    private enum VolumeTarget {
+        case app(String)
+        case device(String)
+    }
+    
     private let audioEngine: any URLHandlerEngine
     private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "FineTune", category: "URLHandler")
 
@@ -63,32 +69,70 @@ final class URLHandler {
     
     // MARK: - Volume Actions
 
-    /// Set volumes for one or more apps
-    /// URL format: finetune://set-volumes?app=com.a&volume=100&app=com.b&volume=50
+    /// Set volumes for one or more apps or audio device
+    /// URL format: app=identifier&volume=value OR device=name&volume=value
+    /// You may set multiple app or device at once.
+    ///
+    /// Examples:
+    ///
+    ///    finetune://set-volumes?app=com.a&volume=100
+    ///    finetune://set-volumes?app=com.a&volume=100&app=com.b&volume=50
+    ///
+    ///    finetune://set-volumes?device=MacBook Pro Speakers&volume=75
+    ///    finetune://set-volumes?device=MacBook Pro Speakers&volume=75&device=AirPods ✌️✌️&volume=25
+    ///
+    ///    finetune://set-volumes?device=MacBook Pro Speakers&volume=75&app=com.a&volume=100
+    ///
+    ///
     /// Volume is percentage: 0-100 (gain only, boost is per-app and set separately)
     private func handleSetVolumes(queryItems: [URLQueryItem]) {
-        var pairs: [(identifier: String, volume: Int)] = []
+        var pairs: [(target: VolumeTarget, volume: Int)] = []
         var currentApp: String?
+        var currentDevice: String?
+
+        
 
         // Parse app/volume pairs in order
         for item in queryItems {
             switch item.name.lowercased() {
             case "app":
                 currentApp = item.value
+            case "device":
+                currentDevice = item.value
             case "volume":
-                guard let app = currentApp else {
-                    logger.warning("set-volumes: volume parameter without preceding app")
+                let app: String? = currentApp
+                let device: String? = currentDevice
+
+                guard app != nil || device != nil else {
+                    logger.warning("set-volumes: volume parameter without preceding app or device")
                     continue
                 }
-                guard let volumeStr = item.value,
-                      let volume = Int(volumeStr),
+
+                guard let volumeStr: String = item.value,
+                      let volume: Int = Int(volumeStr),
                       (0...100).contains(volume) else {
-                    logger.warning("set-volumes: invalid volume '\(item.value ?? "nil")' for app \(app) (valid range: 0-100)")
+                    let appOrDevice: String
+                    if let app = app {
+                        appOrDevice = "app \(app)"
+                    } else {
+                        appOrDevice = "device \(device ?? "")"
+                    }
+
+                    logger.warning("set-volumes: invalid volume '\(item.value ?? "nil")' for \(appOrDevice) (valid range: 0-100)")
                     currentApp = nil
+                    currentDevice = nil
                     continue
                 }
-                pairs.append((app, volume))
-                currentApp = nil
+
+                if let app = app {
+                    pairs.append((target: .app(app), volume: volume))
+                    currentApp = nil
+                    currentDevice = nil
+                } else if let device = device {
+                    pairs.append((target: .device(device), volume: volume))
+                    currentApp = nil
+                    currentDevice = nil
+                }
             default:
                 continue
             }
@@ -104,17 +148,27 @@ final class URLHandler {
             return
         }
 
-        for (identifier, volumePercent) in pairs {
-            // Linear conversion: volume=100 → gain 1.0
-            let gain = Float(volumePercent) / 100.0
+        for (target, volumePercent) in pairs {
+            let gain: Float = Float(volumePercent) / 100.0
 
-            if let app = findApp(by: identifier) {
-                audioEngine.setVolume(for: app, to: gain)
-                logger.info("Set volume for \(app.name) to \(volumePercent)%")
-            } else {
-                // App not active - persist for when it launches
-                audioEngine.setVolumeForInactive(identifier: identifier, to: gain)
-                logger.info("Set volume for inactive app \(identifier) to \(volumePercent)%")
+            switch target {
+            case .app(let identifier):
+                if let app = findApp(by: identifier) {
+                    audioEngine.setVolume(for: app, to: gain)
+                    logger.info("Set volume for \(app.name) to \(volumePercent)%")
+                } else {
+                    audioEngine.setVolumeForInactive(identifier: identifier, to: gain)
+                    logger.info("Set volume for inactive app \(identifier) to \(volumePercent)%")
+                }
+
+            case .device(let identifier):
+                if let foundDevice = findDevice(by: identifier) {
+                    // TODO: Implement device volume control when available in the engine.
+                    _ = foundDevice.id.setOutputVolumeScalar(gain)
+                    logger.info("Set volume for device \(foundDevice.id) to \(volumePercent)%")
+                } else {
+                    logger.warning("Device not found: \(identifier)")
+                }
             }
         }
     }
@@ -294,7 +348,19 @@ final class URLHandler {
     private func findApp(by identifier: String) -> AudioApp? {
         audioEngine.apps.first { $0.persistenceIdentifier == identifier }
     }
+    
+    private func findDevice(by name: String) -> AudioDevice? {
+        let audioDevice:AudioDevice? = audioEngine.audioDevices.first { $0.name == name }
+        
+        if audioDevice == nil {
+            logger.info("Searching for device with name: '\(name)'")
 
+            logger.info("all devices names: \(self.audioEngine.audioDevices.map { $0.name })")
+        }
+        
+        return audioDevice
+    }
+    
     /// Parse boolean from string (supports true/false, 1/0, yes/no)
     private func parseBool(_ value: String) -> Bool? {
         switch value.lowercased() {
@@ -304,3 +370,4 @@ final class URLHandler {
         }
     }
 }
+
