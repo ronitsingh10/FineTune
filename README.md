@@ -69,7 +69,7 @@ That's it. Adjust sliders, route audio, and explore EQ from the menu bar.
 - **Hide devices** — Eye toggle in edit mode hides output and input devices you don't want in the list, mirroring the app-hide flow
 - **Bluetooth device management** — Connect paired devices directly from the menu bar
 - **Monitor speaker control** — Adjust volume on external displays via DDC
-- **Media keys & Volume HUD** — Opt-in media-key control with a Tahoe-style or Classic-style on-screen HUD; keys route through FineTune's per-app volume instead of the system master
+- **Media keys & Volume HUD** — Opt-in F10–F12 control for the default output device, with a Tahoe-style or Classic-style on-screen HUD. The write goes through FineTune's volume pipeline, so keys keep working on USB interfaces and HDMI outputs where macOS's own keys are greyed out because the hardware slider is broken.
 - **Dynamic menu bar icon** — Pick from four styles in Settings (Default, Speaker, Waveform, Equalizer). The **Speaker** style tracks volume live (zero / low / mid / high glyphs) and switches to a slashed speaker when muted. All styles briefly flash the new output's SF Symbol on device switch. Changing style applies instantly, no relaunch required.
 - **Menu bar app** — Lightweight, always accessible
 - **URL schemes** — Automate volume, mute, device routing, and more from scripts
