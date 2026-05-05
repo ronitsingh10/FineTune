@@ -18,6 +18,10 @@ Control the volume of every app independently, boost quiet ones up to 4x, route 
 </p>
 
 <p align="center">
+  <strong>English</strong> · <a href="README.zh-CN.md">简体中文</a>
+</p>
+
+<p align="center">
   <img src="assets/screenshot-main.png" alt="FineTune showing per-app volume control with EQ and multi-device output" width="750">
 </p>
 
