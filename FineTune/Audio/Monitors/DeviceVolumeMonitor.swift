@@ -178,13 +178,8 @@ final class DeviceVolumeMonitor: DeviceVolumeProviding {
         }
 
         #if !APP_STORE
-        if let ddcController {
-            if !ddcController.probeCompleted {
-                return .hardware
-            }
-            if ddcController.isDDCBacked(deviceID) {
-                return .ddc
-            }
+        if let ddcController, ddcController.isDDCBacked(deviceID) {
+            return .ddc
         }
         #endif
 
