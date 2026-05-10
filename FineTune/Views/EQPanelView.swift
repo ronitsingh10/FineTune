@@ -103,7 +103,7 @@ struct EQPanelView: View {
             .zIndex(1)  // Ensure dropdown renders above sliders
 
             // 10-band sliders
-            HStack(spacing: 22) {
+            HStack(spacing: 18) {
                 ForEach(0..<10, id: \.self) { index in
                     EQSliderView(
                         frequency: frequencyLabels[index],
@@ -124,12 +124,15 @@ struct EQPanelView: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
-        .eqCardBackground()
+        .background {
+            RoundedRectangle(cornerRadius: 10)
+                .fill(DesignTokens.Colors.recessedBackground)
+        }
         .padding(.horizontal, 2)
-        .padding(.vertical, 4)
+        .padding(.top, DesignTokens.Spacing.xs)
+        .padding(.bottom, DesignTokens.Spacing.xs)
         .animation(DesignTokens.Animation.quick, value: isSaving)
         .animation(DesignTokens.Animation.quick, value: isRenaming)
-        // No outer background - parent ExpandableGlassRow provides the glass container
     }
 
     // MARK: - Save Button
@@ -331,7 +334,6 @@ struct EQPanelView: View {
     }
     .padding(.horizontal, DesignTokens.Spacing.sm)
     .padding(.vertical, DesignTokens.Spacing.xs)
-    .eqCardBackground()
     .frame(width: 550)
     .padding()
     .background(Color.black.opacity(0.4))

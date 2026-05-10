@@ -29,10 +29,14 @@ struct ExpandableGlassRow<Header: View, ExpandedContent: View>: View {
         .padding(.horizontal, DesignTokens.Spacing.sm)
         .padding(.vertical, 6)
         // Flat at rest, hover reveals hoverSurface (System Settings pattern).
-        // Adjacent hover rectangles touch at 0 inter-row spacing.
+        // An open panel keeps the same fill so the active row reads at a glance.
+        // The 1pt vertical inset on the fill keeps adjacent active rows
+        // visually separated when two are simultaneously lit (e.g. an
+        // expanded row with a hovered neighbour).
         .background {
             RoundedRectangle(cornerRadius: DesignTokens.Dimensions.rowRadius)
-                .fill(isHovered ? DesignTokens.Colors.hoverSurface : Color.clear)
+                .fill(isHovered || isExpanded ? DesignTokens.Colors.hoverSurface : Color.clear)
+                .padding(.vertical, 1)
                 .allowsHitTesting(false)
         }
         .onHover { hovering in
@@ -42,6 +46,8 @@ struct ExpandableGlassRow<Header: View, ExpandedContent: View>: View {
         // NOTE: Do NOT add .animation(_, value: isExpanded) here!
         // Animation is handled by the caller via withAnimation in onEQToggle.
         // Adding animation here causes layout loops with conditional content rendering.
+        // The hoverSurface fill flips with isExpanded under that same caller
+        // animation, so it cross-fades smoothly without an explicit modifier.
     }
 }
 

@@ -69,7 +69,7 @@ struct DeviceEditRow<ExpandedContent: View>: View {
                 .frame(width: DesignTokens.Dimensions.iconSize, height: DesignTokens.Dimensions.iconSize)
 
                 Text(device.name)
-                    .font(isDefault ? DesignTokens.Typography.rowNameBold : DesignTokens.Typography.rowName)
+                    .font(DesignTokens.Typography.rowName)
                     .lineLimit(1)
                     .help(device.uid)
 

@@ -137,7 +137,7 @@ struct DeviceRow: View {
             HStack(spacing: DesignTokens.Spacing.xs) {
                 VStack(alignment: .leading, spacing: 1) {
                     Text(device.name)
-                        .font(isDefault ? DesignTokens.Typography.rowNameBold : DesignTokens.Typography.rowName)
+                        .font(DesignTokens.Typography.rowName)
                         .lineLimit(1)
                         .help(device.name)
 

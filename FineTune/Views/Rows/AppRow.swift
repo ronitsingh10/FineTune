@@ -124,12 +124,29 @@ struct AppRow: View {
                     }
                 }
 
-                // App name - expands to fill available space
-                Text(app.name)
-                    .font(DesignTokens.Typography.rowName)
-                    .lineLimit(1)
-                    .help(app.name)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                // App name + optional routing subtitle (hidden when the app is on
+                // system default; the same VStack-with-subtitle pattern as device
+                // rows' AutoEQ subtitle).
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(app.name)
+                        .font(DesignTokens.Typography.rowName)
+                        .lineLimit(1)
+                        .help(app.name)
+
+                    if let subtitle = DevicePicker.routingSubtitle(
+                        devices: devices,
+                        selectedDeviceUID: selectedDeviceUID,
+                        selectedDeviceUIDs: selectedDeviceUIDs,
+                        isFollowingDefault: isFollowingDefault,
+                        mode: deviceSelectionMode
+                    ) {
+                        Text(subtitle)
+                            .font(.system(size: 9))
+                            .foregroundStyle(DesignTokens.Colors.textTertiary)
+                            .lineLimit(1)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
 
                 // Shared controls section
                 AppRowControls(

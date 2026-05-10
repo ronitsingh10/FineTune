@@ -17,7 +17,7 @@ struct DeviceBadge: View {
     let isSelected: Bool
 
     private static let badgeSize: CGFloat = 28
-    private static let glyphSize: CGFloat = 16
+    private static let glyphSize: CGFloat = 20
 
     var body: some View {
         ZStack {

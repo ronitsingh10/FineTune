@@ -70,7 +70,7 @@ struct InputDeviceRow: View {
 
             // Device name
             Text(device.name)
-                .font(isDefault ? DesignTokens.Typography.rowNameBold : DesignTokens.Typography.rowName)
+                .font(DesignTokens.Typography.rowName)
                 .lineLimit(1)
                 .frame(maxWidth: .infinity, alignment: .leading)
 

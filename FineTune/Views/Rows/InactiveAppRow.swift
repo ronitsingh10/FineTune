@@ -110,13 +110,29 @@ struct InactiveAppRow: View {
                     .aspectRatio(contentMode: .fit)
                     .frame(width: DesignTokens.Dimensions.rowContentHeight - 4, height: DesignTokens.Dimensions.rowContentHeight - 4)
 
-                // App name - expands to fill available space
-                Text(appInfo.displayName)
-                    .font(DesignTokens.Typography.rowName)
-                    .lineLimit(1)
-                    .help(appInfo.displayName)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .foregroundStyle(DesignTokens.Colors.textPrimary)
+                // App name + optional routing subtitle (hidden when the app is on
+                // system default).
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(appInfo.displayName)
+                        .font(DesignTokens.Typography.rowName)
+                        .lineLimit(1)
+                        .help(appInfo.displayName)
+                        .foregroundStyle(DesignTokens.Colors.textPrimary)
+
+                    if let subtitle = DevicePicker.routingSubtitle(
+                        devices: devices,
+                        selectedDeviceUID: selectedDeviceUID ?? defaultDeviceUID ?? "",
+                        selectedDeviceUIDs: selectedDeviceUIDs,
+                        isFollowingDefault: isFollowingDefault,
+                        mode: deviceSelectionMode
+                    ) {
+                        Text(subtitle)
+                            .font(.system(size: 9))
+                            .foregroundStyle(DesignTokens.Colors.textTertiary)
+                            .lineLimit(1)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
 
                 // Shared controls section (VU meter always 0 for inactive apps)
                 AppRowControls(

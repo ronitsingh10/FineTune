@@ -3,6 +3,14 @@ import SwiftUI
 
 /// A styled device picker dropdown with "System" option and single/multi mode support
 struct DevicePicker: View {
+    /// Visual style for the trigger button.
+    /// - `.full`: bordered material pill with icon + text + chevron (used in Settings).
+    /// - `.iconOnly`: square borderless icon button with hover highlight (used in app rows).
+    enum TriggerStyle {
+        case full
+        case iconOnly
+    }
+
     let devices: [AudioDevice]
     let selectedDeviceUID: String  // For single mode
     let selectedDeviceUIDs: Set<String>  // For multi mode
@@ -26,6 +34,7 @@ struct DevicePicker: View {
 
     // Configuration
     let triggerWidth: CGFloat
+    var triggerStyle: TriggerStyle = .full
     private let popoverWidth: CGFloat = 210
     private let itemHeight: CGFloat = 26
     private let itemSpacing: CGFloat = 2
@@ -150,7 +159,18 @@ struct DevicePicker: View {
 
     // MARK: - Trigger Button
 
+    @ViewBuilder
     private var triggerButton: some View {
+        switch triggerStyle {
+        case .full:
+            fullTriggerButton
+        case .iconOnly:
+            iconOnlyTriggerButton
+        }
+    }
+
+    /// Bordered material pill with icon + text + chevron. Used in Settings rows.
+    private var fullTriggerButton: some View {
         Button {
             withAnimation(.snappy(duration: 0.2)) {
                 isExpanded.toggle()
@@ -190,6 +210,39 @@ struct DevicePicker: View {
         }
         .onHover { isButtonHovered = $0 }
         .animation(DesignTokens.Animation.hover, value: isButtonHovered)
+    }
+
+    /// Square borderless icon button with hover tint. Used in app rows where the
+    /// routed device name lives in the row's subtitle slot, so the trigger needs
+    /// to carry only the icon — minimum chrome, matching the EQ button rhythm.
+    private var iconOnlyTriggerButton: some View {
+        Button {
+            withAnimation(.snappy(duration: 0.2)) {
+                isExpanded.toggle()
+            }
+        } label: {
+            triggerIcon
+                .frame(width: 22, height: 22)
+                .background(
+                    RoundedRectangle(cornerRadius: DesignTokens.Dimensions.buttonRadius)
+                        .fill(iconOnlyBackgroundFill)
+                )
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(triggerText)
+        .onHover { isButtonHovered = $0 }
+        .animation(DesignTokens.Animation.hover, value: isButtonHovered)
+    }
+
+    private var iconOnlyBackgroundFill: Color {
+        if isExpanded {
+            return Color.primary.opacity(0.12)
+        } else if isButtonHovered {
+            return Color.primary.opacity(0.08)
+        } else {
+            return Color.clear
+        }
     }
 
     // MARK: - Dropdown Content
@@ -421,6 +474,35 @@ private struct DevicePickerRow: View {
         case .device(let device):
             Text(device.name)
                 .lineLimit(1)
+        }
+    }
+}
+
+// MARK: - Routing Subtitle Helper
+
+extension DevicePicker {
+    /// Returns the short device-name subtitle for an app row, or `nil` when the
+    /// app is on system default (in which case the row hides the subtitle).
+    /// Mirrors the picker's own `triggerText` logic so the subtitle and the
+    /// icon button stay in lockstep.
+    static func routingSubtitle(
+        devices: [AudioDevice],
+        selectedDeviceUID: String,
+        selectedDeviceUIDs: Set<String>,
+        isFollowingDefault: Bool,
+        mode: DeviceSelectionMode
+    ) -> String? {
+        switch mode {
+        case .single:
+            if isFollowingDefault { return nil }
+            return devices.first(where: { $0.uid == selectedDeviceUID })?.name
+        case .multi:
+            let count = selectedDeviceUIDs.count
+            if count == 0 {
+                if isFollowingDefault { return nil }
+                return devices.first(where: { $0.uid == selectedDeviceUID })?.name
+            }
+            return "\(count) device\(count == 1 ? "" : "s")"
         }
     }
 }

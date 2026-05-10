@@ -383,7 +383,7 @@ enum DesignTokens {
         // MARK: Base Configuration
 
         /// Main popup width
-        static let popupWidth: CGFloat = 580
+        static let popupWidth: CGFloat = 510
 
         /// Content padding
         static var contentPadding: CGFloat { Spacing.lg }
