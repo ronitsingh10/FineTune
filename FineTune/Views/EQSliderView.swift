@@ -49,6 +49,7 @@ struct EQSliderView: View {
                                 isDragging = false
                             }
                     )
+                    .scrollWheelStep($gain, in: range)
                     .overlay {
                         // All visuals - no hit testing
                         ZStack {

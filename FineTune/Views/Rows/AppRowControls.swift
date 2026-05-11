@@ -30,6 +30,20 @@ struct AppRowControls: View {
         dragOverrideValue ?? VolumeMapping.gainToSlider(volume)
     }
 
+    private var sliderBinding: Binding<Double> {
+        Binding(
+            get: { sliderValue },
+            set: { newValue in
+                dragOverrideValue = newValue
+                let gain = VolumeMapping.sliderToGain(newValue)
+                onVolumeChange(gain)
+                if isMuted {
+                    onMuteChange(false)
+                }
+            }
+        )
+    }
+
     /// The displayed percentage value, matching EditablePercentage's formula.
     private var displayedPercentage: Int { Int(round(sliderValue * 100)) }
 
@@ -65,17 +79,7 @@ struct AppRowControls: View {
 
             // Volume slider
             LiquidGlassSlider(
-                value: Binding(
-                    get: { sliderValue },
-                    set: { newValue in
-                        dragOverrideValue = newValue
-                        let gain = VolumeMapping.sliderToGain(newValue)
-                        onVolumeChange(gain)
-                        if isMuted {
-                            onMuteChange(false)
-                        }
-                    }
-                ),
+                value: sliderBinding,
                 showUnityMarker: false,
                 onEditingChanged: { editing in
                     if !editing {
@@ -85,6 +89,7 @@ struct AppRowControls: View {
             )
             .frame(width: DesignTokens.Dimensions.sliderWidth)
             .opacity(showMutedIcon ? 0.5 : 1.0)
+            .scrollWheelStep(sliderBinding, in: 0.0...1.0)
 
             // Editable volume percentage (shows slider position, not raw gain)
             EditablePercentage(

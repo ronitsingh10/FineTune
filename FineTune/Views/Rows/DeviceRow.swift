@@ -215,6 +215,7 @@ struct DeviceRow: View {
                     onMuteToggle()
                 }
             }
+            .scrollWheelStep($sliderValue, in: 0.0...1.0)
 
             // Editable volume percentage
             EditablePercentage(

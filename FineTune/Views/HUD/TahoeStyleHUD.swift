@@ -98,6 +98,7 @@ struct TahoeStyleHUD: View {
                     showUnityMarker: false
                 )
                 .opacity(displayMute ? 0.5 : 1.0)
+                .scrollWheelStep(sliderBinding, in: 0.0...1.0)
 
                 Text(percentageText)
                     .font(.system(size: 11, weight: .semibold).monospacedDigit())
