@@ -11,6 +11,7 @@ struct InputDeviceRow: View {
     let onSetDefault: () -> Void
     let onVolumeChange: (Float) -> Void
     let onMuteToggle: () -> Void
+    let isFocused: Bool
 
     @State private var sliderValue: Double
     @State private var isEditing = false
@@ -37,7 +38,8 @@ struct InputDeviceRow: View {
         isMuted: Bool,
         onSetDefault: @escaping () -> Void,
         onVolumeChange: @escaping (Float) -> Void,
-        onMuteToggle: @escaping () -> Void
+        onMuteToggle: @escaping () -> Void,
+        isFocused: Bool = false
     ) {
         self.device = device
         self.isDefault = isDefault
@@ -46,6 +48,7 @@ struct InputDeviceRow: View {
         self.onSetDefault = onSetDefault
         self.onVolumeChange = onVolumeChange
         self.onMuteToggle = onMuteToggle
+        self.isFocused = isFocused
         self._sliderValue = State(initialValue: Double(volume))
     }
 
@@ -57,7 +60,7 @@ struct InputDeviceRow: View {
                     onSetDefault()
                 }
             }
-            .hoverableRow()
+            .hoverableRow(isFocused: isFocused)
             .onChange(of: volume) { _, newValue in
                 // Skip external sync mid-drag.
                 guard !isEditing else { return }

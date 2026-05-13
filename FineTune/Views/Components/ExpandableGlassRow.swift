@@ -5,6 +5,7 @@ import SwiftUI
 /// The glass container grows/shrinks smoothly during expansion using SwiftUI's natural height calculation
 struct ExpandableGlassRow<Header: View, ExpandedContent: View>: View {
     let isExpanded: Bool
+    var isFocused: Bool = false
     @ViewBuilder let header: Header
     @ViewBuilder let expandedContent: ExpandedContent
 
@@ -35,7 +36,7 @@ struct ExpandableGlassRow<Header: View, ExpandedContent: View>: View {
         // expanded row with a hovered neighbour).
         .background {
             RoundedRectangle(cornerRadius: DesignTokens.Dimensions.rowRadius)
-                .fill(isHovered || isExpanded ? DesignTokens.Colors.hoverSurface : Color.clear)
+                .fill(isHovered || isExpanded || isFocused ? DesignTokens.Colors.hoverSurface : Color.clear)
                 .padding(.vertical, 1)
                 .allowsHitTesting(false)
         }
@@ -43,6 +44,7 @@ struct ExpandableGlassRow<Header: View, ExpandedContent: View>: View {
             isHovered = hovering
         }
         .animation(DesignTokens.Animation.hover, value: isHovered)
+        .animation(DesignTokens.Animation.hover, value: isFocused)
         // NOTE: Do NOT add .animation(_, value: isExpanded) here!
         // Animation is handled by the caller via withAnimation in onEQToggle.
         // Adding animation here causes layout loops with conditional content rendering.

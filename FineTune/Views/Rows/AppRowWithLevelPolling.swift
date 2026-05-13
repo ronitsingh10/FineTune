@@ -32,6 +32,7 @@ struct AppRowWithLevelPolling: View {
     let onRenameUserPreset: (UUID, String) -> Void
     let isEQExpanded: Bool
     let onEQToggle: () -> Void
+    let isFocused: Bool
 
     @State private var displayLevel: Float = 0
     @State private var levelTimer: Timer?
@@ -65,7 +66,8 @@ struct AppRowWithLevelPolling: View {
         onDeleteUserPreset: @escaping (UUID) -> Void = { _ in },
         onRenameUserPreset: @escaping (UUID, String) -> Void = { _, _ in },
         isEQExpanded: Bool = false,
-        onEQToggle: @escaping () -> Void = {}
+        onEQToggle: @escaping () -> Void = {},
+        isFocused: Bool = false
     ) {
         self.app = app
         self.volume = volume
@@ -96,6 +98,7 @@ struct AppRowWithLevelPolling: View {
         self.onRenameUserPreset = onRenameUserPreset
         self.isEQExpanded = isEQExpanded
         self.onEQToggle = onEQToggle
+        self.isFocused = isFocused
     }
 
     var body: some View {
@@ -127,7 +130,8 @@ struct AppRowWithLevelPolling: View {
             onDeleteUserPreset: onDeleteUserPreset,
             onRenameUserPreset: onRenameUserPreset,
             isEQExpanded: isEQExpanded,
-            onEQToggle: onEQToggle
+            onEQToggle: onEQToggle,
+            isFocused: isFocused
         )
         .onAppear {
             if isPopupVisible {

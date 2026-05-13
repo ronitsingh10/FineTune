@@ -4,24 +4,24 @@ import SwiftUI
 // MARK: - Hoverable Row Modifier (flat-rest, hover-active per System Settings pattern)
 
 struct HoverableRowModifier: ViewModifier {
+    let isFocused: Bool
     @State private var isHovered = false
 
     func body(content: Content) -> some View {
         content
             .padding(.horizontal, DesignTokens.Spacing.sm)
             .padding(.vertical, 6)
-            // Flat at rest: no fill, no border. Hover reveals hoverSurface
-            // as the meaningful "this row is active" affordance. Adjacent
-            // hover rectangles touch at 0 inter-row spacing.
+            // Flat at rest; hover or keyboard focus reveals hoverSurface only.
             .background(
                 RoundedRectangle(cornerRadius: DesignTokens.Dimensions.buttonRadius)
-                    .fill(isHovered ? DesignTokens.Colors.hoverSurface : Color.clear)
+                    .fill(isHovered || isFocused ? DesignTokens.Colors.hoverSurface : Color.clear)
                     .allowsHitTesting(false)
             )
             .onHover { hovering in
                 isHovered = hovering
             }
             .animation(DesignTokens.Animation.hover, value: isHovered)
+            .animation(DesignTokens.Animation.hover, value: isFocused)
     }
 }
 
@@ -143,8 +143,8 @@ struct VibrancyIconModifier: ViewModifier {
 
 extension View {
     /// Applies hoverable row styling (forwards to floatingGlassRow)
-    func hoverableRow() -> some View {
-        modifier(HoverableRowModifier())
+    func hoverableRow(isFocused: Bool = false) -> some View {
+        modifier(HoverableRowModifier(isFocused: isFocused))
     }
 
     /// Applies section header text styling (uppercase, spaced, tertiary color)

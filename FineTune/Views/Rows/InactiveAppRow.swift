@@ -35,6 +35,7 @@ struct InactiveAppRow: View {
     let onRenameUserPreset: (UUID, String) -> Void
     let isEQExpanded: Bool
     let onEQToggle: () -> Void
+    let isFocused: Bool
 
     @State private var localEQSettings: EQSettings
 
@@ -65,7 +66,8 @@ struct InactiveAppRow: View {
         onDeleteUserPreset: @escaping (UUID) -> Void = { _ in },
         onRenameUserPreset: @escaping (UUID, String) -> Void = { _, _ in },
         isEQExpanded: Bool = false,
-        onEQToggle: @escaping () -> Void = {}
+        onEQToggle: @escaping () -> Void = {},
+        isFocused: Bool = false
     ) {
         self.appInfo = appInfo
         self.icon = icon
@@ -94,11 +96,12 @@ struct InactiveAppRow: View {
         self.onRenameUserPreset = onRenameUserPreset
         self.isEQExpanded = isEQExpanded
         self.onEQToggle = onEQToggle
+        self.isFocused = isFocused
         self._localEQSettings = State(initialValue: eqSettings)
     }
 
     var body: some View {
-        ExpandableGlassRow(isExpanded: isEQExpanded) {
+        ExpandableGlassRow(isExpanded: isEQExpanded, isFocused: isFocused) {
             // Header: Main row content (always visible)
             HStack(spacing: DesignTokens.Spacing.sm) {
                 // VU Meter (always 0 for inactive apps)

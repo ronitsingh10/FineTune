@@ -79,6 +79,21 @@ struct MenuBarPopupView: View {
     /// Namespace for device toggle animation
     @Namespace private var deviceToggleNamespace
 
+    @State private var navModel = PopupKeyboardNavModel()
+    /// Logical keyboard-nav selection. Plain @State (not @FocusState) so reads
+    /// and writes are synchronous within a single event handler — using
+    /// @FocusState here raced with SwiftUI's auto-focus-on-key-window claim
+    /// (WWDC23 "SwiftUI cookbook for focus" calls this anti-pattern). A single
+    /// focusable anchor on the popup body root receives key events; rows
+    /// render their selection state purely from this @State value.
+    @State private var selectedRow: PopupKeyboardNavModel.RowID? = nil
+    /// True once the user presses any nav-vocabulary key. Gates the row-highlight
+    /// visual so a fresh popup opens clean even though `selectedRow` may be set.
+    @State private var hasKeyboardEngaged: Bool = false
+    /// `.onKeyPress` only fires when the modifier-owning view (or a focused
+    /// descendant) has focus, so the body root holds a focus anchor.
+    @FocusState private var anchorFocused: Bool
+
     @Environment(\.openSettings) private var openSettings
 
     // MARK: - Resolved Dimensions
@@ -135,15 +150,31 @@ struct MenuBarPopupView: View {
                 mergeDeviceChanges(from: audioEngine.outputDevices)
             }
             updateSortedDevices()
+            syncNavOrder()
         }
         .onChange(of: audioEngine.inputDevices) { _, _ in
             if isEditingDevicePriority && wasEditingInputDevices {
                 mergeDeviceChanges(from: audioEngine.inputDevices)
             }
             updateSortedInputDevices()
+            syncNavOrder()
         }
         .onChange(of: showingInputDevices) { _, _ in
             exitEditModeSaving()
+            syncNavOrder()
+            if hasKeyboardEngaged {
+                selectedRow = navModel.defaultFocus(defaultOutputUID: currentDefaultDeviceUID())
+            }
+        }
+        .onChange(of: audioEngine.apps) { _, _ in
+            syncNavOrder()
+        }
+        .onChange(of: isEditingDevicePriority) { _, editing in
+            if editing {
+                selectedRow = nil
+                hasKeyboardEngaged = false
+            }
+            syncNavOrder()
         }
         .onChange(of: audioEngine.bluetoothDeviceMonitor.pairedDevices) { _, newValue in
             pairedDevices = newValue
@@ -165,6 +196,10 @@ struct MenuBarPopupView: View {
             isPopupVisible = true
             popupVisibility.isVisible = true
             audioEngine.bluetoothDeviceMonitor.refresh()
+            syncNavOrder()
+            hasKeyboardEngaged = false
+            selectedRow = nil
+            anchorFocused = true
         }
         .onReceive(NotificationCenter.default.publisher(for: NSWindow.didResignKeyNotification)) { notification in
             guard let window = notification.object as? NSWindow,
@@ -172,6 +207,8 @@ struct MenuBarPopupView: View {
             else { return }
             isPopupVisible = false
             popupVisibility.isVisible = false
+            hasKeyboardEngaged = false
+            selectedRow = nil
         }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didResignActiveNotification)) { _ in
             // SwiftUI Menu tracking (e.g. sample-rate picker in the device
@@ -179,6 +216,18 @@ struct MenuBarPopupView: View {
             // the app. Only treat app-level deactivation as a real dismiss so
             // in-popup pickers don't collapse edit mode.
             exitEditModeSaving()
+        }
+        // Single focus anchor on the body root. `.onKeyPress` only fires when
+        // the modifier-owning view (or a focused descendant) has focus, so the
+        // anchor must claim it on popup open. `.focusEffectDisabled` suppresses
+        // the OS-drawn focus ring around the entire popup.
+        .focusable()
+        .focusEffectDisabled()
+        .focused($anchorFocused)
+        // [.down, .repeat] is required so holding a key keeps moving the
+        // selection or adjusting volume — `.down` alone fires once per press.
+        .onKeyPress(phases: [.down, .repeat]) { keyPress in
+            handleKeyPress(keyPress)
         }
         .background {
             Button("") { handleEscape() }
@@ -423,11 +472,19 @@ struct MenuBarPopupView: View {
         let threshold = deviceScrollThreshold
 
         if !isEditingDevicePriority && devices.count > threshold {
-            ScrollView {
-                devicesContent
+            ScrollViewReader { proxy in
+                ScrollView {
+                    devicesContent
+                }
+                .scrollIndicators(.never)
+                .frame(height: deviceScrollHeight)
+                .onChange(of: selectedRow) { _, newFocus in
+                    guard case .device = newFocus else { return }
+                    withAnimation(DesignTokens.Animation.hover) {
+                        proxy.scrollTo(newFocus, anchor: .center)
+                    }
+                }
             }
-            .scrollIndicators(.never)
-            .frame(height: deviceScrollHeight)
         } else {
             devicesContent
         }
@@ -490,8 +547,10 @@ struct MenuBarPopupView: View {
                         onMuteToggle: {
                             let currentMute = deviceVolumeMonitor.inputMuteStates[device.id] ?? false
                             deviceVolumeMonitor.setInputMute(for: device.id, to: !currentMute)
-                        }
+                        },
+                        isFocused: hasKeyboardEngaged && selectedRow == .device(uid: device.uid)
                     )
+                    .id(PopupKeyboardNavModel.RowID.device(uid: device.uid))
                 }
             } else {
                 ForEach(sortedDevices) { device in
@@ -543,8 +602,10 @@ struct MenuBarPopupView: View {
                         autoEQPreampEnabled: audioEngine.autoEQPreampEnabled,
                         onAutoEQPreampToggle: {
                             audioEngine.setAutoEQPreampEnabled(!audioEngine.autoEQPreampEnabled)
-                        }
+                        },
+                        isFocused: hasKeyboardEngaged && selectedRow == .device(uid: device.uid)
                     )
+                    .id(PopupKeyboardNavModel.RowID.device(uid: device.uid))
                 }
 
             }
@@ -685,6 +746,12 @@ struct MenuBarPopupView: View {
                     }
                     .scrollIndicators(.never)
                     .frame(height: appScrollHeight)
+                    .onChange(of: selectedRow) { _, newFocus in
+                        guard case .app = newFocus else { return }
+                        withAnimation(DesignTokens.Animation.hover) {
+                            scrollProxy.scrollTo(newFocus, anchor: .center)
+                        }
+                    }
                 } else {
                     appsContent(scrollProxy: scrollProxy)
                 }
@@ -850,9 +917,10 @@ struct MenuBarPopupView: View {
                 isEQExpanded: expandedRowID == displayableApp.id,
                 onEQToggle: {
                     toggleEQ(for: displayableApp.id, scrollProxy: scrollProxy)
-                }
+                },
+                isFocused: hasKeyboardEngaged && selectedRow == .app(persistenceID: displayableApp.id)
             )
-            .id(displayableApp.id)
+            .id(PopupKeyboardNavModel.RowID.app(persistenceID: displayableApp.id))
         }
     }
 
@@ -916,9 +984,10 @@ struct MenuBarPopupView: View {
             isEQExpanded: expandedRowID == displayableApp.id,
             onEQToggle: {
                 toggleEQ(for: displayableApp.id, scrollProxy: scrollProxy)
-            }
+            },
+            isFocused: hasKeyboardEngaged && selectedRow == .app(persistenceID: displayableApp.id)
         )
-        .id(displayableApp.id)
+        .id(PopupKeyboardNavModel.RowID.app(persistenceID: displayableApp.id))
     }
 
     /// Toggle EQ panel for an app (shared between active and inactive rows)
@@ -934,7 +1003,7 @@ struct MenuBarPopupView: View {
                 expandedRowID = appID
             }
             if isExpanding {
-                scrollProxy.scrollTo(appID, anchor: .top)
+                scrollProxy.scrollTo(PopupKeyboardNavModel.RowID.app(persistenceID: appID), anchor: .top)
             }
         }
 
@@ -1112,6 +1181,209 @@ struct MenuBarPopupView: View {
                     }
                 }
             }
+        }
+    }
+
+    // MARK: - Keyboard Navigation
+
+    private func syncNavOrder() {
+        let activeDevices = showingInputDevices ? sortedInputDevices : sortedDevices
+        navModel.syncOrder(
+            activeDevices: activeDevices,
+            appPersistenceIDs: audioEngine.displayableApps.map(\.id),
+            isEditingPriority: isEditingDevicePriority
+        )
+    }
+
+    private func currentDefaultDeviceUID() -> String? {
+        showingInputDevices
+            ? deviceVolumeMonitor.defaultInputDeviceUID
+            : deviceVolumeMonitor.defaultDeviceUID
+    }
+
+    private func handleKeyPress(_ keyPress: KeyPress) -> KeyPress.Result {
+        let mods = keyPress.modifiers
+        let isM = keyPress.key == KeyEquivalent("m")
+        let isRecognized: Bool = {
+            switch keyPress.key {
+            case .upArrow, .downArrow, .leftArrow, .rightArrow, .return, .space, .tab:
+                return true
+            default:
+                return isM
+            }
+        }()
+        // Wake gate: compute target locally so first-press actions never read a
+        // stale selection. ↑/↓ wake without moving; action keys wake and act on
+        // the default in the same press.
+        let target: PopupKeyboardNavModel.RowID?
+        let wokeUp: Bool
+        if !hasKeyboardEngaged && isRecognized {
+            hasKeyboardEngaged = true
+            target = navModel.defaultFocus(defaultOutputUID: currentDefaultDeviceUID())
+            selectedRow = target
+            wokeUp = true
+        } else {
+            target = selectedRow
+            wokeUp = false
+        }
+        switch keyPress.key {
+        case .upArrow:
+            if wokeUp { return target == nil ? .ignored : .handled }
+            if let next = navModel.previous(before: target) {
+                selectedRow = next
+                return .handled
+            }
+            return .ignored
+        case .downArrow:
+            if wokeUp { return target == nil ? .ignored : .handled }
+            if let next = navModel.next(after: target) {
+                selectedRow = next
+                return .handled
+            }
+            return .ignored
+        case .leftArrow:
+            return adjustVolume(at: target, direction: -1, shift: mods.contains(.shift))
+        case .rightArrow:
+            return adjustVolume(at: target, direction: +1, shift: mods.contains(.shift))
+        case .return, .space:
+            return activate(target)
+        case .tab:
+            guard case .device = target else { return .ignored }
+            toggleDeviceTab()
+            return .handled
+        default:
+            return isM ? toggleMute(for: target) : .ignored
+        }
+    }
+
+    private func adjustVolume(at target: PopupKeyboardNavModel.RowID?, direction: Int, shift: Bool) -> KeyPress.Result {
+        guard let target else { return .ignored }
+        let baseStep = audioEngine.settingsManager.appSettings.volumeHotkeyStep.sliderDelta
+        let step = shift ? baseStep * 2.0 : baseStep
+        let delta = step * Double(direction)
+        switch target {
+        case .app(let persistenceID):
+            if let app = audioEngine.apps.first(where: { $0.persistenceIdentifier == persistenceID }) {
+                applyAppVolumeStep(
+                    currentGain: audioEngine.currentVolume(for: app),
+                    currentMute: audioEngine.isMuted(for: app),
+                    direction: direction,
+                    delta: delta,
+                    setGain: { audioEngine.setVolume(for: app, to: $0) },
+                    setMute: { audioEngine.setMute(for: app, to: $0) }
+                )
+                return .handled
+            }
+            applyAppVolumeStep(
+                currentGain: audioEngine.getVolumeForInactive(identifier: persistenceID),
+                currentMute: audioEngine.getMuteForInactive(identifier: persistenceID),
+                direction: direction,
+                delta: delta,
+                setGain: { audioEngine.setVolumeForInactive(identifier: persistenceID, to: $0) },
+                setMute: { audioEngine.setMuteForInactive(identifier: persistenceID, to: $0) }
+            )
+            return .handled
+        case .device(let uid):
+            if showingInputDevices {
+                guard let device = sortedInputDevices.first(where: { $0.uid == uid }) else {
+                    return .ignored
+                }
+                let current = Double(deviceVolumeMonitor.inputVolumes[device.id] ?? 1.0)
+                let next = Float(max(0.0, min(1.0, current + delta)))
+                deviceVolumeMonitor.setInputVolume(for: device.id, to: next)
+            } else {
+                guard let device = sortedDevices.first(where: { $0.uid == uid }) else {
+                    return .ignored
+                }
+                let current = Double(deviceVolumeMonitor.volumes[device.id] ?? 1.0)
+                let next = Float(max(0.0, min(1.0, current + delta)))
+                deviceVolumeMonitor.setVolume(for: device.id, to: next)
+            }
+            return .handled
+        }
+    }
+
+    /// Mirrors `ShortcutsRegistry.adjustTargetVolume`'s mute-edge semantics for
+    /// both active and pinned-inactive app rows.
+    private func applyAppVolumeStep(
+        currentGain: Float,
+        currentMute: Bool,
+        direction: Int,
+        delta: Double,
+        setGain: (Float) -> Void,
+        setMute: (Bool) -> Void
+    ) {
+        let currentSlider = VolumeMapping.gainToSlider(currentGain)
+        let nextSlider = max(0.0, min(1.0, currentSlider + delta))
+        let nextGain = VolumeMapping.sliderToGain(nextSlider)
+        let willBeSilent = nextSlider <= 0.001
+        if direction > 0 {
+            if currentMute { setMute(false) }
+        } else if currentMute && !willBeSilent {
+            setMute(false)
+        } else if !currentMute && willBeSilent {
+            setMute(true)
+        }
+        setGain(nextGain)
+    }
+
+    private func toggleMute(for target: PopupKeyboardNavModel.RowID?) -> KeyPress.Result {
+        guard let target else { return .ignored }
+        switch target {
+        case .app(let persistenceID):
+            if let app = audioEngine.apps.first(where: { $0.persistenceIdentifier == persistenceID }) {
+                audioEngine.toggleMute(for: app)
+                return .handled
+            }
+            let current = audioEngine.getMuteForInactive(identifier: persistenceID)
+            audioEngine.setMuteForInactive(identifier: persistenceID, to: !current)
+            return .handled
+        case .device(let uid):
+            if showingInputDevices {
+                guard let device = sortedInputDevices.first(where: { $0.uid == uid }) else {
+                    return .ignored
+                }
+                let current = deviceVolumeMonitor.inputMuteStates[device.id] ?? false
+                deviceVolumeMonitor.setInputMute(for: device.id, to: !current)
+            } else {
+                guard let device = sortedDevices.first(where: { $0.uid == uid }) else {
+                    return .ignored
+                }
+                let current = deviceVolumeMonitor.muteStates[device.id] ?? false
+                deviceVolumeMonitor.setMute(for: device.id, to: !current)
+            }
+            return .handled
+        }
+    }
+
+    private func activate(_ target: PopupKeyboardNavModel.RowID?) -> KeyPress.Result {
+        guard let target else { return .ignored }
+        switch target {
+        case .device(let uid):
+            if showingInputDevices {
+                guard let device = sortedInputDevices.first(where: { $0.uid == uid }) else {
+                    return .ignored
+                }
+                audioEngine.setLockedInputDevice(device)
+            } else {
+                guard let device = sortedDevices.first(where: { $0.uid == uid }) else {
+                    return .ignored
+                }
+                audioEngine.setDefaultOutputDevice(device.id)
+            }
+            NSApp.keyWindow?.resignKey()
+            return .handled
+        case .app(let persistenceID):
+            withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+                expandedRowID = (expandedRowID == persistenceID) ? nil : persistenceID
+            }
+            return .handled
+        }
+    }
+
+    private func toggleDeviceTab() {
+        withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) {
+            showingInputDevices.toggle()
         }
     }
 

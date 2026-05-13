@@ -41,6 +41,7 @@ struct DeviceRow: View {
     let autoEQImportError: String?
     let autoEQPreampEnabled: Bool
     let onAutoEQPreampToggle: (() -> Void)?
+    let isFocused: Bool
 
     @State private var sliderValue: Double
     @State private var isEditing = false
@@ -82,7 +83,8 @@ struct DeviceRow: View {
         onAutoEQToggleFavorite: ((String) -> Void)? = nil,
         autoEQImportError: String? = nil,
         autoEQPreampEnabled: Bool = true,
-        onAutoEQPreampToggle: (() -> Void)? = nil
+        onAutoEQPreampToggle: (() -> Void)? = nil,
+        isFocused: Bool = false
     ) {
         self.device = device
         self.isDefault = isDefault
@@ -104,6 +106,7 @@ struct DeviceRow: View {
         self.autoEQImportError = autoEQImportError
         self.autoEQPreampEnabled = autoEQPreampEnabled
         self.onAutoEQPreampToggle = onAutoEQPreampToggle
+        self.isFocused = isFocused
         self._sliderValue = State(initialValue: Self.volumeToSlider(volume, backend: volumeBackend))
     }
 
@@ -120,7 +123,7 @@ struct DeviceRow: View {
                     onSetDefault()
                 }
             }
-            .hoverableRow()
+            .hoverableRow(isFocused: isFocused)
     }
 
     // MARK: - Device Header
