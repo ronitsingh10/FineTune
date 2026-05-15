@@ -20,11 +20,14 @@
   <a href="README.md">English</a> · <strong>简体中文</strong>
 </p>
 
-> 本翻译由社区维护，可能落后于英文版本。最新信息请参考 [English README](README.md)。
+> 本翻译由社区维护，更新可能晚于英文版。最新内容请以 [English README](README.md) 为准。
 > *This translation is community-maintained and may lag the English version. See the [English README](README.md) for the most current information.*
 
 <p align="center">
-  <img src="assets/screenshot-main.png" alt="FineTune 显示按 App 控制音量、EQ 与多设备输出" width="750">
+  <img src="assets/screenshot-main.png" alt="FineTune 弹窗：按 App 控制音量、多设备输出路由（含设备选择浮窗）、AutoEQ 耳机校正以及设备级音量滑块" width="700">
+</p>
+<p align="center">
+  <img src="assets/screenshot-eq.png" alt="FineTune：Brave 浏览器一行展开，EQ 面板打开，已选中「Vocal Clarity」预设" width="700">
 </p>
 
 ## 安装
@@ -54,6 +57,14 @@ brew install --cask finetune
 - **按 App 增益** —— 提供 2x / 3x / 4x 三档增益预设
 - **置顶 App** —— 即使应用没有在播放声音，也让它一直显示在菜单栏中，方便提前配置音量、EQ 和路由
 - **忽略 App** —— 让 FineTune 完全脱离指定的应用，撤掉对应的音频接入点，让该应用回到 macOS 默认的音频通路
+- **滚轮调节音量** —— 把鼠标悬停到弹窗、HUD 或 EQ 面板的任一滑块上，滚动滚轮即可调节
+
+### ⌨️ 键盘
+- **全局音量快捷键** —— 在 设置 → 快捷键 中，给 **App Volume Up**、**App Volume Down** 与 **App Mute** 自定义按键。这里的「App」指的是当前在发声的应用，所以当 YouTube 标签页在后台播放、终端在前台时，按下音量减只会调小 YouTube，不会动到终端。如果当前没有任何声音，快捷键会回退到最前台的应用
+- **从任何地方唤起弹窗** —— 给 **Toggle FineTune Popup** 绑定一个快捷键，菜单栏弹窗就能随时开关，即便在全屏应用中也可以
+- **可调节的步长** —— 在 设置 → 快捷键 → Volume Step 里选择 **Coarse / Normal / Fine / Extra-Fine**。这一项同时控制 F10–F12 媒体键、全局快捷键，以及弹窗里的方向键导航
+- **长按连续调节、调高时自动取消静音** —— 长按 App Volume Up 或 Down 会像 macOS 的方向键一样持续触发；当处于静音状态按音量加，会一次性取消静音并设置到新音量
+- **键盘操作弹窗** —— 弹窗打开后，**↑ / ↓** 在行间移动，**← / →** 调节当前焦点行的音量（按住 Shift = 2 倍步长），**M** 切换静音，**Return / Space** 触发，**Tab** 在「输出」与「输入」设备标签间切换，**Esc** 关闭。焦点行会自动滚动到中央
 
 ### 🔀 音频路由
 - **多设备输出** —— 同时将音频送往多台设备
@@ -80,19 +91,9 @@ brew install --cask finetune
 - **菜单栏应用** —— 轻量、随时可用
 - **URL Scheme** —— 通过脚本自动化控制音量、静音、设备路由等
 
-## 截图
-
-<p align="center">
-  <img src="assets/screenshot-main.png" alt="FineTune 显示按 App 控制音量、EQ 与多设备输出" width="400">
-  <img src="assets/screenshot-edit-mode.png" alt="FineTune 编辑模式中显示设备优先级、蓝牙配对以及 App 钉选/忽略控制" width="400">
-</p>
-<p align="center">
-  <img src="assets/screenshot-autoeq.png" alt="FineTune AutoEQ 耳机校正选择器，支持搜索和收藏" width="400">
-  <img src="assets/screenshot-settings.png" alt="FineTune 设置面板，含媒体按键与音量提示一栏" width="400">
-</p>
-<p align="center">
-  <img src="assets/screenshot-device-inspector.png" alt="FineTune 设备详情显示采样率、格式、UID 与软件音量覆盖开关，下方为隐藏设备" width="400">
-</p>
+### 🎨 外观
+- **浅色或深色主题** —— 设置 → 通用 → 主题 跟随 macOS，或将 FineTune 锁定为浅色 / 深色。菜单栏弹窗、所有浮窗以及音量提示会立即切换
+- **弹窗密度** —— 设置 → 通用 → Popup Size 选择 **Compact / Comfortable / Spacious**，并提供实时预览。Compact 在小屏幕上能容纳更多 App；Spacious 给触控板用户更大的点击区域
 
 ## 文档
 
