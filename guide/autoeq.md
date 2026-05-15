@@ -1,5 +1,7 @@
 # AutoEQ & Headphone Correction
 
+**English** · [简体中文](autoeq.zh-CN.md)
+
 FineTune can apply headphone-specific frequency response corrections using profiles from the [AutoEQ](https://github.com/jaakkopasanen/AutoEq) project. This compensates for your headphones' natural frequency curve, giving you a flatter, more accurate sound.
 
 ## How It Works
