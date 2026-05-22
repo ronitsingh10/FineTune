@@ -9,6 +9,7 @@ struct MenuBarPopupView: View {
     @ObservedObject var updateManager: UpdateManager
 
     let permission: AudioRecordingPermission
+    let auPluginScanner: AUPluginScanner?
 
     /// Accessibility trust state — forwarded to the Settings window for the
     /// media-keys section. Bindable so live re-renders occur when trust flips.
@@ -72,6 +73,9 @@ struct MenuBarPopupView: View {
     /// Device whose inline detail panel is expanded in edit mode (nil when
     /// collapsed). Mirrors the `expandedRowID` pattern used for per-app EQ.
     @State private var expandedDeviceUID: String?
+
+    /// Device whose FX panel is expanded (for per-device AU effects)
+    @State private var expandedDeviceFXUID: String?
 
     /// Hover state for support link heart animation
     @State private var isSupportHovered = false
@@ -602,7 +606,47 @@ struct MenuBarPopupView: View {
                         onAutoEQPreampToggle: {
                             audioEngine.setAutoEQPreampEnabled(!audioEngine.autoEQPreampEnabled)
                         },
-                        isFocused: hasKeyboardEngaged && selectedRow == .device(uid: device.uid)
+                        isFocused: hasKeyboardEngaged && selectedRow == .device(uid: device.uid),
+                        deviceAUEffectChain: audioEngine.getDeviceAUEffectChain(deviceUID: device.uid),
+                        isDeviceAUChainBypassed: audioEngine.isDeviceAUChainBypassed(deviceUID: device.uid),
+                        auPluginScanner: auPluginScanner,
+                        getFavoriteAUPlugins: { audioEngine.favoriteAUPluginIDs },
+                        getAUCrashHistory: { audioEngine.auCrashHistory },
+                        isFXExpanded: expandedDeviceFXUID == device.uid,
+                        onFXToggle: {
+                            withAnimation(DesignTokens.Animation.hover) {
+                                expandedDeviceFXUID = expandedDeviceFXUID == device.uid ? nil : device.uid
+                            }
+                        },
+                        onAddDeviceAUEffect: { plugin in
+                            audioEngine.addDeviceAUEffect(deviceUID: device.uid, plugin: plugin)
+                        },
+                        onRemoveDeviceAUEffect: { entryID in
+                            audioEngine.removeDeviceAUEffect(deviceUID: device.uid, entryID: entryID)
+                        },
+                        onToggleDeviceAUEffect: { entryID, enabled in
+                            audioEngine.toggleDeviceAUEffect(deviceUID: device.uid, entryID: entryID, enabled: enabled)
+                        },
+                        onDeviceAUBypassToggle: {
+                            let current = audioEngine.isDeviceAUChainBypassed(deviceUID: device.uid)
+                            audioEngine.setDeviceAUChainBypassed(deviceUID: device.uid, bypassed: !current)
+                        },
+                        onToggleAUFavorite: { pluginID in
+                            audioEngine.toggleAUPluginFavorite(pluginID)
+                        },
+                        onOpenDeviceAUUI: { entryID in
+                            audioEngine.openDeviceAUPluginUI(deviceUID: device.uid, entryID: entryID)
+                        },
+                        onOpenDeviceAUGenericUI: { entryID in
+                            audioEngine.openDeviceAUPluginUI(deviceUID: device.uid, entryID: entryID, forceGeneric: true)
+                        },
+                        deviceAUFailedEntryIDs: audioEngine.getDeviceAUFailedEntryIDs(deviceUID: device.uid),
+                        getDeviceAUFactoryPresets: { entryID in
+                            audioEngine.getDeviceAUFactoryPresets(deviceUID: device.uid, entryID: entryID)
+                        },
+                        onSelectDeviceAUFactoryPreset: { entryID, presetIndex in
+                            audioEngine.selectDeviceAUFactoryPreset(deviceUID: device.uid, entryID: entryID, presetIndex: presetIndex)
+                        }
                     )
                     .id(PopupKeyboardNavModel.RowID.device(uid: device.uid))
                 }
@@ -901,7 +945,41 @@ struct MenuBarPopupView: View {
                 onEQToggle: {
                     toggleEQ(for: displayableApp.id, scrollProxy: scrollProxy)
                 },
-                isFocused: hasKeyboardEngaged && selectedRow == .app(persistenceID: displayableApp.id)
+                isFocused: hasKeyboardEngaged && selectedRow == .app(persistenceID: displayableApp.id),
+                auEffectChain: audioEngine.getAUEffectChain(for: app),
+                isAUChainBypassed: audioEngine.isAUChainBypassed(for: app),
+                auPluginScanner: auPluginScanner,
+                getFavoriteAUPlugins: { audioEngine.favoriteAUPluginIDs },
+                getAUCrashHistory: { audioEngine.auCrashHistory },
+                onAddAUEffect: { plugin in
+                    audioEngine.addAUEffect(for: app, plugin: plugin)
+                },
+                onRemoveAUEffect: { entryID in
+                    audioEngine.removeAUEffect(for: app, entryID: entryID)
+                },
+                onToggleAUEffect: { entryID, enabled in
+                    audioEngine.toggleAUEffect(for: app, entryID: entryID, enabled: enabled)
+                },
+                onAUBypassToggle: {
+                    let current = audioEngine.isAUChainBypassed(for: app)
+                    audioEngine.setAUChainBypassed(for: app, bypassed: !current)
+                },
+                onToggleAUFavorite: { pluginID in
+                    audioEngine.toggleAUPluginFavorite(pluginID)
+                },
+                onOpenAUUI: { entryID in
+                    audioEngine.openAUPluginUI(for: app, entryID: entryID)
+                },
+                onOpenAUGenericUI: { entryID in
+                    audioEngine.openAUPluginUI(for: app, entryID: entryID, forceGeneric: true)
+                },
+                auFailedEntryIDs: audioEngine.getAUFailedEntryIDs(for: app),
+                getAUFactoryPresets: { entryID in
+                    audioEngine.getAUFactoryPresets(for: app, entryID: entryID)
+                },
+                onSelectAUFactoryPreset: { entryID, presetIndex in
+                    audioEngine.selectAUFactoryPreset(for: app, entryID: entryID, presetIndex: presetIndex)
+                }
             )
             .id(PopupKeyboardNavModel.RowID.app(persistenceID: displayableApp.id))
         }

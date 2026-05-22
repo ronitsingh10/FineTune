@@ -118,6 +118,20 @@ final class ProcessTapController: ProcessTapControlling {
     private nonisolated(unsafe) var secondaryLoudnessCompensator: LoudnessCompensator?
     private nonisolated(unsafe) var secondaryLoudnessEqualizerProcessor: LoudnessEqualizer?
 
+    // Per-app AU effect chain
+    private nonisolated(unsafe) var auEffectChain: AUEffectChain?
+    private nonisolated(unsafe) var secondaryAUEffectChain: AUEffectChain?
+    // Per-device AU effect chain
+    private nonisolated(unsafe) var deviceAUEffectChain: AUEffectChain?
+    private nonisolated(unsafe) var secondaryDeviceAUEffectChain: AUEffectChain?
+    /// Samples of silence observed since last non-silent input (for AU tail rendering)
+    private nonisolated(unsafe) var _silentSampleCount: UInt64 = 0
+    /// Cached max tail time in samples (precomputed from seconds * sampleRate)
+    private nonisolated(unsafe) var _maxTailSamples: UInt64 = 0
+    /// Current entries for rebuilding chains on crossfade
+    private var _currentAUEntries: [AUEffectChainEntry] = []
+    private var _currentDeviceAUEntries: [AUEffectChainEntry] = []
+
     // Target device UIDs for synchronized multi-output (first is clock source)
     private var targetDeviceUIDs: [String]
     // Current active device UIDs
@@ -268,6 +282,121 @@ final class ProcessTapController: ProcessTapControlling {
             secondaryLoudnessEqualizerProcessor = newSecondary
             DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 0.5) { _ = secondary }
         }
+    }
+
+    // MARK: - AU Effect Chain
+
+    func updateAUEffectChain(_ entries: [AUEffectChainEntry]) {
+        _currentAUEntries = entries
+        let sampleRate = (try? primaryResources.aggregateDeviceID.readNominalSampleRate()) ?? 48000
+        let newChain = entries.isEmpty ? nil : AUEffectChain(entries: entries, sampleRate: sampleRate)
+        let old = auEffectChain
+        auEffectChain = newChain
+        updateMaxTailTime()
+        if let old {
+            DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 0.5) { _ = old }
+        }
+        if secondaryAUEffectChain != nil, let secRate = try? secondaryResources.aggregateDeviceID.readNominalSampleRate() {
+            let oldSec = secondaryAUEffectChain
+            secondaryAUEffectChain = entries.isEmpty ? nil : AUEffectChain(entries: entries, sampleRate: secRate)
+            if let oldSec {
+                DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 0.5) { _ = oldSec }
+            }
+        }
+    }
+
+    func getAUEffectChainEntries() -> [AUEffectChainEntry] {
+        _currentAUEntries
+    }
+
+    var auEffectChainFailedIDs: Set<UUID> {
+        auEffectChain?.failedEntryIDs ?? []
+    }
+
+    /// Snapshot current AU chain entries with live preset data baked in.
+    func auEffectChainWithLiveState() -> [AUEffectChainEntry]? {
+        guard let chain = auEffectChain, !chain.entries.isEmpty else { return nil }
+        return snapshotChainState(chain)
+    }
+
+    func deviceAUEffectChainWithLiveState() -> [AUEffectChainEntry]? {
+        guard let chain = deviceAUEffectChain, !chain.entries.isEmpty else { return nil }
+        return snapshotChainState(chain)
+    }
+
+    private func snapshotChainState(_ chain: AUEffectChain) -> [AUEffectChainEntry] {
+        var entries = chain.entries
+        for host in chain.hosts {
+            if let idx = entries.firstIndex(where: { $0.id == host.entryID }),
+               let presetData = host.savePreset() {
+                entries[idx].presetData = presetData
+                entries[idx].selectedFactoryPresetIndex = nil
+            }
+        }
+        return entries
+    }
+
+    var deviceAUEffectChainFailedIDs: Set<UUID> {
+        deviceAUEffectChain?.failedEntryIDs ?? []
+    }
+
+    func getAUHost(for entryID: UUID) -> AUEffectHost? {
+        auEffectChain?.host(for: entryID)
+    }
+
+    func getDeviceAUHost(for entryID: UUID) -> AUEffectHost? {
+        deviceAUEffectChain?.host(for: entryID)
+    }
+
+    func setAUChainBypassed(_ bypassed: Bool) {
+        auEffectChain?.setBypassed(bypassed)
+        secondaryAUEffectChain?.setBypassed(bypassed)
+        updateMaxTailTime()
+    }
+
+    var isAUChainBypassed: Bool {
+        auEffectChain?.isBypassed ?? false
+    }
+
+    func updateDeviceAUEffectChain(_ entries: [AUEffectChainEntry]) {
+        _currentDeviceAUEntries = entries
+        let sampleRate = (try? primaryResources.aggregateDeviceID.readNominalSampleRate()) ?? 48000
+        let newChain = entries.isEmpty ? nil : AUEffectChain(entries: entries, sampleRate: sampleRate)
+        let old = deviceAUEffectChain
+        deviceAUEffectChain = newChain
+        updateMaxTailTime()
+        if let old {
+            DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 0.5) { _ = old }
+        }
+        if secondaryDeviceAUEffectChain != nil, let secRate = try? secondaryResources.aggregateDeviceID.readNominalSampleRate() {
+            let oldSec = secondaryDeviceAUEffectChain
+            secondaryDeviceAUEffectChain = entries.isEmpty ? nil : AUEffectChain(entries: entries, sampleRate: secRate)
+            if let oldSec {
+                DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 0.5) { _ = oldSec }
+            }
+        }
+    }
+
+    func getDeviceAUEffectChainEntries() -> [AUEffectChainEntry] {
+        _currentDeviceAUEntries
+    }
+
+    func setDeviceAUChainBypassed(_ bypassed: Bool) {
+        deviceAUEffectChain?.setBypassed(bypassed)
+        secondaryDeviceAUEffectChain?.setBypassed(bypassed)
+        updateMaxTailTime()
+    }
+
+    var isDeviceAUChainBypassed: Bool {
+        deviceAUEffectChain?.isBypassed ?? false
+    }
+
+    private func updateMaxTailTime() {
+        let appTail = (auEffectChain?.isBypassed == true) ? 0.0 : (auEffectChain?.maxTailTime ?? 0)
+        let deviceTail = (deviceAUEffectChain?.isBypassed == true) ? 0.0 : (deviceAUEffectChain?.maxTailTime ?? 0)
+        let maxTail = max(appTail, deviceTail)
+        let sampleRate = (try? primaryResources.aggregateDeviceID.readNominalSampleRate()) ?? 48000
+        _maxTailSamples = UInt64(maxTail * sampleRate)
     }
 
     // MARK: - Multi-Device Aggregate Configuration
@@ -830,6 +959,13 @@ final class ProcessTapController: ProcessTapControlling {
         if !(loudnessCompensator?.isEnabled ?? false) { secLoudness.setEnabled(false) }
         secondaryLoudnessCompensator = secLoudness
 
+        if !_currentAUEntries.isEmpty {
+            secondaryAUEffectChain = AUEffectChain(entries: _currentAUEntries, sampleRate: sampleRate)
+        }
+        if !_currentDeviceAUEntries.isEmpty {
+            secondaryDeviceAUEffectChain = AUEffectChain(entries: _currentDeviceAUEntries, sampleRate: sampleRate)
+        }
+
         nextCallbackID += 1
         _secondaryCallbackID = nextCallbackID
         let secondaryCallbackID = nextCallbackID
@@ -871,6 +1007,8 @@ final class ProcessTapController: ProcessTapControlling {
         secondaryAutoEQProcessor = nil
         secondaryLoudnessCompensator = nil
         secondaryLoudnessEqualizerProcessor = nil
+        secondaryAUEffectChain = nil
+        secondaryDeviceAUEffectChain = nil
     }
 
     private func promoteSecondaryToPrimary() {
@@ -882,31 +1020,39 @@ final class ProcessTapController: ProcessTapControlling {
             rampCoefficient = 1 - exp(-1 / (Float(deviceSampleRate) * rampTimeSeconds))
         }
 
-        // Adopt secondary EQ processors as primary.
+        // Adopt secondary processors as primary.
         // The old primary processors may still be referenced by a just-completed primary callback,
         // so defer their deallocation to ensure no use-after-free on the RT thread.
         let oldEQ = eqProcessor
         let oldAutoEQ = autoEQProcessor
         let oldLoudness = loudnessCompensator
         let oldLoudnessEqualizer = loudnessEqualizerProcessor
+        let oldAUChain = auEffectChain
+        let oldDeviceAUChain = deviceAUEffectChain
         eqProcessor = secondaryEQProcessor
         autoEQProcessor = secondaryAutoEQProcessor
         loudnessCompensator = secondaryLoudnessCompensator
         loudnessEqualizerProcessor = secondaryLoudnessEqualizerProcessor
+        auEffectChain = secondaryAUEffectChain
+        deviceAUEffectChain = secondaryDeviceAUEffectChain
         secondaryEQProcessor = nil
         secondaryAutoEQProcessor = nil
         secondaryLoudnessCompensator = nil
         secondaryLoudnessEqualizerProcessor = nil
+        secondaryAUEffectChain = nil
+        secondaryDeviceAUEffectChain = nil
 
         // Deferred cleanup: hold old processors alive briefly so any in-flight RT callback
         // that read the pointer before the swap finishes its buffer without accessing freed memory.
         // 0.5s is conservative — audio callbacks run at ~5ms intervals.
-        if oldEQ != nil || oldAutoEQ != nil || oldLoudness != nil || oldLoudnessEqualizer != nil {
+        if oldEQ != nil || oldAutoEQ != nil || oldLoudness != nil || oldLoudnessEqualizer != nil || oldAUChain != nil || oldDeviceAUChain != nil {
             DispatchQueue.global().asyncAfter(deadline: .now() + 0.5) {
                 _ = oldEQ
                 _ = oldAutoEQ
                 _ = oldLoudness
                 _ = oldLoudnessEqualizer
+                _ = oldAUChain
+                _ = oldDeviceAUChain
             }
         }
 
@@ -1049,6 +1195,23 @@ final class ProcessTapController: ProcessTapControlling {
                 loudnessEqualizerProcessor = newLE
                 DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 0.5) { _ = oldLE }
             }
+
+            // AU chains are immutable — rebuild at new sample rate
+            if !_currentAUEntries.isEmpty {
+                let oldChain = auEffectChain
+                auEffectChain = AUEffectChain(entries: _currentAUEntries, sampleRate: deviceSampleRate)
+                if let oldChain {
+                    DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 0.5) { _ = oldChain }
+                }
+            }
+            if !_currentDeviceAUEntries.isEmpty {
+                let oldChain = deviceAUEffectChain
+                deviceAUEffectChain = AUEffectChain(entries: _currentDeviceAUEntries, sampleRate: deviceSampleRate)
+                if let oldChain {
+                    DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 0.5) { _ = oldChain }
+                }
+            }
+            updateMaxTailTime()
         }
     }
 
@@ -1068,6 +1231,8 @@ final class ProcessTapController: ProcessTapControlling {
         currentVol: inout Float,
         eqProc: EQProcessor?,
         autoEQProc: AutoEQProcessor?,
+        appAUChain: AUEffectChain?,
+        deviceAUChain: AUEffectChain?,
         loudnessEqualizerProc: LoudnessEqualizer?,
         loudnessCompensatorProc: LoudnessCompensator?
     ) {
@@ -1197,6 +1362,16 @@ final class ProcessTapController: ProcessTapControlling {
                 autoEQProc.process(input: outputSamples, output: outputSamples, frameCount: frameCount)
             }
 
+            // Per-app AU effect chain (after EQ/AutoEQ, before device AU chain)
+            if let appAUChain, eqCanProcessStereoInterleaved {
+                appAUChain.processInterleaved(samples: outputSamples, frameCount: frameCount)
+            }
+
+            // Per-device AU effect chain (after per-app AU, before loudness)
+            if let deviceAUChain, eqCanProcessStereoInterleaved {
+                deviceAUChain.processInterleaved(samples: outputSamples, frameCount: frameCount)
+            }
+
             // Loudness Equalization (before loudness compensation)
             if let loudnessEqualizerProc, loudnessEqualizerProc.isEnabled, eqCanProcessStereoInterleaved {
                 loudnessEqualizerProc.process(input: UnsafePointer(outputSamples), output: outputSamples, frameCount: frameCount, channelCount: outputChannels)
@@ -1291,6 +1466,25 @@ final class ProcessTapController: ProcessTapControlling {
             _ = crossfadeState.updateProgress(samples: totalSamplesThisBuffer)
         }
 
+        // AU tail time: track silent input to allow reverb/delay tails to fade naturally
+        let tailSamples = _maxTailSamples
+        if isPrimary && tailSamples > 0 {
+            let silenceThreshold: Float = 0.0001
+            if rawPeak < silenceThreshold {
+                _silentSampleCount += UInt64(totalSamplesThisBuffer)
+                if _silentSampleCount > tailSamples {
+                    // Tail has expired — zero output
+                    for buf in outputBuffers {
+                        if let data = buf.mData { memset(data, 0, Int(buf.mDataByteSize)) }
+                    }
+                    return
+                }
+                // Still in tail period — continue processing with silent input
+            } else {
+                _silentSampleCount = 0
+            }
+        }
+
         if _isMuted {
             for buf in outputBuffers {
                 if let data = buf.mData { memset(data, 0, Int(buf.mDataByteSize)) }
@@ -1308,6 +1502,8 @@ final class ProcessTapController: ProcessTapControlling {
         let autoEQProc: AutoEQProcessor?
         let loudnessEqualizerProc: LoudnessEqualizer?
         let loudnessCompensatorProc: LoudnessCompensator?
+        let appAUChain: AUEffectChain?
+        let devAUChain: AUEffectChain?
 
         if isPrimary {
             currentVol = _primaryCurrentVolume
@@ -1322,6 +1518,8 @@ final class ProcessTapController: ProcessTapControlling {
             autoEQProc = autoEQProcessor
             loudnessEqualizerProc = loudnessEqualizerProcessor
             loudnessCompensatorProc = loudnessCompensator
+            appAUChain = auEffectChain
+            devAUChain = deviceAUEffectChain
         } else {
             currentVol = _secondaryCurrentVolume
             // Secondary uses sine curve (0→1).
@@ -1334,6 +1532,8 @@ final class ProcessTapController: ProcessTapControlling {
             autoEQProc = secondaryAutoEQProcessor
             loudnessEqualizerProc = secondaryLoudnessEqualizerProcessor
             loudnessCompensatorProc = secondaryLoudnessCompensator
+            appAUChain = secondaryAUEffectChain
+            devAUChain = secondaryDeviceAUEffectChain
         }
 
         Self.processMappedBuffers(
@@ -1347,6 +1547,8 @@ final class ProcessTapController: ProcessTapControlling {
             currentVol: &currentVol,
             eqProc: eqProc,
             autoEQProc: autoEQProc,
+            appAUChain: appAUChain,
+            deviceAUChain: devAUChain,
             loudnessEqualizerProc: loudnessEqualizerProc,
             loudnessCompensatorProc: loudnessCompensatorProc
         )

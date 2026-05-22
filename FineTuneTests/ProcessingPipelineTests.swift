@@ -118,6 +118,8 @@ private func processWithDefaults(
         currentVol: &currentVol,
         eqProc: eqProc,
         autoEQProc: autoEQProc,
+        appAUChain: nil,
+        deviceAUChain: nil,
         loudnessEqualizerProc: loudnessEqualizerProc,
         loudnessCompensatorProc: loudnessCompensatorProc
     )

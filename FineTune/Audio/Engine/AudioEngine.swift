@@ -22,6 +22,20 @@ final class AudioEngine {
 
     private var taps: [pid_t: any ProcessTapControlling] = [:]
 
+    // MARK: - Observable AU State (authoritative for SwiftUI)
+    //
+    // AudioEngine owns AU chain state for the UI. SettingsManager persists to disk.
+    // Mutations update both: this dict (observation) + settings (persistence) + tap (RT).
+
+    /// Per-app AU state. Keyed by persistence identifier.
+    private(set) var appAU: [String: AUChainState] = [:]
+    /// Per-device AU state. Keyed by device UID.
+    private(set) var deviceAU: [String: AUChainState] = [:]
+    /// Favorited AU plugin IDs.
+    private(set) var favoriteAUPluginIDs: Set<String> = []
+    /// Plugin IDs that were active during a crash.
+    private(set) var auCrashHistory: Set<String> = []
+
     /// Factory for creating tap controllers. Overridable for testing.
     private let tapFactory: @MainActor (AudioApp, [String], String?) throws -> any ProcessTapControlling
 
@@ -647,8 +661,16 @@ final class AudioEngine {
             applyTapOutputState(to: tap, for: tap.app.id, deviceUIDs: tap.currentDeviceUIDs)
             tap.updateEQSettings(.flat)
             tap.updateAutoEQProfile(nil)
+            tap.updateAUEffectChain([])
+            tap.updateDeviceAUEffectChain([])
             tap.updateLoudnessCompensation(volume: effectiveLoudnessVolume(for: tap), enabled: false)
         }
+
+        // 5b. Clear observable AU state
+        appAU.removeAll()
+        deviceAU.removeAll()
+        favoriteAUPluginIDs.removeAll()
+        auCrashHistory.removeAll()
 
         // 6. Re-apply from clean settings (re-establishes routing to system default)
         applyPersistedSettings()
@@ -776,6 +798,285 @@ final class AudioEngine {
         return settingsManager.getEQSettings(for: app.persistenceIdentifier)
     }
 
+    // MARK: - AU Plugin Favorites & Crash History
+
+    func toggleAUPluginFavorite(_ pluginID: String) {
+        if favoriteAUPluginIDs.contains(pluginID) {
+            favoriteAUPluginIDs.remove(pluginID)
+        } else {
+            favoriteAUPluginIDs.insert(pluginID)
+        }
+        settingsManager.toggleAUPluginFavorite(pluginID)
+    }
+
+    func loadAUMetadataFromSettings() {
+        favoriteAUPluginIDs = settingsManager.favoriteAUPlugins
+        auCrashHistory = settingsManager.auPluginCrashHistory
+    }
+
+    private func loadPersistedAUBypassState(for app: AudioApp, deviceUID: String) {
+        let id = app.persistenceIdentifier
+        if settingsManager.getAppAUBypassed(for: id) {
+            taps[app.id]?.setAUChainBypassed(true)
+            appAU[id, default: AUChainState()].isBypassed = true
+        }
+        if settingsManager.getDeviceAUBypassed(for: deviceUID) {
+            taps[app.id]?.setDeviceAUChainBypassed(true)
+            deviceAU[deviceUID, default: AUChainState()].isBypassed = true
+        }
+    }
+
+    // MARK: - Per-App AU Effect Chains
+
+    func addAUEffect(for app: AudioApp, plugin: AUPluginDescriptor) {
+        var state = appAU[app.persistenceIdentifier] ?? AUChainState()
+        state.entries.append(AUEffectChainEntry(plugin: plugin))
+        commitAppAU(state, for: app)
+    }
+
+    func removeAUEffect(for app: AudioApp, entryID: UUID) {
+        var state = appAU[app.persistenceIdentifier] ?? AUChainState()
+        state.entries.removeAll { $0.id == entryID }
+        commitAppAU(state, for: app)
+    }
+
+    func toggleAUEffect(for app: AudioApp, entryID: UUID, enabled: Bool) {
+        var state = appAU[app.persistenceIdentifier] ?? AUChainState()
+        if let idx = state.entries.firstIndex(where: { $0.id == entryID }) {
+            state.entries[idx].isEnabled = enabled
+        }
+        commitAppAU(state, for: app)
+    }
+
+    func reorderAUEffects(for app: AudioApp, entries: [AUEffectChainEntry]) {
+        var state = appAU[app.persistenceIdentifier] ?? AUChainState()
+        state.entries = entries
+        commitAppAU(state, for: app)
+    }
+
+    func getAUEffectChain(for app: AudioApp) -> [AUEffectChainEntry] {
+        appAU[app.persistenceIdentifier]?.entries ?? []
+    }
+
+    func updateAUEffectPreset(for app: AudioApp, entryID: UUID, presetData: Data?) {
+        var state = appAU[app.persistenceIdentifier] ?? AUChainState()
+        if let idx = state.entries.firstIndex(where: { $0.id == entryID }) {
+            state.entries[idx].presetData = presetData
+            state.entries[idx].selectedFactoryPresetIndex = nil
+        }
+        commitAppAU(state, for: app)
+    }
+
+    func selectAUFactoryPreset(for app: AudioApp, entryID: UUID, presetIndex: Int) {
+        var state = appAU[app.persistenceIdentifier] ?? AUChainState()
+        if let idx = state.entries.firstIndex(where: { $0.id == entryID }) {
+            state.entries[idx].selectedFactoryPresetIndex = presetIndex >= 0 ? presetIndex : nil
+            state.entries[idx].presetData = nil
+        }
+        commitAppAU(state, for: app)
+    }
+
+    func setAUChainBypassed(for app: AudioApp, bypassed: Bool) {
+        taps[app.id]?.setAUChainBypassed(bypassed)
+        appAU[app.persistenceIdentifier, default: AUChainState()].isBypassed = bypassed
+        settingsManager.setAppAUBypassed(bypassed, for: app.persistenceIdentifier)
+    }
+
+    func isAUChainBypassed(for app: AudioApp) -> Bool {
+        appAU[app.persistenceIdentifier]?.isBypassed ?? false
+    }
+
+    func openAUPluginUI(for app: AudioApp, entryID: UUID, forceGeneric: Bool = false) {
+        guard let tap = taps[app.id] as? ProcessTapController,
+              let host = tap.getAUHost(for: entryID),
+              let au = host.audioUnit else { return }
+        AUPluginWindowManager.shared.closeWindow(for: entryID)
+        AUPluginWindowManager.shared.showWindow(for: entryID, audioUnit: au, pluginName: host.descriptor.name, forceGeneric: forceGeneric) { [weak self] in
+            self?.saveAUHostState(host, for: app, entryID: entryID)
+        }
+    }
+
+    private func saveAUHostState(_ host: AUEffectHost, for app: AudioApp, entryID: UUID) {
+        guard let presetData = host.savePreset() else { return }
+        let id = app.persistenceIdentifier
+        if var state = appAU[id], let idx = state.entries.firstIndex(where: { $0.id == entryID }) {
+            state.entries[idx].presetData = presetData
+            state.entries[idx].selectedFactoryPresetIndex = nil
+            appAU[id] = state
+            settingsManager.setAUEffectChain(state.entries, for: id)
+        }
+    }
+
+    func getAUFailedEntryIDs(for app: AudioApp) -> Set<UUID> {
+        appAU[app.persistenceIdentifier]?.failedEntryIDs ?? []
+    }
+
+    func getDeviceAUFailedEntryIDs(deviceUID: String) -> Set<UUID> {
+        deviceAU[deviceUID]?.failedEntryIDs ?? []
+    }
+
+    func getAUFactoryPresets(for app: AudioApp, entryID: UUID) -> [(index: Int, name: String)] {
+        guard let tap = taps[app.id] as? ProcessTapController,
+              let host = tap.getAUHost(for: entryID) else { return [] }
+        return host.factoryPresets
+    }
+
+    private func commitAppAU(_ state: AUChainState, for app: AudioApp) {
+        let id = app.persistenceIdentifier
+        appAU[id] = state.entries.isEmpty ? nil : state
+        settingsManager.setAUEffectChain(state.entries, for: id)
+        taps[app.id]?.updateAUEffectChain(state.entries)
+        if state.isBypassed {
+            taps[app.id]?.setAUChainBypassed(true)
+        }
+        syncAppAUFailedIDs(for: app)
+    }
+
+    private func syncAppAUFailedIDs(for app: AudioApp) {
+        guard let tap = taps[app.id] as? ProcessTapController else { return }
+        let ids = tap.auEffectChainFailedIDs
+        if !ids.isEmpty {
+            appAU[app.persistenceIdentifier, default: AUChainState()].failedEntryIDs = ids
+        }
+    }
+
+    // MARK: - Per-Device AU Effect Chains
+
+    func addDeviceAUEffect(deviceUID: String, plugin: AUPluginDescriptor) {
+        var state = deviceAU[deviceUID] ?? AUChainState()
+        state.entries.append(AUEffectChainEntry(plugin: plugin))
+        commitDeviceAU(state, for: deviceUID)
+    }
+
+    func removeDeviceAUEffect(deviceUID: String, entryID: UUID) {
+        var state = deviceAU[deviceUID] ?? AUChainState()
+        state.entries.removeAll { $0.id == entryID }
+        commitDeviceAU(state, for: deviceUID)
+    }
+
+    func toggleDeviceAUEffect(deviceUID: String, entryID: UUID, enabled: Bool) {
+        var state = deviceAU[deviceUID] ?? AUChainState()
+        if let idx = state.entries.firstIndex(where: { $0.id == entryID }) {
+            state.entries[idx].isEnabled = enabled
+        }
+        commitDeviceAU(state, for: deviceUID)
+    }
+
+    func reorderDeviceAUEffects(deviceUID: String, entries: [AUEffectChainEntry]) {
+        var state = deviceAU[deviceUID] ?? AUChainState()
+        state.entries = entries
+        commitDeviceAU(state, for: deviceUID)
+    }
+
+    func getDeviceAUEffectChain(deviceUID: String) -> [AUEffectChainEntry] {
+        deviceAU[deviceUID]?.entries ?? []
+    }
+
+    func selectDeviceAUFactoryPreset(deviceUID: String, entryID: UUID, presetIndex: Int) {
+        var state = deviceAU[deviceUID] ?? AUChainState()
+        if let idx = state.entries.firstIndex(where: { $0.id == entryID }) {
+            state.entries[idx].selectedFactoryPresetIndex = presetIndex >= 0 ? presetIndex : nil
+            state.entries[idx].presetData = nil
+        }
+        commitDeviceAU(state, for: deviceUID)
+    }
+
+    func openDeviceAUPluginUI(deviceUID: String, entryID: UUID, forceGeneric: Bool = false) {
+        for (_, tap) in taps where tap.currentDeviceUIDs.contains(deviceUID) {
+            if let tap = tap as? ProcessTapController,
+               let host = tap.getDeviceAUHost(for: entryID),
+               let au = host.audioUnit {
+                let uid = deviceUID
+                AUPluginWindowManager.shared.closeWindow(for: entryID)
+                AUPluginWindowManager.shared.showWindow(for: entryID, audioUnit: au, pluginName: host.descriptor.name, forceGeneric: forceGeneric) { [weak self] in
+                    self?.saveDeviceAUHostState(host, deviceUID: uid, entryID: entryID)
+                }
+                return
+            }
+        }
+    }
+
+    private func saveDeviceAUHostState(_ host: AUEffectHost, deviceUID: String, entryID: UUID) {
+        guard let presetData = host.savePreset() else { return }
+        if var state = deviceAU[deviceUID], let idx = state.entries.firstIndex(where: { $0.id == entryID }) {
+            state.entries[idx].presetData = presetData
+            state.entries[idx].selectedFactoryPresetIndex = nil
+            deviceAU[deviceUID] = state
+            settingsManager.setDeviceAUEffectChain(state.entries, for: deviceUID)
+        }
+    }
+
+    func getDeviceAUFactoryPresets(deviceUID: String, entryID: UUID) -> [(index: Int, name: String)] {
+        for (_, tap) in taps where tap.currentDeviceUIDs.contains(deviceUID) {
+            if let tap = tap as? ProcessTapController,
+               let host = tap.getDeviceAUHost(for: entryID) {
+                return host.factoryPresets
+            }
+        }
+        return []
+    }
+
+    func setDeviceAUChainBypassed(deviceUID: String, bypassed: Bool) {
+        for (_, tap) in taps where tap.currentDeviceUIDs.contains(deviceUID) {
+            tap.setDeviceAUChainBypassed(bypassed)
+        }
+        deviceAU[deviceUID, default: AUChainState()].isBypassed = bypassed
+        settingsManager.setDeviceAUBypassed(bypassed, for: deviceUID)
+    }
+
+    func isDeviceAUChainBypassed(deviceUID: String) -> Bool {
+        deviceAU[deviceUID]?.isBypassed ?? false
+    }
+
+    private func commitDeviceAU(_ state: AUChainState, for deviceUID: String) {
+        deviceAU[deviceUID] = state.entries.isEmpty ? nil : state
+        settingsManager.setDeviceAUEffectChain(state.entries, for: deviceUID)
+        applyDeviceAUChainToTaps(deviceUID: deviceUID, chain: state.entries)
+        if state.isBypassed {
+            for (_, tap) in taps where tap.currentDeviceUIDs.contains(deviceUID) {
+                tap.setDeviceAUChainBypassed(true)
+            }
+        }
+        syncDeviceAUFailedIDs(for: deviceUID)
+    }
+
+    func saveAllLiveAUState() {
+        for (_, tap) in taps {
+            guard let tap = tap as? ProcessTapController else { continue }
+            let appID = tap.app.persistenceIdentifier
+
+            if let chain = tap.auEffectChainWithLiveState() {
+                appAU[appID, default: AUChainState()].entries = chain
+                settingsManager.setAUEffectChain(chain, for: appID)
+            }
+
+            if let deviceUID = tap.currentDeviceUID,
+               let chain = tap.deviceAUEffectChainWithLiveState() {
+                deviceAU[deviceUID, default: AUChainState()].entries = chain
+                settingsManager.setDeviceAUEffectChain(chain, for: deviceUID)
+            }
+        }
+        AUPluginWindowManager.shared.saveAllOpenWindows()
+    }
+
+    private func syncDeviceAUFailedIDs(for deviceUID: String) {
+        for (_, tap) in taps where tap.currentDeviceUIDs.contains(deviceUID) {
+            if let tap = tap as? ProcessTapController {
+                let ids = tap.deviceAUEffectChainFailedIDs
+                if !ids.isEmpty {
+                    deviceAU[deviceUID, default: AUChainState()].failedEntryIDs = ids
+                }
+                return
+            }
+        }
+    }
+
+    private func applyDeviceAUChainToTaps(deviceUID: String, chain: [AUEffectChainEntry]) {
+        for (_, tap) in taps where tap.currentDeviceUIDs.contains(deviceUID) {
+            tap.updateDeviceAUEffectChain(chain)
+        }
+    }
+
     // MARK: - Per-Device AutoEQ
 
     func getAutoEQProfile(for deviceUID: String) -> AutoEQProfile? {
@@ -839,6 +1140,19 @@ final class AudioEngine {
     /// Apply the correct AutoEQ profile to a single tap based on its current device.
     /// Skips AutoEQ entirely for devices that don't support it (speakers, HDMI, etc.).
     /// If the profile isn't loaded yet, triggers an async fetch and applies when ready.
+    private func applyDeviceAUChainToTap(_ tap: any ProcessTapControlling) {
+        guard let deviceUID = tap.currentDeviceUID else { return }
+        let chain = settingsManager.getDeviceAUEffectChain(for: deviceUID)
+        tap.updateDeviceAUEffectChain(chain)
+        if !chain.isEmpty {
+            deviceAU[deviceUID, default: AUChainState()].entries = chain
+        }
+        if deviceAU[deviceUID]?.isBypassed == true {
+            tap.setDeviceAUChainBypassed(true)
+        }
+        syncDeviceAUFailedIDs(for: deviceUID)
+    }
+
     private func applyAutoEQToTap(_ tap: any ProcessTapControlling) {
         guard let deviceUID = tap.currentDeviceUID else { return }
 
@@ -946,6 +1260,7 @@ final class AudioEngine {
                     try await tap.switchDevice(to: targetUID, preferredTapSourceDeviceUID: preferredTapSourceUID)
                     self.applyTapOutputState(to: tap, for: app.id, deviceUIDs: [targetUID])
                     self.applyAutoEQToTap(tap)
+                    self.applyDeviceAUChainToTap(tap)
                     self.logger.debug("Switched \(app.name) to device: \(targetUID)")
                 } catch {
                     self.logger.error("Failed to switch device for \(app.name): \(error.localizedDescription)")
@@ -1038,6 +1353,7 @@ final class AudioEngine {
                     let preferredTapSourceUID = preferredTapSourceDeviceUID(forOutputUIDs: deviceUIDs, isFollowsDefault: followsDefault.contains(app.id))
                     try await tap.updateDevices(to: deviceUIDs, preferredTapSourceDeviceUID: preferredTapSourceUID)
                     applyTapOutputState(to: tap, for: app.id, deviceUIDs: deviceUIDs)
+                    applyDeviceAUChainToTap(tap)
                     logger.debug("Updated \(app.name) to \(deviceUIDs.count) device(s)")
                 } catch {
                     logger.error("Failed to update devices for \(app.name): \(error.localizedDescription)")
@@ -1168,6 +1484,7 @@ final class AudioEngine {
                         try await existingTap.switchDevice(to: deviceUID, preferredTapSourceDeviceUID: preferredSource)
                         self.applyTapOutputState(to: existingTap, for: app.id, deviceUIDs: [deviceUID])
                         self.applyAutoEQToTap(existingTap)
+                        self.applyDeviceAUChainToTap(existingTap)
                     } catch {
                         self.logger.error("Failed to re-route \(app.name) to \(deviceUID): \(error.localizedDescription)")
                     }
@@ -1222,6 +1539,22 @@ final class AudioEngine {
                 volume: effectiveLoudnessVolume(for: tap),
                 enabled: settingsManager.appSettings.loudnessCompensationEnabled
             )
+
+            // Load and apply persisted AU effect chains
+            let savedAppAU = settingsManager.getAUEffectChain(for: app.persistenceIdentifier)
+            if !savedAppAU.isEmpty {
+                tap.updateAUEffectChain(savedAppAU)
+                appAU[app.persistenceIdentifier, default: AUChainState()].entries = savedAppAU
+                syncAppAUFailedIDs(for: app)
+            }
+            let savedDeviceAU = settingsManager.getDeviceAUEffectChain(for: deviceUID)
+            if !savedDeviceAU.isEmpty {
+                tap.updateDeviceAUEffectChain(savedDeviceAU)
+                deviceAU[deviceUID, default: AUChainState()].entries = savedDeviceAU
+                syncDeviceAUFailedIDs(for: deviceUID)
+            }
+
+            loadPersistedAUBypassState(for: app, deviceUID: deviceUID)
 
             logger.debug("Created tap for \(app.name)")
         } catch {
@@ -1315,6 +1648,7 @@ final class AudioEngine {
                     try await tap.switchDevice(to: targetUID, preferredTapSourceDeviceUID: preferredTapSourceUID)
                     self.applyTapOutputState(to: tap, for: app.id, deviceUIDs: [targetUID])
                     self.applyAutoEQToTap(tap)
+                    self.applyDeviceAUChainToTap(tap)
                 } catch {
                     self.logger.error("Failed to switch \(app.name) to \(targetUID): \(error.localizedDescription)")
                 }
@@ -1395,6 +1729,7 @@ final class AudioEngine {
                         try await tap.switchDevice(to: fallbackUID, preferredTapSourceDeviceUID: preferredTapSourceUID, sourceDeviceDead: true)
                         self.applyTapOutputState(to: tap, for: tap.app.id, deviceUIDs: [fallbackUID])
                         self.applyAutoEQToTap(tap)
+                        self.applyDeviceAUChainToTap(tap)
                     } catch {
                         self.logger.error("Failed to switch \(tap.app.name) to fallback: \(error.localizedDescription)")
                     }
@@ -1407,6 +1742,7 @@ final class AudioEngine {
                         let preferredTapSourceUID = self.preferredTapSourceDeviceUID(forOutputUIDs: remainingUIDs, isFollowsDefault: self.followsDefault.contains(tap.app.id))
                         try await tap.updateDevices(to: remainingUIDs, preferredTapSourceDeviceUID: preferredTapSourceUID, sourceDeviceDead: true)
                         self.applyTapOutputState(to: tap, for: tap.app.id, deviceUIDs: remainingUIDs)
+                        self.applyDeviceAUChainToTap(tap)
                         self.logger.debug("Removed \(deviceName) from \(tap.app.name) multi-device output")
                     } catch {
                         self.logger.error("Failed to update \(tap.app.name) devices: \(error.localizedDescription)")
@@ -1467,6 +1803,7 @@ final class AudioEngine {
                         try await tap.switchDevice(to: deviceUID, preferredTapSourceDeviceUID: preferredTapSourceUID)
                         self.applyTapOutputState(to: tap, for: tap.app.id, deviceUIDs: [deviceUID])
                         self.applyAutoEQToTap(tap)
+                        self.applyDeviceAUChainToTap(tap)
                     } catch {
                         self.logger.error("Failed to switch \(tap.app.name) back to \(deviceName): \(error.localizedDescription)")
                     }

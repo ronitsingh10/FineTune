@@ -34,6 +34,23 @@ struct AppRowWithLevelPolling: View {
     let onEQToggle: () -> Void
     let isFocused: Bool
 
+    // AU effect chain passthrough
+    let auEffectChain: [AUEffectChainEntry]
+    let isAUChainBypassed: Bool
+    let auPluginScanner: AUPluginScanner?
+    let getFavoriteAUPlugins: () -> Set<String>
+    let getAUCrashHistory: () -> Set<String>
+    let onAddAUEffect: (AUPluginDescriptor) -> Void
+    let onRemoveAUEffect: (UUID) -> Void
+    let onToggleAUEffect: (UUID, Bool) -> Void
+    let onAUBypassToggle: () -> Void
+    let onToggleAUFavorite: (String) -> Void
+    let onOpenAUUI: (UUID) -> Void
+    let onOpenAUGenericUI: (UUID) -> Void
+    let auFailedEntryIDs: Set<UUID>
+    let getAUFactoryPresets: (UUID) -> [(index: Int, name: String)]
+    let onSelectAUFactoryPreset: (UUID, Int) -> Void
+
     @State private var displayLevel: Float = 0
     @State private var levelTimer: Timer?
 
@@ -67,7 +84,22 @@ struct AppRowWithLevelPolling: View {
         onRenameUserPreset: @escaping (UUID, String) -> Void = { _, _ in },
         isEQExpanded: Bool = false,
         onEQToggle: @escaping () -> Void = {},
-        isFocused: Bool = false
+        isFocused: Bool = false,
+        auEffectChain: [AUEffectChainEntry] = [],
+        isAUChainBypassed: Bool = false,
+        auPluginScanner: AUPluginScanner? = nil,
+        getFavoriteAUPlugins: @escaping () -> Set<String> = { [] },
+        getAUCrashHistory: @escaping () -> Set<String> = { [] },
+        onAddAUEffect: @escaping (AUPluginDescriptor) -> Void = { _ in },
+        onRemoveAUEffect: @escaping (UUID) -> Void = { _ in },
+        onToggleAUEffect: @escaping (UUID, Bool) -> Void = { _, _ in },
+        onAUBypassToggle: @escaping () -> Void = {},
+        onToggleAUFavorite: @escaping (String) -> Void = { _ in },
+        onOpenAUUI: @escaping (UUID) -> Void = { _ in },
+        onOpenAUGenericUI: @escaping (UUID) -> Void = { _ in },
+        auFailedEntryIDs: Set<UUID> = [],
+        getAUFactoryPresets: @escaping (UUID) -> [(index: Int, name: String)] = { _ in [] },
+        onSelectAUFactoryPreset: @escaping (UUID, Int) -> Void = { _, _ in }
     ) {
         self.app = app
         self.volume = volume
@@ -99,6 +131,21 @@ struct AppRowWithLevelPolling: View {
         self.isEQExpanded = isEQExpanded
         self.onEQToggle = onEQToggle
         self.isFocused = isFocused
+        self.auEffectChain = auEffectChain
+        self.isAUChainBypassed = isAUChainBypassed
+        self.auPluginScanner = auPluginScanner
+        self.getFavoriteAUPlugins = getFavoriteAUPlugins
+        self.getAUCrashHistory = getAUCrashHistory
+        self.onAddAUEffect = onAddAUEffect
+        self.onRemoveAUEffect = onRemoveAUEffect
+        self.onToggleAUEffect = onToggleAUEffect
+        self.onAUBypassToggle = onAUBypassToggle
+        self.onToggleAUFavorite = onToggleAUFavorite
+        self.onOpenAUUI = onOpenAUUI
+        self.onOpenAUGenericUI = onOpenAUGenericUI
+        self.auFailedEntryIDs = auFailedEntryIDs
+        self.getAUFactoryPresets = getAUFactoryPresets
+        self.onSelectAUFactoryPreset = onSelectAUFactoryPreset
     }
 
     var body: some View {
@@ -131,7 +178,22 @@ struct AppRowWithLevelPolling: View {
             onRenameUserPreset: onRenameUserPreset,
             isEQExpanded: isEQExpanded,
             onEQToggle: onEQToggle,
-            isFocused: isFocused
+            isFocused: isFocused,
+            auEffectChain: auEffectChain,
+            isAUChainBypassed: isAUChainBypassed,
+            auPluginScanner: auPluginScanner,
+            getFavoriteAUPlugins: getFavoriteAUPlugins,
+            getAUCrashHistory: getAUCrashHistory,
+            onAddAUEffect: onAddAUEffect,
+            onRemoveAUEffect: onRemoveAUEffect,
+            onToggleAUEffect: onToggleAUEffect,
+            onAUBypassToggle: onAUBypassToggle,
+            onToggleAUFavorite: onToggleAUFavorite,
+            onOpenAUUI: onOpenAUUI,
+            onOpenAUGenericUI: onOpenAUGenericUI,
+            auFailedEntryIDs: auFailedEntryIDs,
+            getAUFactoryPresets: getAUFactoryPresets,
+            onSelectAUFactoryPreset: onSelectAUFactoryPreset
         )
         .onAppear {
             if isPopupVisible {
