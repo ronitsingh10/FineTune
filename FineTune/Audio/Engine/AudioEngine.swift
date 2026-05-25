@@ -15,6 +15,7 @@ final class AudioEngine {
     let settingsManager: SettingsManager
     let autoEQProfileManager: AutoEQProfileManager
     let permission: AudioRecordingPermission
+    let voipCallDetector: VoIPCallDetector
 
     #if !APP_STORE
     let ddcController: DDCController
@@ -187,6 +188,10 @@ final class AudioEngine {
         self.autoEQProfileManager = autoEQProfileManager ?? AutoEQProfileManager()
         self.volumeState = VolumeState(settingsManager: manager)
         self.isAliveCheck = isAlive ?? { $0.isDeviceAlive() }
+        self.voipCallDetector = VoIPCallDetector(
+            extraBundleIDs: manager.appSettings.callDucking.extraCallAppBundleIDs,
+            disabledBundleIDs: manager.appSettings.callDucking.disabledCallAppBundleIDs
+        )
 
         // If a custom deviceProvider is given, use it directly.
         // Otherwise create a real AudioDeviceMonitor (needed by DeviceVolumeMonitor and default tap factory).
@@ -348,8 +353,19 @@ final class AudioEngine {
         }
 
         processMonitor.onAppsChanged = { [weak self] apps in
-            self?.applyPersistedSettings()
-            self?.scheduleStaleCleanup()
+            guard let self else { return }
+            self.applyPersistedSettings()
+            self.scheduleStaleCleanup()
+            self.voipCallDetector.update(from: apps)
+            self.tearDownVoIPTaps()
+        }
+
+        // Re-apply every tap's effective volume whenever a call starts/ends.
+        // The compensation factor is multiplied into effectiveVolume(for:) below;
+        // refreshAllTapOutputStates pushes the new value to ProcessTapController,
+        // whose existing 30 ms ramp keeps the transition click-free.
+        voipCallDetector.onCallStateChanged = { [weak self] _, _ in
+            self?.refreshAllTapOutputStates()
         }
 
         // Priority order closures — only for concrete AudioDeviceMonitor
@@ -690,21 +706,68 @@ final class AudioEngine {
     }
 
     /// Effective gain for ProcessTapController: app volume × boost, plus optional
-    /// single-device software output gain for software-backed devices.
+    /// single-device software output gain for software-backed devices, plus the
+    /// VoIP call counter-boost when a call is active and this app is not itself
+    /// the call app.
     /// Single-device-routed apps on `.software`-backed devices always receive the
     /// device's software gain; multi-destination routing keeps `appGain` alone
     /// because per-device software gain has no unambiguous meaning across fan-out.
     private func effectiveVolume(for pid: pid_t, deviceUIDs: [String]? = nil) -> Float {
         let appGain = volumeState.getVolume(for: pid) * volumeState.getBoost(for: pid).rawValue
+        let callBoost = callDuckingCompensationFactor(for: pid)
 
         guard let resolvedUIDs = deviceUIDs, resolvedUIDs.count == 1,
               let primaryUID = resolvedUIDs.first,
               let device = deviceMonitor.device(for: primaryUID),
               outputVolumeBackend(for: device.id) == .software else {
-            return appGain
+            return appGain * callBoost
         }
 
-        return appGain * deviceVolumeMonitor.outputProcessingGain(for: device.id)
+        return appGain * deviceVolumeMonitor.outputProcessingGain(for: device.id) * callBoost
+    }
+
+    /// Linear gain multiplier applied to a tapped app to compensate for macOS's
+    /// "communication mode" ducking. Returns 1.0 when the feature is disabled,
+    /// when no VoIP call is in progress, or when `pid` is itself a call app
+    /// (we never amplify the call audio — that would defeat the purpose).
+    ///
+    /// The downstream SoftLimiter in ProcessTapController.processMappedBuffers
+    /// protects against clipping when the boost pushes the chain above 0 dBFS.
+    private func callDuckingCompensationFactor(for pid: pid_t) -> Float {
+        let settings = settingsManager.appSettings.callDucking
+        guard settings.enabled, voipCallDetector.isCallActive else { return 1.0 }
+        if voipCallDetector.activeCallPIDs.contains(pid) { return 1.0 }
+        return pow(10.0, settings.boostDecibels / 20.0)
+    }
+
+    /// Public hook for the settings UI: re-read call-ducking settings from
+    /// `SettingsManager`, reconfigure the detector, and immediately re-apply
+    /// per-tap volumes so the change is heard without restarting the engine.
+    func handleCallDuckingSettingsChanged() {
+        let settings = settingsManager.appSettings.callDucking
+        voipCallDetector.updateBundleIDList(
+            extra: settings.extraCallAppBundleIDs,
+            disabled: settings.disabledCallAppBundleIDs,
+            currentApps: processMonitor.activeApps
+        )
+        tearDownVoIPTaps()
+        refreshAllTapOutputStates()
+    }
+
+    /// Invalidate any live taps on VoIP apps. We don't want our aggregate
+    /// device sitting in the call audio path — macOS's voice-processing mixer
+    /// would treat it as "other audio" and duck the call itself.
+    private func tearDownVoIPTaps() {
+        guard settingsManager.appSettings.callDucking.enabled else { return }
+        for app in apps where voipCallDetector.isVoIPApp(app) {
+            if let tap = taps.removeValue(forKey: app.id) {
+                tap.invalidate()
+                logger.info("Tore down tap on VoIP app to keep call audio out of our pipeline: \(app.name)")
+            }
+            appDeviceRouting.removeValue(forKey: app.id)
+            followsDefault.remove(app.id)
+            appliedPIDs.remove(app.id)
+        }
     }
 
     /// Estimated listening level for loudness compensation: device volume × per-app slider.
@@ -1087,6 +1150,13 @@ final class AudioEngine {
         for app in apps {
             guard !appliedPIDs.contains(app.id) else { continue }
             guard !settingsManager.isIgnored(app.persistenceIdentifier) else { continue }
+            // Never tap VoIP / conferencing apps. Routing call audio through our
+            // aggregate device exposes it to macOS's voice-processing mixer as
+            // "other audio", which then ducks the call itself. Leaving these
+            // apps untapped preserves the system's native voice routing.
+            if settingsManager.appSettings.callDucking.enabled, voipCallDetector.isVoIPApp(app) {
+                continue
+            }
 
             // Load saved device selection mode (single vs multi)
             let savedMode = volumeState.loadSavedDeviceSelectionMode(for: app.id, identifier: app.persistenceIdentifier)

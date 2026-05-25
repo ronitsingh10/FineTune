@@ -187,6 +187,33 @@ enum VolumeHotkeyStep: String, Codable, CaseIterable, Identifiable, CustomString
     }
 }
 
+// MARK: - Call Ducking Compensation
+
+/// Settings for the per-app counter-boost applied while a VoIP / video-call app
+/// is active. This compensates for macOS's automatic "communication mode"
+/// audio ducking (handled inside coreaudiod's voice-processing IO unit), which
+/// cannot be disabled via public API on Apple Silicon with SIP enabled.
+struct CallDuckingCompensation: Codable, Equatable {
+    /// When true, every tapped app that is not itself a VoIP app receives an
+    /// extra `boostDecibels` gain stage while at least one call is in progress.
+    var enabled: Bool = false
+
+    /// Counter-boost magnitude in dB. macOS ducking ranges roughly 10–20 dB
+    /// depending on `AUVoiceIOOtherAudioDuckingConfiguration` level. +12 dB
+    /// is the empirical sweet spot from real-world testing on built-in
+    /// MacBook speakers — high enough to recover most of the lost loudness
+    /// without pushing typical mastered music into the per-tap `SoftLimiter`.
+    /// Users can adjust this in Settings → Audio if their setup needs more.
+    var boostDecibels: Float = 12.0
+
+    /// User-added bundle IDs that should be treated as call apps in addition
+    /// to the built-in `VoIPCallDetector.defaultVoIPBundleIDs` list.
+    var extraCallAppBundleIDs: Set<String> = []
+
+    /// Built-in bundle IDs the user has explicitly opted out of.
+    var disabledCallAppBundleIDs: Set<String> = []
+}
+
 // MARK: - App-Wide Settings Model
 
 struct AppSettings: Codable, Equatable {
@@ -206,6 +233,7 @@ struct AppSettings: Codable, Equatable {
     // Audio Processing
     var loudnessCompensationEnabled: Bool = false  // ISO 226:2023 equal-loudness contour compensation
     var loudnessEqualizationEnabled: Bool = false  // Real-time loudness equalization
+    var callDucking: CallDuckingCompensation = CallDuckingCompensation()
 
     // Media Keys & HUD
     var hudStyle: HUDStyle = .tahoe                // Visual style of the volume HUD
@@ -239,6 +267,7 @@ struct AppSettings: Codable, Equatable {
         showDeviceDisconnectAlerts = try c.decodeIfPresent(Bool.self, forKey: .showDeviceDisconnectAlerts) ?? true
         loudnessCompensationEnabled = try c.decodeIfPresent(Bool.self, forKey: .loudnessCompensationEnabled) ?? false
         loudnessEqualizationEnabled = try c.decodeIfPresent(Bool.self, forKey: .loudnessEqualizationEnabled) ?? false
+        callDucking = try c.decodeIfPresent(CallDuckingCompensation.self, forKey: .callDucking) ?? CallDuckingCompensation()
         hudStyle = try c.decodeIfPresent(HUDStyle.self, forKey: .hudStyle) ?? .tahoe
         mediaKeyControlEnabled = try c.decodeIfPresent(Bool.self, forKey: .mediaKeyControlEnabled) ?? true
         volumeHotkeyStep = try c.decodeIfPresent(VolumeHotkeyStep.self, forKey: .volumeHotkeyStep) ?? .normal

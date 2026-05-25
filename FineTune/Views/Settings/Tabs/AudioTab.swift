@@ -26,6 +26,7 @@ struct AudioTab: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 24) {
                 volumeSection
+                callDuckingSection
                 devicesSection
             }
             .padding(.horizontal, 20)
@@ -45,6 +46,12 @@ struct AudioTab: View {
         }
         .onChange(of: settings.appSettings.loudnessEqualizationEnabled) { _, newValue in
             audioEngine.setLoudnessEqualizationEnabled(newValue)
+        }
+        .onChange(of: settings.appSettings.callDucking.enabled) { _, _ in
+            audioEngine.handleCallDuckingSettingsChanged()
+        }
+        .onChange(of: settings.appSettings.callDucking.boostDecibels) { _, _ in
+            audioEngine.handleCallDuckingSettingsChanged()
         }
     }
 
@@ -71,6 +78,72 @@ struct AudioTab: View {
                     .toggleStyle(.switch)
                     .controlSize(.small)
                     .labelsHidden()
+            }
+        }
+    }
+
+    // MARK: - Call Ducking Compensation
+
+    private var callDuckingBoostBinding: Binding<Float> {
+        Binding(
+            get: { settings.appSettings.callDucking.boostDecibels },
+            set: { settings.appSettings.callDucking.boostDecibels = $0 }
+        )
+    }
+
+    private var callDuckingStatusText: String {
+        guard settings.appSettings.callDucking.enabled else {
+            return "Disabled. Other apps will be ducked during calls."
+        }
+        if audioEngine.voipCallDetector.isCallActive {
+            let names = audioEngine.voipCallDetector.activeCallBundleIDs
+                .sorted()
+                .map { $0.split(separator: ".").last.map(String.init) ?? $0 }
+                .joined(separator: ", ")
+            return "Active — boosting other apps by \(Int(settings.appSettings.callDucking.boostDecibels)) dB to compensate for: \(names)."
+        }
+        return "Idle — will kick in when a recognised call app starts."
+    }
+
+    private var callDuckingSection: some View {
+        SettingsSection("Call Ducking Compensation") {
+            SettingsRow(
+                "Enable",
+                description: "When a VoIP / video call is active, automatically boost every other app to undo macOS's automatic ducking. macOS reduces all other audio by roughly 20 dB during FaceTime / WhatsApp / Zoom / etc. calls — this counter-boost cancels it out."
+            ) {
+                Toggle("", isOn: $settings.appSettings.callDucking.enabled)
+                    .toggleStyle(.switch)
+                    .controlSize(.small)
+                    .labelsHidden()
+            }
+            SettingsRowDivider()
+            SettingsRow(
+                "Boost Amount",
+                description: "How much to amplify other apps while a call is active. macOS ducks roughly 20 dB by default; start there and adjust to taste."
+            ) {
+                HStack(spacing: DesignTokens.Spacing.sm) {
+                    Slider(
+                        value: Binding(
+                            get: { Double(callDuckingBoostBinding.wrappedValue) },
+                            set: { callDuckingBoostBinding.wrappedValue = Float($0) }
+                        ),
+                        in: 6.0...24.0,
+                        step: 1.0
+                    )
+                    .frame(width: 280)
+                    .disabled(!settings.appSettings.callDucking.enabled)
+                    Text("\(Int(settings.appSettings.callDucking.boostDecibels)) dB")
+                        .font(.system(size: 11, weight: .medium).monospacedDigit())
+                        .foregroundStyle(.secondary)
+                        .frame(width: DesignTokens.Dimensions.settingsPercentageWidth, alignment: .trailing)
+                }
+            }
+            SettingsRowDivider()
+            SettingsRow(
+                "Status",
+                description: callDuckingStatusText
+            ) {
+                EmptyView()
             }
         }
     }
