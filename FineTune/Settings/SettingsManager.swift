@@ -198,9 +198,12 @@ struct CallDuckingCompensation: Codable, Equatable {
     /// extra `boostDecibels` gain stage while at least one call is in progress.
     var enabled: Bool = false
 
-    /// Counter-boost magnitude in dB. macOS ducking is roughly ~20 dB by
-    /// default, so the recommended range is 12–24 dB.
-    var boostDecibels: Float = 18.0
+    /// Counter-boost magnitude in dB. macOS ducking is roughly ~20 dB at the
+    /// default `AUVoiceIOOtherAudioDuckingConfiguration.Default` level, but
+    /// hardware/route variations mean +14 dB is a safe sweet spot that won't
+    /// push the per-tap `SoftLimiter` into audible compression on already-loud
+    /// material. Users can crank it up if their setup still sounds ducked.
+    var boostDecibels: Float = 14.0
 
     /// User-added bundle IDs that should be treated as call apps in addition
     /// to the built-in `VoIPCallDetector.defaultVoIPBundleIDs` list.

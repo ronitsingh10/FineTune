@@ -44,6 +44,11 @@ final class VoIPCallDetector {
         category: "VoIPCallDetector"
     )
 
+    /// Currently-effective allowlist of VoIP process executable names (lower-cased).
+    /// Used as a fallback when the audio-process object reports a nil bundle ID —
+    /// system daemons like `avconferenced` and `callservicesd` rarely have a bundle ID.
+    private(set) var effectiveProcessNames: Set<String>
+
     init(
         extraBundleIDs: Set<String> = [],
         disabledBundleIDs: Set<String> = []
@@ -52,6 +57,7 @@ final class VoIPCallDetector {
             extra: extraBundleIDs,
             disabled: disabledBundleIDs
         )
+        self.effectiveProcessNames = Self.defaultVoIPProcessNames
     }
 
     /// Update the allowlist. Call this when the user edits the bundle-ID list
@@ -65,17 +71,48 @@ final class VoIPCallDetector {
         update(from: currentApps)
     }
 
+    /// Returns true if the given app is in our VoIP allowlist (by bundle ID or
+    /// process name). Used by AudioEngine to skip tap creation for call apps —
+    /// tapping them would route call audio through our aggregate device, which
+    /// macOS's voice-processing mixer then treats as "other audio" and ducks,
+    /// silencing the actual call.
+    func isVoIPApp(_ app: AudioApp) -> Bool {
+        let bundleID = app.bundleID?.lowercased()
+        let processName = app.name.lowercased()
+        let bundleMatch = bundleID.map { effectiveBundleIDs.contains($0) } ?? false
+        let nameMatch = effectiveProcessNames.contains(processName)
+        return bundleMatch || nameMatch
+    }
+
     /// Re-evaluate which apps count as active calls.
     /// Call this from AudioProcessMonitor.onAppsChanged.
+    ///
+    /// Matches on bundle ID first, falls back to process executable name.
+    /// The fallback is essential for `avconferenced` and similar XPC daemons
+    /// whose `kAudioProcessPropertyBundleID` is nil even though they're the
+    /// actual host of FaceTime/Phone call audio.
     func update(from apps: [AudioApp]) {
         var newCallPIDs: Set<pid_t> = []
         var newCallBundleIDs: Set<String> = []
 
+        // Diagnostic dump of every audio-active app so we can see what bundle
+        // IDs / names the process monitor is actually giving us. Helpful for
+        // debugging missed-match cases (e.g. avconferenced reporting a name
+        // we don't have in our allowlist).
+        let snapshot = apps.map { "\($0.name)|\($0.bundleID ?? "nil")" }
+            .joined(separator: ", ")
+        logger.info("Scanning \(apps.count, privacy: .public) audio-active processes: \(snapshot, privacy: .public)")
+
         for app in apps {
-            guard let bundleID = app.bundleID?.lowercased() else { continue }
-            if effectiveBundleIDs.contains(bundleID) {
+            let bundleID = app.bundleID?.lowercased()
+            let processName = app.name.lowercased()
+
+            let bundleMatch = bundleID.map { effectiveBundleIDs.contains($0) } ?? false
+            let nameMatch = effectiveProcessNames.contains(processName)
+
+            if bundleMatch || nameMatch {
                 newCallPIDs.insert(app.id)
-                newCallBundleIDs.insert(bundleID)
+                newCallBundleIDs.insert(bundleID ?? processName)
             }
         }
 
@@ -105,6 +142,19 @@ final class VoIPCallDetector {
             .subtracting(normalizedDisabled)
             .union(normalizedExtra)
     }
+
+    /// Built-in list of well-known VoIP daemon / XPC executable names whose
+    /// `kAudioProcessPropertyBundleID` is typically nil. These are matched on
+    /// `AudioApp.name` (lower-cased) as a fallback when bundle ID lookup fails.
+    ///
+    /// Most importantly: `avconferenced` is the actual audio host for FaceTime
+    /// and Phone calls on macOS — without name matching, the detector would
+    /// boost it as "other audio" and the call itself would clip in our limiter.
+    static let defaultVoIPProcessNames: Set<String> = [
+        "avconferenced",
+        "callservicesd",
+        "telephonyutilities",
+    ]
 
     /// Built-in list of well-known VoIP / video-call / conferencing apps that
     /// drive Apple's voice-processing IO unit and therefore trigger ducking.

@@ -357,6 +357,7 @@ final class AudioEngine {
             self.applyPersistedSettings()
             self.scheduleStaleCleanup()
             self.voipCallDetector.update(from: apps)
+            self.tearDownVoIPTaps()
         }
 
         // Re-apply every tap's effective volume whenever a call starts/ends.
@@ -749,7 +750,24 @@ final class AudioEngine {
             disabled: settings.disabledCallAppBundleIDs,
             currentApps: processMonitor.activeApps
         )
+        tearDownVoIPTaps()
         refreshAllTapOutputStates()
+    }
+
+    /// Invalidate any live taps on VoIP apps. We don't want our aggregate
+    /// device sitting in the call audio path — macOS's voice-processing mixer
+    /// would treat it as "other audio" and duck the call itself.
+    private func tearDownVoIPTaps() {
+        guard settingsManager.appSettings.callDucking.enabled else { return }
+        for app in apps where voipCallDetector.isVoIPApp(app) {
+            if let tap = taps.removeValue(forKey: app.id) {
+                tap.invalidate()
+                logger.info("Tore down tap on VoIP app to keep call audio out of our pipeline: \(app.name)")
+            }
+            appDeviceRouting.removeValue(forKey: app.id)
+            followsDefault.remove(app.id)
+            appliedPIDs.remove(app.id)
+        }
     }
 
     /// Estimated listening level for loudness compensation: device volume × per-app slider.
@@ -1132,6 +1150,13 @@ final class AudioEngine {
         for app in apps {
             guard !appliedPIDs.contains(app.id) else { continue }
             guard !settingsManager.isIgnored(app.persistenceIdentifier) else { continue }
+            // Never tap VoIP / conferencing apps. Routing call audio through our
+            // aggregate device exposes it to macOS's voice-processing mixer as
+            // "other audio", which then ducks the call itself. Leaving these
+            // apps untapped preserves the system's native voice routing.
+            if settingsManager.appSettings.callDucking.enabled, voipCallDetector.isVoIPApp(app) {
+                continue
+            }
 
             // Load saved device selection mode (single vs multi)
             let savedMode = volumeState.loadSavedDeviceSelectionMode(for: app.id, identifier: app.persistenceIdentifier)
