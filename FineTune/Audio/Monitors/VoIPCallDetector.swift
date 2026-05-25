@@ -95,13 +95,13 @@ final class VoIPCallDetector {
         var newCallPIDs: Set<pid_t> = []
         var newCallBundleIDs: Set<String> = []
 
-        // Diagnostic dump of every audio-active app so we can see what bundle
-        // IDs / names the process monitor is actually giving us. Helpful for
-        // debugging missed-match cases (e.g. avconferenced reporting a name
-        // we don't have in our allowlist).
+        // Diagnostic dump of every audio-active app so missed-match cases
+        // (e.g. a new VoIP daemon with a name we don't recognise) can be
+        // investigated by raising the log level via the Console.app filter.
+        // `.debug` keeps it out of the default unified-log stream.
         let snapshot = apps.map { "\($0.name)|\($0.bundleID ?? "nil")" }
             .joined(separator: ", ")
-        logger.info("Scanning \(apps.count, privacy: .public) audio-active processes: \(snapshot, privacy: .public)")
+        logger.debug("Scanning \(apps.count, privacy: .public) audio-active processes: \(snapshot, privacy: .public)")
 
         for app in apps {
             let bundleID = app.bundleID?.lowercased()

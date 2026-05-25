@@ -116,6 +116,7 @@ struct MenuBarPopupView: View {
                 }
                 Spacer()
                 editPriorityButton
+                callDuckingButton
                 settingsButton
             }
             .padding(.bottom, DesignTokens.Spacing.xs)
@@ -367,6 +368,58 @@ struct MenuBarPopupView: View {
                 .help("Quit FineTune (⌘Q)")
             }
         }
+    }
+
+    // MARK: - Call Ducking Compensation Header Button
+
+    /// Compact icon-only toggle for the VoIP call-ducking compensation feature.
+    /// Sits in the header next to the gear button. The detailed knob (boost
+    /// dB) still lives in Settings → Audio.
+    ///
+    /// Visual state machine:
+    ///   - Disabled (off):  faded phone icon, click to enable
+    ///   - Enabled + idle:  normal phone icon, click to disable
+    ///   - Enabled + active call: filled green phone icon (live indicator)
+    private var callDuckingButton: some View {
+        let enabled = audioEngine.settingsManager.appSettings.callDucking.enabled
+        let active = enabled && audioEngine.voipCallDetector.isCallActive
+        let symbol = active ? "phone.connection.fill" : "phone.connection"
+        let tint: Color = active
+            ? .green
+            : (enabled
+                ? DesignTokens.Colors.interactiveDefault
+                : DesignTokens.Colors.textTertiary)
+        let tooltip: String = {
+            if !enabled {
+                return "Call Ducking Compensation: Off — click to enable"
+            }
+            if active {
+                let names = audioEngine.voipCallDetector.activeCallBundleIDs
+                    .sorted()
+                    .compactMap { $0.split(separator: ".").last.map(String.init) }
+                    .joined(separator: ", ")
+                return "Call Ducking Compensation: Active — boosting other apps to compensate for \(names)"
+            }
+            return "Call Ducking Compensation: Armed — waiting for FaceTime / WhatsApp / Discord / Zoom call"
+        }()
+
+        return Button {
+            audioEngine.settingsManager.appSettings.callDucking.enabled.toggle()
+            audioEngine.handleCallDuckingSettingsChanged()
+        } label: {
+            Image(systemName: symbol)
+        }
+        .buttonStyle(.plain)
+        .font(.system(size: 12))
+        .symbolRenderingMode(.hierarchical)
+        .foregroundStyle(tint)
+        .frame(
+            minWidth: DesignTokens.Dimensions.minTouchTarget,
+            minHeight: DesignTokens.Dimensions.minTouchTarget
+        )
+        .contentShape(Rectangle())
+        .accessibilityLabel("Call Ducking Compensation")
+        .help(tooltip)
     }
 
     // MARK: - Default Devices Status
