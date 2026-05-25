@@ -30,6 +30,12 @@ protocol ProcessTapControlling: AnyObject {
 
     var tapSourceDeviceUID: String? { get }
     func refreshTapSource(_ preferredDeviceUID: String?) async throws
+
+    /// Assigns a loopback ring buffer for cross-process audio routing.
+    /// When set, the audio callback forks processed samples to shared memory
+    /// so the FineTuneLoopback HAL plugin can read them as an input device.
+    /// Pass nil to disconnect from loopback.
+    func setLoopbackBuffer(_ buffer: LoopbackRingBuffer?)
 }
 
 extension ProcessTapControlling {
@@ -48,6 +54,10 @@ extension ProcessTapControlling {
     }
 
     func refreshTapSource(_ preferredDeviceUID: String?) async throws {
+        // Default no-op for mocks that don't override
+    }
+
+    func setLoopbackBuffer(_ buffer: LoopbackRingBuffer?) {
         // Default no-op for mocks that don't override
     }
 }

@@ -15,6 +15,7 @@ final class AudioEngine {
     let settingsManager: SettingsManager
     let autoEQProfileManager: AutoEQProfileManager
     let permission: AudioRecordingPermission
+    let loopbackManager: LoopbackDeviceManager
 
     #if !APP_STORE
     let ddcController: DDCController
@@ -182,6 +183,7 @@ final class AudioEngine {
         startMonitorsAutomatically: Bool = true
     ) {
         self.permission = permission ?? AudioRecordingPermission()
+        self.loopbackManager = LoopbackDeviceManager()
         let manager = settingsManager ?? SettingsManager()
         self.settingsManager = manager
         self.autoEQProfileManager = autoEQProfileManager ?? AutoEQProfileManager()
@@ -618,9 +620,63 @@ final class AudioEngine {
     /// Call from applicationWillTerminate or equivalent lifecycle hook.
     /// Note: For menu bar apps, process exit cleans up resources anyway, so this is optional.
     func shutdown() {
+        loopbackManager.disableLoopback()
         stop()
         deviceVolumeMonitor.stop()
         logger.info("AudioEngine shutdown complete")
+    }
+
+    // MARK: - Loopback Audio Routing
+
+    /// Whether the loopback HAL plugin driver is installed.
+    var isLoopbackDriverInstalled: Bool {
+        loopbackManager.isDriverInstalled
+    }
+
+    /// Whether any app is currently routing audio to loopback.
+    var isLoopbackActive: Bool {
+        loopbackManager.isActive
+    }
+
+    /// Installs the FineTune Loopback HAL plugin driver (requires admin privileges).
+    func installLoopbackDriver() async throws {
+        try await loopbackManager.installDriver()
+    }
+
+    /// Enables loopback routing for a specific app.
+    /// Creates the shared memory ring buffer if not already active.
+    func enableLoopback(for app: AudioApp) throws {
+        let buffer = try loopbackManager.enableLoopback()
+        loopbackManager.addApp(app.id)
+
+        // Assign the ring buffer to the app's tap
+        if let tap = taps[app.id] {
+            tap.setLoopbackBuffer(buffer)
+        }
+
+        logger.info("Loopback enabled for \(app.name)")
+    }
+
+    /// Disables loopback routing for a specific app.
+    func disableLoopback(for app: AudioApp) {
+        loopbackManager.removeApp(app.id)
+
+        // Remove the ring buffer from the tap
+        if let tap = taps[app.id] {
+            tap.setLoopbackBuffer(nil)
+        }
+
+        // If no more apps are using loopback, disable the system
+        if loopbackManager.activeApps.isEmpty {
+            loopbackManager.disableLoopback()
+        }
+
+        logger.info("Loopback disabled for \(app.name)")
+    }
+
+    /// Checks if an app is currently routing to loopback.
+    func isLoopbackEnabled(for app: AudioApp) -> Bool {
+        loopbackManager.isAppRouted(app.id)
     }
 
     // MARK: - Settings Reset
@@ -1222,6 +1278,39 @@ final class AudioEngine {
                 volume: effectiveLoudnessVolume(for: tap),
                 enabled: settingsManager.appSettings.loudnessCompensationEnabled
             )
+
+            // Auto-enable loopback: route this app's audio to the shared memory ring
+            // buffer so DAWs can record from it via the FineTune Loopback device.
+            //
+            // CONSTRAINTS:
+            // 1. Ring buffer is SPSC (single producer, single consumer) — only ONE app
+            //    can write at a time. Multiple writers corrupt the data.
+            // 2. DAWs must be excluded to prevent feedback loops (they read from the
+            //    loopback device, so writing their output back creates distortion).
+            if loopbackManager.isDriverInstalled && loopbackManager.activeApps.isEmpty {
+                let bundleID = (app.bundleID ?? "").lowercased()
+                let isDAW = bundleID.contains("ableton") ||
+                            bundleID.contains("apple.logic") ||
+                            bundleID.contains("steinberg") ||
+                            bundleID.contains("bitwig") ||
+                            bundleID.contains("reaper") ||
+                            bundleID.contains("image-line")  // FL Studio
+                if !isDAW {
+                    do {
+                        let buffer = try loopbackManager.enableLoopback(
+                            sampleRate: Float64(44100.0),  // Match common macOS sample rate
+                            channels: 2
+                        )
+                        tap.setLoopbackBuffer(buffer)
+                        loopbackManager.addApp(app.id)
+                        logger.info("Loopback auto-enabled for \(app.name) (exclusive)")
+                    } catch {
+                        logger.error("Failed to auto-enable loopback for \(app.name): \(error)")
+                    }
+                } else {
+                    logger.debug("Skipping loopback for DAW: \(app.name)")
+                }
+            }
 
             logger.debug("Created tap for \(app.name)")
         } catch {

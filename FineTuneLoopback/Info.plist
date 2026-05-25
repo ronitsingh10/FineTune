@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>AudioServerPlugIn_LoadingConditions</key>
+	<dict>
+		<key>IOService Matching</key>
+		<array>
+			<dict>
+				<key>IOProviderClass</key>
+				<string>IOPlatformExpertDevice</string>
+			</dict>
+		</array>
+	</dict>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>en</string>
+	<key>CFBundleExecutable</key>
+	<string>FineTuneLoopback</string>
+	<key>CFBundleIdentifier</key>
+	<string>com.finetuneapp.FineTuneLoopback</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleName</key>
+	<string>FineTune Loopback</string>
+	<key>CFBundlePackageType</key>
+	<string>BNDL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>1.0</string>
+	<key>CFBundleVersion</key>
+	<string>1</string>
+	<key>CFPlugInFactories</key>
+	<dict>
+		<!-- Factory UUID: must match kFTLoopbackPluginFactoryUUID in FTLoopbackDriver.h -->
+		<key>5A8B4F1E-3C9D-4E2A-B7F6-8D1E0A2C4B6E</key>
+		<string>FTLoopbackDriverFactory</string>
+	</dict>
+	<key>CFPlugInTypes</key>
+	<dict>
+		<!-- AudioServerPlugIn type UUID (Apple-defined, do not change) -->
+		<key>443ABAB8-E7B3-491A-B985-BEB9187030DB</key>
+		<array>
+			<!-- Our factory UUID -->
+			<string>5A8B4F1E-3C9D-4E2A-B7F6-8D1E0A2C4B6E</string>
+		</array>
+	</dict>
+	<key>LSMinimumSystemVersion</key>
+	<string>14.0</string>
+</dict>
+</plist>

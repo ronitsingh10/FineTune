@@ -13,6 +13,10 @@
 		79B1000B2F35000000000002 /* IOBluetooth.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 79B1000A2F35000000000001 /* IOBluetooth.framework */; settings = {ATTRIBUTES = (Weak, ); }; };
 		79C80E5A2F12FF510021442B /* SnapshotTesting in Frameworks */ = {isa = PBXBuildFile; productRef = 79SNAP0012F0600000008D52A /* SnapshotTesting */; };
 		79FLUID0012F0600000008D52 /* FluidMenuBarExtra in Frameworks */ = {isa = PBXBuildFile; productRef = 79FLUID0022F0600000008D52 /* FluidMenuBarExtra */; };
+		79LB00012F50000000000001 /* FTLoopbackDriver.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 79LB00022F50000000000002 /* FTLoopbackDriver.cpp */; };
+		79LB00032F50000000000003 /* FineTuneLoopback.driver in Copy Loopback Driver */ = {isa = PBXBuildFile; fileRef = 79LB00042F50000000000004 /* FineTuneLoopback.driver */; };
+		79LB00202F50000000000020 /* CoreAudio.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 79LB00212F50000000000021 /* CoreAudio.framework */; };
+		79LB00222F50000000000022 /* CoreFoundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 79LB00232F50000000000023 /* CoreFoundation.framework */; };
 		D60793509DEB13A2E97D5EBF /* KeyboardShortcuts in Frameworks */ = {isa = PBXBuildFile; productRef = C18F337FFBE2D40467959144 /* KeyboardShortcuts */; };
 /* End PBXBuildFile section */
 
@@ -31,7 +35,28 @@
 			remoteGlobalIDString = 79A607AE2F05C9E00008D52A;
 			remoteInfo = FineTune;
 		};
+		79LB00052F50000000000005 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 79A607A72F05C9E00008D52A /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 79LB00062F50000000000006;
+			remoteInfo = FineTuneLoopback;
+		};
 /* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		79LB000B2F5000000000000B /* Copy Loopback Driver */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 7;
+			files = (
+				79LB00032F50000000000003 /* FineTuneLoopback.driver in Copy Loopback Driver */,
+			);
+			name = "Copy Loopback Driver";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
 		7988AE512F1CC55900E6D086 /* fineTuneIcon.icon */ = {isa = PBXFileReference; lastKnownFileType = folder.iconcomposer.icon; path = fineTuneIcon.icon; sourceTree = "<group>"; };
@@ -39,6 +64,13 @@
 		79A607BC2F05C9E10008D52A /* FineTuneTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = FineTuneTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		79A607C62F05C9E10008D52A /* FineTuneUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = FineTuneUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		79B1000A2F35000000000001 /* IOBluetooth.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = IOBluetooth.framework; path = System/Library/Frameworks/IOBluetooth.framework; sourceTree = SDKROOT; };
+		79LB00022F50000000000002 /* FTLoopbackDriver.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = FTLoopbackDriver.cpp; sourceTree = "<group>"; };
+		79LB00042F50000000000004 /* FineTuneLoopback.driver */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = FineTuneLoopback.driver; sourceTree = BUILT_PRODUCTS_DIR; };
+		79LB00072F50000000000007 /* FTLoopbackDriver.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = FTLoopbackDriver.h; sourceTree = "<group>"; };
+		79LB00082F50000000000008 /* SharedTypes.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = SharedTypes.h; sourceTree = "<group>"; };
+		79LB00092F50000000000009 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		79LB00212F50000000000021 /* CoreAudio.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CoreAudio.framework; path = System/Library/Frameworks/CoreAudio.framework; sourceTree = SDKROOT; };
+		79LB00232F50000000000023 /* CoreFoundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CoreFoundation.framework; path = System/Library/Frameworks/CoreFoundation.framework; sourceTree = SDKROOT; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -87,6 +119,15 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		79LB000F2F5000000000000F /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				79LB00202F50000000000020 /* CoreAudio.framework in Frameworks */,
+				79LB00222F50000000000022 /* CoreFoundation.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
@@ -94,6 +135,8 @@
 			isa = PBXGroup;
 			children = (
 				79B1000A2F35000000000001 /* IOBluetooth.framework */,
+				79LB00212F50000000000021 /* CoreAudio.framework */,
+				79LB00232F50000000000023 /* CoreFoundation.framework */,
 			);
 			name = "Recovered References";
 			sourceTree = "<group>";
@@ -102,6 +145,7 @@
 			isa = PBXGroup;
 			children = (
 				79A607B12F05C9E00008D52A /* FineTune */,
+				79LB000A2F5000000000000A /* FineTuneLoopback */,
 				79A607BF2F05C9E10008D52A /* FineTuneTests */,
 				79A607C92F05C9E10008D52A /* FineTuneUITests */,
 				79A607B02F05C9E00008D52A /* Products */,
@@ -116,8 +160,20 @@
 				79A607AF2F05C9E00008D52A /* FineTune.app */,
 				79A607BC2F05C9E10008D52A /* FineTuneTests.xctest */,
 				79A607C62F05C9E10008D52A /* FineTuneUITests.xctest */,
+				79LB00042F50000000000004 /* FineTuneLoopback.driver */,
 			);
 			name = Products;
+			sourceTree = "<group>";
+		};
+		79LB000A2F5000000000000A /* FineTuneLoopback */ = {
+			isa = PBXGroup;
+			children = (
+				79LB00022F50000000000002 /* FTLoopbackDriver.cpp */,
+				79LB00072F50000000000007 /* FTLoopbackDriver.h */,
+				79LB00082F50000000000008 /* SharedTypes.h */,
+				79LB00092F50000000000009 /* Info.plist */,
+			);
+			path = FineTuneLoopback;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -130,10 +186,12 @@
 				79A607AB2F05C9E00008D52A /* Sources */,
 				79A607AC2F05C9E00008D52A /* Frameworks */,
 				79A607AD2F05C9E00008D52A /* Resources */,
+				79LB000B2F5000000000000B /* Copy Loopback Driver */,
 			);
 			buildRules = (
 			);
 			dependencies = (
+				79LB000C2F5000000000000C /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
 				79A607B12F05C9E00008D52A /* FineTune */,
@@ -194,6 +252,22 @@
 			productReference = 79A607C62F05C9E10008D52A /* FineTuneUITests.xctest */;
 			productType = "com.apple.product-type.bundle.ui-testing";
 		};
+		79LB00062F50000000000006 /* FineTuneLoopback */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 79LB000D2F5000000000000D /* Build configuration list for PBXNativeTarget "FineTuneLoopback" */;
+			buildPhases = (
+				79LB000E2F5000000000000E /* Sources */,
+				79LB000F2F5000000000000F /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = FineTuneLoopback;
+			productName = FineTuneLoopback;
+			productReference = 79LB00042F50000000000004 /* FineTuneLoopback.driver */;
+			productType = "com.apple.product-type.bundle";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -214,6 +288,9 @@
 					79A607C52F05C9E10008D52A = {
 						CreatedOnToolsVersion = 26.1.1;
 						TestTargetID = 79A607AE2F05C9E00008D52A;
+					};
+					79LB00062F50000000000006 = {
+						CreatedOnToolsVersion = 26.1.1;
 					};
 				};
 			};
@@ -238,6 +315,7 @@
 			projectRoot = "";
 			targets = (
 				79A607AE2F05C9E00008D52A /* FineTune */,
+				79LB00062F50000000000006 /* FineTuneLoopback */,
 				79A607BB2F05C9E10008D52A /* FineTuneTests */,
 				79A607C52F05C9E10008D52A /* FineTuneUITests */,
 			);
@@ -291,6 +369,14 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		79LB000E2F5000000000000E /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				79LB00012F50000000000001 /* FTLoopbackDriver.cpp in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
@@ -303,6 +389,11 @@
 			isa = PBXTargetDependency;
 			target = 79A607AE2F05C9E00008D52A /* FineTune */;
 			targetProxy = 79A607C72F05C9E10008D52A /* PBXContainerItemProxy */;
+		};
+		79LB000C2F5000000000000C /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 79LB00062F50000000000006 /* FineTuneLoopback */;
+			targetProxy = 79LB00052F50000000000005 /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
 
@@ -433,12 +524,11 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = fineTuneIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = FineTune/FineTune.entitlements;
-				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Developer ID Application";
-				CODE_SIGN_STYLE = Manual;
+				CODE_SIGN_IDENTITY = "Apple Development";
+				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = "";
-				"DEVELOPMENT_TEAM[sdk=macosx*]" = "";
+				DEVELOPMENT_TEAM = T9MUAV83Z3;
 				ENABLE_APP_SANDBOX = NO;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = YES;
@@ -453,6 +543,7 @@
 				);
 				MARKETING_VERSION = 1.0.0;
 				OTHER_SWIFT_FLAGS = "$(inherited) -D ENABLE_TCC_SPI";
+				SWIFT_OBJC_BRIDGING_HEADER = "FineTune/FineTune-Bridging-Header.h";
 				PRODUCT_BUNDLE_IDENTIFIER = com.finetuneapp.FineTune;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				PROVISIONING_PROFILE_SPECIFIER = "";
@@ -472,12 +563,11 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = fineTuneIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = FineTune/FineTune.entitlements;
-				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Developer ID Application";
-				CODE_SIGN_STYLE = Manual;
+				CODE_SIGN_IDENTITY = "Apple Development";
+				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = "";
-				"DEVELOPMENT_TEAM[sdk=macosx*]" = "";
+				DEVELOPMENT_TEAM = T9MUAV83Z3;
 				ENABLE_APP_SANDBOX = NO;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = YES;
@@ -492,6 +582,7 @@
 				);
 				MARKETING_VERSION = 1.0.0;
 				OTHER_SWIFT_FLAGS = "$(inherited) -D ENABLE_TCC_SPI";
+				SWIFT_OBJC_BRIDGING_HEADER = "FineTune/FineTune-Bridging-Header.h";
 				PRODUCT_BUNDLE_IDENTIFIER = com.finetuneapp.FineTune;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				PROVISIONING_PROFILE_SPECIFIER = "";
@@ -585,6 +676,40 @@
 			};
 			name = Release;
 		};
+		79LB00102F50000000000010 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = "";
+				GENERATE_INFOPLIST_FILE = NO;
+				HEADER_SEARCH_PATHS = "$(SRCROOT)/FineTuneLoopback";
+				INFOPLIST_FILE = FineTuneLoopback/Info.plist;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.finetuneapp.FineTuneLoopback;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				WRAPPER_EXTENSION = driver;
+			};
+			name = Debug;
+		};
+		79LB00112F50000000000011 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = "";
+				GENERATE_INFOPLIST_FILE = NO;
+				HEADER_SEARCH_PATHS = "$(SRCROOT)/FineTuneLoopback";
+				INFOPLIST_FILE = FineTuneLoopback/Info.plist;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.finetuneapp.FineTuneLoopback;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				WRAPPER_EXTENSION = driver;
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -620,6 +745,15 @@
 			buildConfigurations = (
 				79A607D72F05C9E10008D52A /* Debug */,
 				79A607D82F05C9E10008D52A /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		79LB000D2F5000000000000D /* Build configuration list for PBXNativeTarget "FineTuneLoopback" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				79LB00102F50000000000010 /* Debug */,
+				79LB00112F50000000000011 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

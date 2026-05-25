@@ -118,6 +118,11 @@ final class ProcessTapController: ProcessTapControlling {
     private nonisolated(unsafe) var secondaryLoudnessCompensator: LoudnessCompensator?
     private nonisolated(unsafe) var secondaryLoudnessEqualizerProcessor: LoudnessEqualizer?
 
+    /// Loopback ring buffer for cross-process audio routing to virtual device.
+    /// When non-nil, processed audio is forked to shared memory in the IO callback.
+    /// Set from main thread; read from HAL I/O thread (pointer read is atomic on ARM64/x86-64).
+    private nonisolated(unsafe) var _loopbackBuffer: LoopbackRingBuffer?
+
     // Target device UIDs for synchronized multi-output (first is clock source)
     private var targetDeviceUIDs: [String]
     // Current active device UIDs
@@ -268,6 +273,18 @@ final class ProcessTapController: ProcessTapControlling {
             secondaryLoudnessEqualizerProcessor = newSecondary
             DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 0.5) { _ = secondary }
         }
+    }
+
+    // MARK: - Loopback
+
+    /// Assigns or removes the loopback ring buffer for virtual device routing.
+    /// The audio callback will fork processed samples to shared memory when this is set.
+    ///
+    /// **Thread safety:** Pointer write is atomic on ARM64/x86-64. The IO callback
+    /// reads the pointer each cycle — if it sees non-nil, it writes. A brief race
+    /// where the old/new pointer is seen is harmless (one buffer of silence or duplicate).
+    func setLoopbackBuffer(_ buffer: LoopbackRingBuffer?) {
+        _loopbackBuffer = buffer
     }
 
     // MARK: - Multi-Device Aggregate Configuration
@@ -1069,7 +1086,8 @@ final class ProcessTapController: ProcessTapControlling {
         eqProc: EQProcessor?,
         autoEQProc: AutoEQProcessor?,
         loudnessEqualizerProc: LoudnessEqualizer?,
-        loudnessCompensatorProc: LoudnessCompensator?
+        loudnessCompensatorProc: LoudnessCompensator?,
+        loopbackBuffer: LoopbackRingBuffer?
     ) {
         let inputBufferCount = inputBuffers.count
         let outputBufferCount = outputBuffers.count
@@ -1209,6 +1227,13 @@ final class ProcessTapController: ProcessTapControlling {
 
             let writtenSampleCount = frameCount * outputChannels
             SoftLimiter.processBuffer(outputSamples, sampleCount: writtenSampleCount)
+
+            // Fork processed audio to loopback virtual device (RT-safe: atomic + memcpy only).
+            // Only write from the first output buffer to avoid sending duplicate frames
+            // for multi-buffer device configurations (e.g., multi-channel aggregates).
+            if outputIndex == 0, let loopback = loopbackBuffer {
+                loopback.write(outputSamples, frameCount: frameCount, channels: outputChannels)
+            }
         }
     }
 
@@ -1348,7 +1373,8 @@ final class ProcessTapController: ProcessTapControlling {
             eqProc: eqProc,
             autoEQProc: autoEQProc,
             loudnessEqualizerProc: loudnessEqualizerProc,
-            loudnessCompensatorProc: loudnessCompensatorProc
+            loudnessCompensatorProc: loudnessCompensatorProc,
+            loopbackBuffer: _loopbackBuffer
         )
 
         if isPrimary {
