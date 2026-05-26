@@ -169,6 +169,34 @@ final class AudioEngine {
         }
     }
 
+    /// What an output device's connection should do to the system default and to
+    /// follows-default app routing. Pure decision so it can be tested in isolation.
+    enum ConnectedOutputDefaultAction: Equatable {
+        /// Connected device is the highest-priority *connected* device — ensure it is the
+        /// system default and re-route follows-default app taps to it. Covers both "not yet
+        /// default" and "macOS already auto-switched here", since reEvaluateOutputDefault sets
+        /// the default only when it differs and always re-points the taps.
+        case ensureHighestPriorityDefault
+        /// A lower-priority device that macOS auto-switched to — restore the device the user was on.
+        case restorePrevious
+        /// Lower-priority device that isn't the current default — leave routing as-is.
+        case none
+    }
+
+    static func connectedOutputDefaultAction(
+        connectedDeviceUID: String,
+        highestPriorityConnectedUID: String?,
+        currentDefaultUID: String?
+    ) -> ConnectedOutputDefaultAction {
+        if connectedDeviceUID == highestPriorityConnectedUID {
+            return .ensureHighestPriorityDefault
+        }
+        if connectedDeviceUID == currentDefaultUID {
+            return .restorePrevious
+        }
+        return .none
+    }
+
 
     init(
         permission: AudioRecordingPermission? = nil,
@@ -1513,11 +1541,11 @@ final class AudioEngine {
         // the user chose it. We still enter PENDING_AUTOSWITCH to guard against macOS
         // auto-switching to the new device.
         let currentDefault = deviceVolumeMonitor.defaultDeviceUID
-        let isNewDeviceHigherPriority = (deviceUID == Self.resolveHighestPriority(
+        let highestPriorityUID = Self.resolveHighestPriority(
             priorityOrder: settingsManager.devicePriorityOrder,
             connectedDevices: outputDevices,
             isAlive: isAliveCheck
-        )?.uid)
+        )?.uid
 
         // If this device is present but not alive, watch for it to become alive
         if let device = deviceMonitor.device(for: deviceUID),
@@ -1525,13 +1553,24 @@ final class AudioEngine {
             installAliveWatcher(deviceID: device.id, uid: deviceUID, name: deviceName)
         }
 
-        if isNewDeviceHigherPriority, deviceUID != currentDefault {
-            // A higher-priority device reconnected — switch to it
+        switch Self.connectedOutputDefaultAction(
+            connectedDeviceUID: deviceUID,
+            highestPriorityConnectedUID: highestPriorityUID,
+            currentDefaultUID: currentDefault
+        ) {
+        case .ensureHighestPriorityDefault:
+            // Highest-priority connected device (re)connected. Ensure it is the system default
+            // and route follows-default apps to it. reEvaluateOutputDefault sets the default
+            // only if it differs (a no-op when macOS already auto-switched here) and always
+            // re-points follows-default taps — fixing the BT-reconnect desync where the system
+            // default moved to the new device but app audio stayed stranded on the previous one.
             reEvaluateOutputDefault()
-        } else if !isNewDeviceHigherPriority, currentDefault == deviceUID {
-            // macOS already auto-switched to the lower-priority device — restore
+        case .restorePrevious:
+            // macOS already auto-switched to a lower-priority device — restore
             // what the user was on (not highest priority — they may have chosen a mid-priority device)
             restoreConfirmedDefault()
+        case .none:
+            break
         }
 
         // Cancel any existing PENDING_AUTOSWITCH before entering a new one.
