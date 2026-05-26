@@ -457,6 +457,30 @@ final class ProcessTapController: ProcessTapControlling {
             throw NSError(domain: "ProcessTapController", code: -1, userInfo: [NSLocalizedDescriptionKey: "Aggregate device not ready within timeout"])
         }
 
+        // Force aggregate device buffer size to 2048 frames (~46ms at 44.1kHz).
+        // Without this, macOS negotiates the buffer to the smallest sub-device
+        // value (often 128 frames = 2.9ms), which causes client timeout overloads
+        // because rekordbox/Ableton can't complete their IO callback in 2.9ms
+        // under any CPU pressure.
+        var preferredBufferSize: UInt32 = 2048
+        var bufferSizeAddress = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyBufferFrameSize,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        let setErr = AudioObjectSetPropertyData(
+            aggID,
+            &bufferSizeAddress,
+            0, nil,
+            UInt32(MemoryLayout<UInt32>.size),
+            &preferredBufferSize
+        )
+        if setErr != noErr {
+            logger.warning("Failed to set aggregate buffer size to \(preferredBufferSize): \(setErr)")
+        } else {
+            logger.info("Set aggregate buffer size to \(preferredBufferSize) frames")
+        }
+
         logger.debug("Created aggregate device #\(self.primaryResources.aggregateDeviceID)")
 
         // Compute ramp coefficient from actual device sample rate.
@@ -809,6 +833,16 @@ final class ProcessTapController: ProcessTapControlling {
             throw CrossfadeError.deviceNotReady
         }
 
+        // Force buffer size on secondary aggregate too (same reason as primary)
+        var secBufferSize: UInt32 = 2048
+        var secBufAddress = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyBufferFrameSize,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        AudioObjectSetPropertyData(aggID, &secBufAddress, 0, nil,
+                                   UInt32(MemoryLayout<UInt32>.size), &secBufferSize)
+
         logger.debug("[CROSSFADE] Created secondary aggregate #\(self.secondaryResources.aggregateDeviceID)")
 
         let sampleRate: Double
@@ -1019,6 +1053,16 @@ final class ProcessTapController: ProcessTapControlling {
             newResources.destroy()
             throw CrossfadeError.deviceNotReady
         }
+
+        // Force buffer size (same reason as primary)
+        var switchBufSize: UInt32 = 2048
+        var switchBufAddr = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyBufferFrameSize,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        AudioObjectSetPropertyData(aggID, &switchBufAddr, 0, nil,
+                                   UInt32(MemoryLayout<UInt32>.size), &switchBufSize)
 
         nextCallbackID += 1
         _primaryCallbackID = nextCallbackID

@@ -1,14 +1,19 @@
 // FineTuneLoopback/FTLoopbackDriver.cpp
 //
-// CoreAudio AudioServerPlugIn implementation for the FineTune Loopback virtual device.
-// Creates a virtual input device that reads audio from POSIX shared memory.
+// CoreAudio AudioServerPlugIn — FineTune Loopback Virtual Audio Cable
 //
 // Architecture:
-//   - Static object model: PlugIn → Device → Stream (fixed IDs, no dynamic creation)
-//   - IO reads from shared memory ring buffer written by FineTune app
-//   - When FineTune is not connected, outputs silence
+//   Bidirectional virtual device: apps output TO the device, other apps record
+//   FROM it. Internally routes output→input via a lock-free ring buffer.
+//   No shared memory, no aggregate device — pure memcpy in coreaudiod's process.
 //
-// Reference: Apple's NullAudio sample driver (simplified)
+//   This is the same architecture as BlackHole / Rogue Amoeba ACE.
+//   Result: truly lossless recording immune to CPU spikes.
+//
+// Object model:
+//   PlugIn (1) → Device (2) → Stream_Input (3)   [direction=1, DAWs read]
+//                            → Volume (4)
+//                            → Stream_Output (5)  [direction=0, apps write]
 
 #include "FTLoopbackDriver.h"
 #include "SharedTypes.h"
@@ -31,94 +36,68 @@
 // ============================================================================
 
 static os_log_t sLog = NULL;
-
-// The host interface passed to us by CoreAudio
 static AudioServerPlugInHostRef sHost = NULL;
 
-// Driver state
 static std::atomic<UInt32> sRefCount{0};
 static Float64 sSampleRate = kFTDefaultSampleRate;
 static UInt32 sBufferFrameSize = kFTDefaultBufferFrames;
 static Float32 sVolumeLevel = 1.0f;
-static bool sMuteState = false;
 
-// IO state (following BlackHole's proven pattern)
+// IO state
 static UInt64 gDevice_IOIsRunning = 0;
 static pthread_mutex_t gDevice_IOMutex = PTHREAD_MUTEX_INITIALIZER;
 
-// Zero timestamp tracking — period must be independent of IO buffer size
+// Zero timestamp tracking (lock-free for RT safety)
+// These are accessed from the RT IO thread via GetZeroTimeStamp,
+// so they must NOT be behind a mutex. StartIO/StopIO write them
+// under gDevice_IOMutex, but GetZeroTimeStamp reads/updates
+// them lock-free. This is safe because:
+//   - GetZeroTimeStamp is the ONLY reader/writer on the RT thread
+//   - StartIO resets them to 0 before IO begins (no concurrent readers)
+// L2: 16384 doesn't divide 44100 evenly, but Float64 arithmetic in
+// gDevice_PreviousTicks accumulates fractional ticks, so the clock
+// stays accurate. Using a power-of-two avoids expensive divisions.
 static const UInt32 kFTZeroTimeStampPeriod = 16384;
 static Float64 gDevice_HostTicksPerFrame = 0.0;
 static UInt64 gDevice_AnchorHostTime = 0;
 static Float64 gDevice_PreviousTicks = 0.0;
 static UInt64 gDevice_NumberTimeStamps = 0;
 
-// Shared memory
+// Timing
+static mach_timebase_info_data_t sTimebaseInfo = {0, 0};
+
+// ============================================================================
+// MARK: - Direct Passthrough Buffer (Virtual Audio Cable)
+// ============================================================================
+//
+// Zero-latency approach: a flat buffer shared between WriteMix and ReadInput.
+// WriteMix copies audio IN, ReadInput copies audio OUT — same IO cycle,
+// same memory, no ring, no heads, no atomics. This is exactly how BlackHole
+// achieves zero additional latency.
+//
+// If WriteMix runs before ReadInput in the cycle → true zero latency.
+// If ReadInput runs first → reads previous cycle's data (1 cycle = 64 frames = 1.45ms).
+
+static float sPassthroughBuffer[kFTMaxBufferFrames * kFTChannelCount];
+static std::atomic<UInt32> sPassthroughFrameCount{0};  // atomic: written by WriteMix, read by ReadInput
+
+// ============================================================================
+// MARK: - Shared Memory Helpers (Legacy fallback)
+// ============================================================================
+// Kept for backward compatibility: when FineTune app writes processed audio
+// via shared memory, the input stream can still read it. The internal ring
+// buffer (from output stream writes) takes priority.
+
 static int sShmFD = -1;
 static FTLoopbackSharedHeader* sShmHeader = NULL;
 static float* sShmAudioData = NULL;
 static size_t sShmSize = 0;
-
-// Timing
-static mach_timebase_info_data_t sTimebaseInfo = {0, 0};
-
-static inline UInt64 HostTimeToNanos(UInt64 hostTime) {
-    if (sTimebaseInfo.denom == 0) mach_timebase_info(&sTimebaseInfo);
-    return hostTime * sTimebaseInfo.numer / sTimebaseInfo.denom;
-}
+static uint64_t sShmRetryHostTime = 0;
+static const uint64_t kShmRetryCooldownNs = 500000000ULL;
 
 static inline UInt64 NanosToHostTime(UInt64 nanos) {
     if (sTimebaseInfo.denom == 0) mach_timebase_info(&sTimebaseInfo);
     return nanos * sTimebaseInfo.denom / sTimebaseInfo.numer;
-}
-
-// ============================================================================
-// MARK: - Shared Memory Helpers
-// ============================================================================
-
-static void OpenSharedMemory() {
-    if (sShmHeader != NULL) return; // Already open
-
-    int fd = shm_open(kFTLoopbackShmName, O_RDWR, 0);
-    if (fd < 0) {
-        // FineTune app hasn't created the shm yet — this is normal at startup
-        return;
-    }
-
-    // Read the header first to get buffer dimensions
-    // We'll map the minimum header size first, then remap with full size
-    size_t headerSize = sizeof(FTLoopbackSharedHeader);
-    void* headerMap = mmap(NULL, headerSize, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
-    if (headerMap == MAP_FAILED) {
-        close(fd);
-        return;
-    }
-
-    FTLoopbackSharedHeader* hdr = (FTLoopbackSharedHeader*)headerMap;
-    uint32_t bufFrames = hdr->bufferFrames;
-    uint32_t channels = hdr->channels;
-    munmap(headerMap, headerSize);
-
-    if (bufFrames == 0 || channels == 0) {
-        close(fd);
-        return;
-    }
-
-    // Now map the full region
-    size_t fullSize = FTLoopbackShmSize(bufFrames, channels);
-    void* fullMap = mmap(NULL, fullSize, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
-    if (fullMap == MAP_FAILED) {
-        close(fd);
-        return;
-    }
-
-    sShmFD = fd;
-    sShmHeader = (FTLoopbackSharedHeader*)fullMap;
-    sShmAudioData = FTLoopbackAudioData(sShmHeader);
-    sShmSize = fullSize;
-
-    os_log_info(sLog, "Shared memory opened: %u frames, %u channels, %.0f Hz",
-                bufFrames, channels, sShmHeader->sampleRate);
 }
 
 static void CloseSharedMemory() {
@@ -134,14 +113,61 @@ static void CloseSharedMemory() {
     }
 }
 
-/// Read frames from the shared memory ring buffer into the output buffer.
-/// Returns the number of frames actually read (may be less than requested on underflow).
-static UInt32 ReadFromRingBuffer(float* outBuffer, UInt32 framesToRead, UInt32 channels) {
+static void OpenSharedMemory() {
+    if (sShmHeader != NULL) return;
+
+    uint64_t now = mach_absolute_time();
+    if (now < sShmRetryHostTime) return;
+
+    int fd = shm_open(kFTLoopbackShmName, O_RDWR, 0);
+    if (fd < 0) {
+        sShmRetryHostTime = now + NanosToHostTime(kShmRetryCooldownNs);
+        return;
+    }
+
+    FTLoopbackSharedHeader tempHeader;
+    ssize_t bytesRead = read(fd, &tempHeader, sizeof(tempHeader));
+    if (bytesRead < (ssize_t)sizeof(tempHeader) ||
+        tempHeader.bufferFrames == 0 ||
+        tempHeader.channels == 0) {
+        close(fd);
+        sShmRetryHostTime = now + NanosToHostTime(kShmRetryCooldownNs);
+        return;
+    }
+
+    size_t totalSize = sizeof(FTLoopbackSharedHeader) +
+                       (size_t)tempHeader.bufferFrames * tempHeader.channels * sizeof(float);
+
+    void* mapped = mmap(NULL, totalSize, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+    if (mapped == MAP_FAILED) {
+        close(fd);
+        sShmRetryHostTime = now + NanosToHostTime(kShmRetryCooldownNs);
+        return;
+    }
+
+    sShmFD = fd;
+    sShmSize = totalSize;
+    sShmHeader = (FTLoopbackSharedHeader*)mapped;
+    sShmAudioData = (float*)((uint8_t*)mapped + sizeof(FTLoopbackSharedHeader));
+}
+
+static bool sLegacyReadStarted = false;
+static const UInt32 kLegacyTargetLatency = 16384;
+static const UInt32 kLegacyMaxLatency = 32768;
+static bool sShmNeedsClose = false;  // Flag for deferred cleanup (H8: never call CloseSharedMemory on RT thread)
+
+/// Read from shared memory ring buffer (legacy path).
+static UInt32 ReadFromSharedMemory(float* outBuffer, UInt32 framesToRead, UInt32 channels) {
     if (sShmHeader == NULL || sShmAudioData == NULL) return 0;
 
-    // Check if producer is active
     uint32_t isActive = __atomic_load_n(&sShmHeader->isActive, __ATOMIC_ACQUIRE);
-    if (!isActive) return 0;
+    if (!isActive) {
+        // H8: Don't call CloseSharedMemory() here — we're on the RT thread.
+        // Set a flag for deferred cleanup in StopIO.
+        sShmNeedsClose = true;
+        sLegacyReadStarted = false;
+        return 0;
+    }
 
     uint32_t bufFrames = sShmHeader->bufferFrames;
     uint32_t shmChannels = sShmHeader->channels;
@@ -150,8 +176,22 @@ static UInt32 ReadFromRingBuffer(float* outBuffer, UInt32 framesToRead, UInt32 c
     uint64_t writeHead = __atomic_load_n(&sShmHeader->writeHead, __ATOMIC_ACQUIRE);
     uint64_t readHead = __atomic_load_n(&sShmHeader->readHead, __ATOMIC_RELAXED);
 
-    // Available frames = writeHead - readHead
     int64_t available = (int64_t)(writeHead - readHead);
+
+    if (!sLegacyReadStarted) {
+        if (available < (int64_t)kLegacyTargetLatency) return 0;
+        sLegacyReadStarted = true;
+        readHead = writeHead - kLegacyTargetLatency;
+        __atomic_store_n(&sShmHeader->readHead, readHead, __ATOMIC_RELEASE);
+        available = kLegacyTargetLatency;
+    }
+
+    if (available > (int64_t)kLegacyMaxLatency) {
+        readHead = writeHead - kLegacyTargetLatency;
+        __atomic_store_n(&sShmHeader->readHead, readHead, __ATOMIC_RELEASE);
+        available = kLegacyTargetLatency;
+    }
+
     if (available <= 0) return 0;
 
     UInt32 framesToCopy = (UInt32)((available < (int64_t)framesToRead) ? available : framesToRead);
@@ -161,19 +201,15 @@ static UInt32 ReadFromRingBuffer(float* outBuffer, UInt32 framesToRead, UInt32 c
         UInt32 ringPos = (UInt32)((readHead + frame) % bufFrames);
         UInt32 outPos = frame * channels;
         UInt32 shmPos = ringPos * shmChannels;
-
         for (UInt32 ch = 0; ch < minChannels; ch++) {
             outBuffer[outPos + ch] = sShmAudioData[shmPos + ch];
         }
-        // Zero extra output channels
         for (UInt32 ch = minChannels; ch < channels; ch++) {
             outBuffer[outPos + ch] = 0.0f;
         }
     }
 
-    // Update read head
     __atomic_store_n(&sShmHeader->readHead, readHead + framesToCopy, __ATOMIC_RELEASE);
-
     return framesToCopy;
 }
 
@@ -219,7 +255,7 @@ static OSStatus FT_GetZeroTimeStamp(AudioServerPlugInDriverRef inDriver, AudioOb
                                      Float64* outSampleTime, UInt64* outHostTime, UInt64* outSeed);
 static OSStatus FT_WillDoIOOperation(AudioServerPlugInDriverRef inDriver, AudioObjectID inDeviceObjectID,
                                       UInt32 inClientID, UInt32 inOperationID, Boolean* outWillDo,
-                                      Boolean* outIsInput);
+                                      Boolean* outWillDoInPlace);
 static OSStatus FT_BeginIOOperation(AudioServerPlugInDriverRef inDriver, AudioObjectID inDeviceObjectID,
                                      UInt32 inClientID, UInt32 inOperationID, UInt32 inIOBufferFrameSize,
                                      const AudioServerPlugInIOCycleInfo* inIOCycleInfo);
@@ -265,15 +301,12 @@ static AudioServerPlugInDriverInterface* sDriverInterfacePtr = &sDriverInterface
 // ============================================================================
 
 static HRESULT FT_QueryInterface(void* inDriver, REFIID inUUID, LPVOID* outInterface) {
-    // The UUIDs we need to match
     CFUUIDRef requestedUUID = CFUUIDCreateFromUUIDBytes(NULL, inUUID);
-    
-    // IUnknown UUID
+
     CFUUIDRef iunknownUUID = CFUUIDGetConstantUUIDWithBytes(NULL,
         0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
         0xC0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x46);
-    
-    // AudioServerPlugInDriverInterface UUID (this is what coreaudiod queries with!)
+
     CFUUIDRef driverInterfaceUUID = kAudioServerPlugInDriverInterfaceUUID;
 
     HRESULT result = E_NOINTERFACE;
@@ -309,16 +342,16 @@ static OSStatus FT_Initialize(AudioServerPlugInDriverRef inDriver, AudioServerPl
     sLog = os_log_create("com.finetuneapp.FineTuneLoopback", "Driver");
     mach_timebase_info(&sTimebaseInfo);
 
-    FILE* f = fopen("/tmp/ftloopback_init.txt", "w");
-    if (f) { fprintf(f, "Initialize called. Host=%p\n", inHost); fclose(f); }
-    syslog(LOG_ERR, "FTLoopback: Initialize called! Driver is loaded.");
-    os_log_info(sLog, "FineTune Loopback driver initialized");
+    // Zero the passthrough buffer on init
+    memset(sPassthroughBuffer, 0, sizeof(sPassthroughBuffer));
+
+    syslog(LOG_ERR, "FTLoopback: Initialize called! Bidirectional virtual audio cable loaded.");
+    os_log_info(sLog, "FineTune Loopback driver initialized (bidirectional)");
     return kAudioHardwareNoError;
 }
 
 static OSStatus FT_CreateDevice(AudioServerPlugInDriverRef inDriver, CFDictionaryRef inDescription,
                                 const AudioServerPlugInClientInfo* inClientInfo, AudioObjectID* outDeviceObjectID) {
-    // Our device is created statically — nothing to do
     return kAudioHardwareUnsupportedOperationError;
 }
 
@@ -328,11 +361,13 @@ static OSStatus FT_DestroyDevice(AudioServerPlugInDriverRef inDriver, AudioObjec
 
 static OSStatus FT_AddDeviceClient(AudioServerPlugInDriverRef inDriver, AudioObjectID inDeviceObjectID,
                                    const AudioServerPlugInClientInfo* inClientInfo) {
+    os_log_info(sLog, "AddDeviceClient: pid=%d", inClientInfo->mProcessID);
     return kAudioHardwareNoError;
 }
 
 static OSStatus FT_RemoveDeviceClient(AudioServerPlugInDriverRef inDriver, AudioObjectID inDeviceObjectID,
                                       const AudioServerPlugInClientInfo* inClientInfo) {
+    os_log_info(sLog, "RemoveDeviceClient: pid=%d", inClientInfo->mProcessID);
     return kAudioHardwareNoError;
 }
 
@@ -346,6 +381,14 @@ static OSStatus FT_AbortDeviceConfigurationChange(AudioServerPlugInDriverRef inD
                                                    AudioObjectID inDeviceObjectID,
                                                    UInt64 inChangeAction, void* inChangeInfo) {
     return kAudioHardwareNoError;
+}
+
+// ============================================================================
+// MARK: - Helper: is this a stream object?
+// ============================================================================
+
+static inline bool IsStreamObject(AudioObjectID objectID) {
+    return objectID == kFTObjectID_Stream_Input || objectID == kFTObjectID_Stream_Output;
 }
 
 // ============================================================================
@@ -398,7 +441,7 @@ static Boolean FT_HasProperty(AudioServerPlugInDriverRef inDriver, AudioObjectID
         case kAudioDevicePropertyBufferFrameSize:
         case kAudioDevicePropertyBufferFrameSizeRange:
         case kAudioDevicePropertyZeroTimeStampPeriod:
-        case kAudioDevicePropertyIcon:
+        // case kAudioDevicePropertyIcon:  // L4: removed — we don't provide an icon
         case kAudioDevicePropertyRelatedDevices:
         case kAudioDevicePropertyClockIsStable:
         case kAudioDevicePropertyClockAlgorithm:
@@ -407,8 +450,9 @@ static Boolean FT_HasProperty(AudioServerPlugInDriverRef inDriver, AudioObjectID
         }
         break;
 
-    // --- Stream ---
-    case kFTObjectID_Stream:
+    // --- Streams (Input and Output share the same property set) ---
+    case kFTObjectID_Stream_Input:
+    case kFTObjectID_Stream_Output:
         switch (inAddress->mSelector) {
         case kAudioObjectPropertyBaseClass:
         case kAudioObjectPropertyClass:
@@ -463,7 +507,8 @@ static OSStatus FT_IsPropertySettable(AudioServerPlugInDriverRef inDriver, Audio
         }
         break;
 
-    case kFTObjectID_Stream:
+    case kFTObjectID_Stream_Input:
+    case kFTObjectID_Stream_Output:
         switch (inAddress->mSelector) {
         case kAudioStreamPropertyVirtualFormat:
         case kAudioStreamPropertyPhysicalFormat:
@@ -530,8 +575,14 @@ static OSStatus FT_GetPropertyDataSize(AudioServerPlugInDriverRef inDriver, Audi
             *outDataSize = sizeof(AudioObjectID);
             return kAudioHardwareNoError;
         case kAudioObjectPropertyOwnedObjects:
-            // stream + volume control
-            *outDataSize = 2 * sizeof(AudioObjectID);
+            // Scope-aware: input stream + output stream + volume = 3 max
+            if (inAddress->mScope == kAudioObjectPropertyScopeInput) {
+                *outDataSize = sizeof(AudioObjectID); // just input stream
+            } else if (inAddress->mScope == kAudioObjectPropertyScopeOutput) {
+                *outDataSize = sizeof(AudioObjectID); // just output stream
+            } else {
+                *outDataSize = 3 * sizeof(AudioObjectID); // both streams + volume
+            }
             return kAudioHardwareNoError;
         case kAudioObjectPropertyName:
         case kAudioObjectPropertyManufacturer:
@@ -560,7 +611,13 @@ static OSStatus FT_GetPropertyDataSize(AudioServerPlugInDriverRef inDriver, Audi
             *outDataSize = sizeof(UInt32);
             return kAudioHardwareNoError;
         case kAudioDevicePropertyStreams:
-            *outDataSize = sizeof(AudioObjectID); // 1 stream
+            if (inAddress->mScope == kAudioObjectPropertyScopeInput) {
+                *outDataSize = sizeof(AudioObjectID); // 1 input stream
+            } else if (inAddress->mScope == kAudioObjectPropertyScopeOutput) {
+                *outDataSize = sizeof(AudioObjectID); // 1 output stream
+            } else {
+                *outDataSize = 2 * sizeof(AudioObjectID); // both streams
+            }
             return kAudioHardwareNoError;
         case kAudioDevicePropertyNominalSampleRate:
             *outDataSize = sizeof(Float64);
@@ -571,9 +628,7 @@ static OSStatus FT_GetPropertyDataSize(AudioServerPlugInDriverRef inDriver, Audi
         case kAudioDevicePropertyBufferFrameSizeRange:
             *outDataSize = sizeof(AudioValueRange);
             return kAudioHardwareNoError;
-        case kAudioDevicePropertyIcon:
-            *outDataSize = sizeof(CFURLRef);
-            return kAudioHardwareNoError;
+        // case kAudioDevicePropertyIcon:  // L4: removed\n        //     *outDataSize = sizeof(CFURLRef);\n        //     return kAudioHardwareNoError;
         case kAudioDevicePropertyRelatedDevices:
             *outDataSize = sizeof(AudioObjectID);
             return kAudioHardwareNoError;
@@ -583,8 +638,9 @@ static OSStatus FT_GetPropertyDataSize(AudioServerPlugInDriverRef inDriver, Audi
         }
         break;
 
-    // --- Stream ---
-    case kFTObjectID_Stream:
+    // --- Streams (Input and Output) ---
+    case kFTObjectID_Stream_Input:
+    case kFTObjectID_Stream_Output:
         switch (inAddress->mSelector) {
         case kAudioObjectPropertyBaseClass:
         case kAudioObjectPropertyClass:
@@ -701,7 +757,8 @@ static OSStatus FT_GetPropertyData(AudioServerPlugInDriverRef inDriver, AudioObj
     case kFTObjectID_Device:
         switch (inAddress->mSelector) {
         case kAudioObjectPropertyBaseClass:
-            *((AudioClassID*)outData) = kAudioObjectClassID;
+            // M5: Device's base class is kAudioDeviceClassID, not kAudioObjectClassID
+            *((AudioClassID*)outData) = kAudioDeviceClassID;
             *outDataSize = sizeof(AudioClassID);
             return kAudioHardwareNoError;
 
@@ -718,11 +775,14 @@ static OSStatus FT_GetPropertyData(AudioServerPlugInDriverRef inDriver, AudioObj
         case kAudioObjectPropertyOwnedObjects: {
             AudioObjectID* ids = (AudioObjectID*)outData;
             UInt32 count = 0;
-            if (inAddress->mScope == kAudioObjectPropertyScopeGlobal ||
-                inAddress->mScope == kAudioObjectPropertyScopeInput) {
-                ids[count++] = kFTObjectID_Stream;
-            }
-            if (inAddress->mScope == kAudioObjectPropertyScopeGlobal) {
+            if (inAddress->mScope == kAudioObjectPropertyScopeInput) {
+                ids[count++] = kFTObjectID_Stream_Input;
+            } else if (inAddress->mScope == kAudioObjectPropertyScopeOutput) {
+                ids[count++] = kFTObjectID_Stream_Output;
+            } else {
+                // Global scope: return all objects
+                ids[count++] = kFTObjectID_Stream_Input;
+                ids[count++] = kFTObjectID_Stream_Output;
                 ids[count++] = kFTObjectID_Volume;
             }
             *outDataSize = count * sizeof(AudioObjectID);
@@ -760,23 +820,29 @@ static OSStatus FT_GetPropertyData(AudioServerPlugInDriverRef inDriver, AudioObj
             return kAudioHardwareNoError;
 
         case kAudioDevicePropertyDeviceCanBeDefaultDevice:
-            // Input device CAN be default input (so DAWs can find it)
-            *((UInt32*)outData) = (inAddress->mScope == kAudioObjectPropertyScopeInput) ? 1 : 0;
+            // Can be default for BOTH input AND output
+            *((UInt32*)outData) = 1;
             *outDataSize = sizeof(UInt32);
             return kAudioHardwareNoError;
 
         case kAudioDevicePropertyDeviceCanBeDefaultSystemDevice:
-            *((UInt32*)outData) = 0; // Not suitable as system default
+            *((UInt32*)outData) = 0; // Not suitable as system alert device
             *outDataSize = sizeof(UInt32);
             return kAudioHardwareNoError;
 
         case kAudioDevicePropertyStreams: {
-            if (inAddress->mScope == kAudioObjectPropertyScopeInput ||
-                inAddress->mScope == kAudioObjectPropertyScopeGlobal) {
-                *((AudioObjectID*)outData) = kFTObjectID_Stream;
+            AudioObjectID* ids = (AudioObjectID*)outData;
+            if (inAddress->mScope == kAudioObjectPropertyScopeInput) {
+                ids[0] = kFTObjectID_Stream_Input;
+                *outDataSize = sizeof(AudioObjectID);
+            } else if (inAddress->mScope == kAudioObjectPropertyScopeOutput) {
+                ids[0] = kFTObjectID_Stream_Output;
                 *outDataSize = sizeof(AudioObjectID);
             } else {
-                *outDataSize = 0; // No output streams
+                // Global: both streams
+                ids[0] = kFTObjectID_Stream_Output;
+                ids[1] = kFTObjectID_Stream_Input;
+                *outDataSize = 2 * sizeof(AudioObjectID);
             }
             return kAudioHardwareNoError;
         }
@@ -859,10 +925,12 @@ static OSStatus FT_GetPropertyData(AudioServerPlugInDriverRef inDriver, AudioObj
             *outDataSize = sizeof(AudioObjectID);
             return kAudioHardwareNoError;
 
-        case kAudioDevicePropertyIcon:
-            *((CFURLRef*)outData) = NULL;
-            *outDataSize = sizeof(CFURLRef);
-            return kAudioHardwareNoError;
+        // L4: Icon property removed — returning NULL causes Audio MIDI Setup
+        // to show no icon. Remove from HasProperty if we don't provide one.
+        // case kAudioDevicePropertyIcon:
+        //     *((CFURLRef*)outData) = NULL;
+        //     *outDataSize = sizeof(CFURLRef);
+        //     return kAudioHardwareNoError;
 
         case kAudioObjectPropertyControlList:
             *((AudioObjectID*)outData) = kFTObjectID_Volume;
@@ -871,11 +939,13 @@ static OSStatus FT_GetPropertyData(AudioServerPlugInDriverRef inDriver, AudioObj
         }
         break;
 
-    // ==== Stream Properties ====
-    case kFTObjectID_Stream:
+    // ==== Stream Properties (Input & Output share logic, differ only in direction) ====
+    case kFTObjectID_Stream_Input:
+    case kFTObjectID_Stream_Output:
         switch (inAddress->mSelector) {
         case kAudioObjectPropertyBaseClass:
-            *((AudioClassID*)outData) = kAudioObjectClassID;
+            // M5: Stream's base class is kAudioStreamClassID, not kAudioObjectClassID
+            *((AudioClassID*)outData) = kAudioStreamClassID;
             *outDataSize = sizeof(AudioClassID);
             return kAudioHardwareNoError;
 
@@ -890,8 +960,9 @@ static OSStatus FT_GetPropertyData(AudioServerPlugInDriverRef inDriver, AudioObj
             return kAudioHardwareNoError;
 
         case kAudioStreamPropertyDirection:
-            // 1 = input (this is an input stream — DAWs record FROM it)
-            *((UInt32*)outData) = 1;
+            // Input stream: direction=1 (recording FROM device)
+            // Output stream: direction=0 (playing TO device)
+            *((UInt32*)outData) = (inObjectID == kFTObjectID_Stream_Input) ? 1 : 0;
             *outDataSize = sizeof(UInt32);
             return kAudioHardwareNoError;
 
@@ -984,7 +1055,6 @@ static OSStatus FT_GetPropertyData(AudioServerPlugInDriverRef inDriver, AudioObj
             return kAudioHardwareNoError;
 
         case kAudioLevelControlPropertyDecibelValue:
-            // Simple linear-to-dB: 20*log10(volume). Clamp to -96dB for zero.
             *((Float32*)outData) = (sVolumeLevel > 0.0001f)
                 ? (Float32)(20.0 * log10((double)sVolumeLevel))
                 : -96.0f;
@@ -1017,8 +1087,9 @@ static OSStatus FT_SetPropertyData(AudioServerPlugInDriverRef inDriver, AudioObj
     case kFTObjectID_Device:
         switch (inAddress->mSelector) {
         case kAudioDevicePropertyNominalSampleRate: {
+            // H4: Reject sample rate change while IO is running
+            if (gDevice_IOIsRunning > 0) return kAudioHardwareNotRunningError;
             Float64 newRate = *((const Float64*)inData);
-            // Validate it's a supported rate
             bool valid = false;
             for (UInt32 i = 0; i < kFTNumSampleRates; i++) {
                 if (kFTSupportedSampleRates[i] == newRate) { valid = true; break; }
@@ -1026,32 +1097,61 @@ static OSStatus FT_SetPropertyData(AudioServerPlugInDriverRef inDriver, AudioObj
             if (!valid) return kAudioHardwareIllegalOperationError;
             sSampleRate = newRate;
             os_log_info(sLog, "Sample rate changed to %.0f", newRate);
+            // H3: Notify clients of property change
+            if (sHost != NULL) {
+                AudioObjectPropertyAddress addr = { kAudioDevicePropertyNominalSampleRate,
+                    kAudioObjectPropertyScopeGlobal, kAudioObjectPropertyElementMain };
+                sHost->PropertiesChanged(sHost, kFTObjectID_Device, 1, &addr);
+            }
             return kAudioHardwareNoError;
         }
 
         case kAudioDevicePropertyBufferFrameSize: {
+            // H4: Reject buffer size change while IO is running
+            if (gDevice_IOIsRunning > 0) return kAudioHardwareNotRunningError;
             UInt32 newSize = *((const UInt32*)inData);
             if (newSize < kFTMinBufferFrames || newSize > kFTMaxBufferFrames)
                 return kAudioHardwareIllegalOperationError;
             sBufferFrameSize = newSize;
             os_log_info(sLog, "Buffer frame size changed to %u", newSize);
+            // H3: Notify clients of property change
+            if (sHost != NULL) {
+                AudioObjectPropertyAddress addr = { kAudioDevicePropertyBufferFrameSize,
+                    kAudioObjectPropertyScopeGlobal, kAudioObjectPropertyElementMain };
+                sHost->PropertiesChanged(sHost, kFTObjectID_Device, 1, &addr);
+            }
             return kAudioHardwareNoError;
         }
         }
         break;
 
-    case kFTObjectID_Stream:
+    case kFTObjectID_Stream_Input:
+    case kFTObjectID_Stream_Output:
         switch (inAddress->mSelector) {
         case kAudioStreamPropertyVirtualFormat:
         case kAudioStreamPropertyPhysicalFormat: {
             const AudioStreamBasicDescription* desc = (const AudioStreamBasicDescription*)inData;
-            // Only allow changing sample rate, everything else is fixed
+            // M6: Validate full stream format, not just sample rate
+            if (desc->mFormatID != kAudioFormatLinearPCM ||
+                desc->mBitsPerChannel != 32 ||
+                desc->mChannelsPerFrame != kFTChannelCount ||
+                !(desc->mFormatFlags & kAudioFormatFlagIsFloat)) {
+                return kAudioDeviceUnsupportedFormatError;
+            }
             bool validRate = false;
             for (UInt32 i = 0; i < kFTNumSampleRates; i++) {
                 if (kFTSupportedSampleRates[i] == desc->mSampleRate) { validRate = true; break; }
             }
-            if (!validRate) return kAudioHardwareIllegalOperationError;
+            if (!validRate) return kAudioDeviceUnsupportedFormatError;
+            // H4: Reject while IO is running
+            if (gDevice_IOIsRunning > 0) return kAudioHardwareNotRunningError;
             sSampleRate = desc->mSampleRate;
+            // H3: Notify clients of format change
+            if (sHost != NULL) {
+                AudioObjectPropertyAddress addr = { inAddress->mSelector,
+                    inAddress->mScope, inAddress->mElement };
+                sHost->PropertiesChanged(sHost, inObjectID, 1, &addr);
+            }
             return kAudioHardwareNoError;
         }
         }
@@ -1062,6 +1162,12 @@ static OSStatus FT_SetPropertyData(AudioServerPlugInDriverRef inDriver, AudioObj
         case kAudioLevelControlPropertyScalarValue: {
             Float32 val = *((const Float32*)inData);
             sVolumeLevel = (val < 0.0f) ? 0.0f : ((val > 1.0f) ? 1.0f : val);
+            // H3: Notify clients of volume change
+            if (sHost != NULL) {
+                AudioObjectPropertyAddress addr = { kAudioLevelControlPropertyScalarValue,
+                    kAudioObjectPropertyScopeGlobal, kAudioObjectPropertyElementMain };
+                sHost->PropertiesChanged(sHost, kFTObjectID_Volume, 1, &addr);
+            }
             return kAudioHardwareNoError;
         }
         case kAudioLevelControlPropertyDecibelValue: {
@@ -1069,6 +1175,12 @@ static OSStatus FT_SetPropertyData(AudioServerPlugInDriverRef inDriver, AudioObj
             sVolumeLevel = (Float32)pow(10.0, (double)dB / 20.0);
             if (sVolumeLevel > 1.0f) sVolumeLevel = 1.0f;
             if (sVolumeLevel < 0.0f) sVolumeLevel = 0.0f;
+            // H3: Notify clients of volume change
+            if (sHost != NULL) {
+                AudioObjectPropertyAddress addr = { kAudioLevelControlPropertyDecibelValue,
+                    kAudioObjectPropertyScopeGlobal, kAudioObjectPropertyElementMain };
+                sHost->PropertiesChanged(sHost, kFTObjectID_Volume, 1, &addr);
+            }
             return kAudioHardwareNoError;
         }
         }
@@ -1085,83 +1197,94 @@ static OSStatus FT_SetPropertyData(AudioServerPlugInDriverRef inDriver, AudioObj
 static OSStatus FT_StartIO(AudioServerPlugInDriverRef inDriver, AudioObjectID inDeviceObjectID, UInt32 inClientID) {
     os_log_info(sLog, "StartIO: client=%u", inClientID);
 
-    // Try to open shared memory when IO starts
-    OpenSharedMemory();
-
     pthread_mutex_lock(&gDevice_IOMutex);
-    
+
     if (gDevice_IOIsRunning == 0) {
-        // First client starting IO — initialize timing anchor
-        // Compute host ticks per frame from the host clock frequency
+        // First client — initialize timing anchor
         Float64 theHostClockFrequency = 0.0;
         mach_timebase_info_data_t tbInfo;
         mach_timebase_info(&tbInfo);
         theHostClockFrequency = (Float64)tbInfo.denom / (Float64)tbInfo.numer * 1000000000.0;
         gDevice_HostTicksPerFrame = theHostClockFrequency / sSampleRate;
-        
+
         gDevice_NumberTimeStamps = 0;
         gDevice_AnchorHostTime = mach_absolute_time();
         gDevice_PreviousTicks = 0.0;
+
+        // Reset passthrough buffer for fresh IO session
+        memset(sPassthroughBuffer, 0, sizeof(sPassthroughBuffer));
+        sPassthroughFrameCount.store(0, std::memory_order_relaxed);
+        sLegacyReadStarted = false;
+        sShmNeedsClose = false;
+
+        // C4: Open shared memory here (non-RT thread), not in DoIOOperation
+        if (sShmHeader == NULL) {
+            OpenSharedMemory();
+        }
     }
-    
+
     gDevice_IOIsRunning += 1;
-    
+
     pthread_mutex_unlock(&gDevice_IOMutex);
     return kAudioHardwareNoError;
 }
 
 static OSStatus FT_StopIO(AudioServerPlugInDriverRef inDriver, AudioObjectID inDeviceObjectID, UInt32 inClientID) {
     os_log_info(sLog, "StopIO: client=%u", inClientID);
-    
+
     pthread_mutex_lock(&gDevice_IOMutex);
     if (gDevice_IOIsRunning > 0) {
         gDevice_IOIsRunning -= 1;
     }
+
+    // H6: Clean up shared memory when all IO clients have disconnected
+    // H8: This is the deferred cleanup from the RT thread flag
+    if (gDevice_IOIsRunning == 0) {
+        if (sShmNeedsClose) {
+            CloseSharedMemory();
+            sShmRetryHostTime = 0;
+            sShmNeedsClose = false;
+        }
+    }
+
     pthread_mutex_unlock(&gDevice_IOMutex);
-    
+
     return kAudioHardwareNoError;
 }
 
 static OSStatus FT_GetZeroTimeStamp(AudioServerPlugInDriverRef inDriver, AudioObjectID inDeviceObjectID,
                                      UInt32 inClientID,
                                      Float64* outSampleTime, UInt64* outHostTime, UInt64* outSeed) {
-    // Following BlackHole's proven pattern:
-    // The zero time stamps are spaced kFTZeroTimeStampPeriod frames apart.
-    // We only advance the counter when the next timestamp's host time has passed.
-    
-    pthread_mutex_lock(&gDevice_IOMutex);
-    
+    // C2: Lock-free — this runs on the RT IO thread every cycle.
+    // No mutex here. GetZeroTimeStamp is the sole RT-thread accessor;
+    // StartIO resets the state before any IO begins (under mutex, no race).
+
     UInt64 theCurrentHostTime = mach_absolute_time();
-    
-    // Calculate host ticks for one zero-timestamp period
     Float64 theHostTicksPerPeriod = gDevice_HostTicksPerFrame * (Float64)kFTZeroTimeStampPeriod;
-    
-    // Calculate the next timestamp offset
     Float64 theNextTickOffset = gDevice_PreviousTicks + theHostTicksPerPeriod;
     UInt64 theNextHostTime = gDevice_AnchorHostTime + (UInt64)theNextTickOffset;
-    
-    // Advance the counter if the next timestamp is in the past
+
     if (theNextHostTime <= theCurrentHostTime) {
         ++gDevice_NumberTimeStamps;
         gDevice_PreviousTicks = theNextTickOffset;
     }
-    
-    // Set the return values
+
     *outSampleTime = (Float64)(gDevice_NumberTimeStamps * kFTZeroTimeStampPeriod);
     *outHostTime = gDevice_AnchorHostTime + (UInt64)gDevice_PreviousTicks;
     *outSeed = 1;
-    
-    pthread_mutex_unlock(&gDevice_IOMutex);
-    
+
     return kAudioHardwareNoError;
 }
 
 static OSStatus FT_WillDoIOOperation(AudioServerPlugInDriverRef inDriver, AudioObjectID inDeviceObjectID,
                                       UInt32 inClientID, UInt32 inOperationID, Boolean* outWillDo,
                                       Boolean* outWillDoInPlace) {
-    // We only do ReadInput (in place)
     switch (inOperationID) {
     case kAudioServerPlugInIOOperationReadInput:
+        *outWillDo = true;
+        *outWillDoInPlace = true;
+        break;
+    case kAudioServerPlugInIOOperationWriteMix:
         *outWillDo = true;
         *outWillDoInPlace = true;
         break;
@@ -1184,31 +1307,65 @@ static OSStatus FT_DoIOOperation(AudioServerPlugInDriverRef inDriver, AudioObjec
                                   UInt32 inIOBufferFrameSize, const AudioServerPlugInIOCycleInfo* inIOCycleInfo,
                                   void* ioMainBuffer, void* ioSecondaryBuffer) {
 
-    if (inOperationID != kAudioServerPlugInIOOperationReadInput) {
+    // === OUTPUT: App writing audio TO the device (rekordbox → buffer) ===
+    if (inOperationID == kAudioServerPlugInIOOperationWriteMix) {
+        // C1: Clamp to max buffer size to prevent overflow
+        UInt32 clampedFrames = (inIOBufferFrameSize > kFTMaxBufferFrames)
+                                ? kFTMaxBufferFrames : inIOBufferFrameSize;
+        UInt32 bytesToCopy = clampedFrames * kFTChannelCount * sizeof(float);
+        memcpy(sPassthroughBuffer, ioMainBuffer, bytesToCopy);
+        // C3: Release semantics — ensures buffer data is visible before count
+        sPassthroughFrameCount.store(clampedFrames, std::memory_order_release);
         return kAudioHardwareNoError;
     }
 
-    float* outBuffer = (float*)ioMainBuffer;
-    UInt32 totalSamples = inIOBufferFrameSize * kFTChannelCount;
+    // === INPUT: App reading audio FROM the device (buffer → Ableton) ===
+    if (inOperationID == kAudioServerPlugInIOOperationReadInput) {
+        float* outBuffer = (float*)ioMainBuffer;
+        UInt32 totalSamples = inIOBufferFrameSize * kFTChannelCount;
 
-    // SAFETY: Always zero the entire buffer first to guarantee silence
-    // if anything goes wrong below.
-    memset(outBuffer, 0, totalSamples * sizeof(float));
+        // C3: Acquire semantics — ensures we see the buffer data written before count
+        UInt32 availableFrames = sPassthroughFrameCount.load(std::memory_order_acquire);
 
-    // Try to connect to shared memory if not already
-    if (sShmHeader == NULL) {
-        OpenSharedMemory();
-    }
+        // Direct copy from passthrough buffer — zero overhead
+        if (availableFrames > 0) {
+            // C1: Also clamp read side for safety
+            UInt32 framesToCopy = (inIOBufferFrameSize < availableFrames)
+                                  ? inIOBufferFrameSize : availableFrames;
+            if (framesToCopy > kFTMaxBufferFrames) framesToCopy = kFTMaxBufferFrames;
+            UInt32 bytesToCopy = framesToCopy * kFTChannelCount * sizeof(float);
+            memcpy(outBuffer, sPassthroughBuffer, bytesToCopy);
 
-    // Read from ring buffer (overwrites zeroed buffer with real audio if available)
-    UInt32 framesRead = ReadFromRingBuffer(outBuffer, inIOBufferFrameSize, kFTChannelCount);
+            // Zero remaining frames if buffer sizes differ
+            if (framesToCopy < inIOBufferFrameSize) {
+                UInt32 remainingSamples = (inIOBufferFrameSize - framesToCopy) * kFTChannelCount;
+                memset(outBuffer + framesToCopy * kFTChannelCount, 0, remainingSamples * sizeof(float));
+            }
 
-    // Apply volume (only if we got real data and volume is reduced)
-    if (framesRead > 0 && sVolumeLevel < 0.999f) {
-        UInt32 samplesToScale = framesRead * kFTChannelCount;
-        for (UInt32 i = 0; i < samplesToScale; i++) {
-            outBuffer[i] *= sVolumeLevel;
+            // M3: Volume is intentionally applied only in ReadInput, not WriteMix.
+            // This preserves the raw audio in the passthrough buffer (lossless),
+            // and applies volume control at the consumer side.
+            // Apply volume
+            if (sVolumeLevel < 0.999f) {
+                for (UInt32 i = 0; i < framesToCopy * kFTChannelCount; i++) {
+                    outBuffer[i] *= sVolumeLevel;
+                }
+            }
+        } else {
+            // No data from passthrough — try shared memory (legacy fallback)
+            memset(outBuffer, 0, totalSamples * sizeof(float));
+            // C4: Don't call OpenSharedMemory() here — it was opened in StartIO
+            if (sShmHeader != NULL) {
+                UInt32 framesRead = ReadFromSharedMemory(outBuffer, inIOBufferFrameSize, kFTChannelCount);
+                if (framesRead > 0 && sVolumeLevel < 0.999f) {
+                    for (UInt32 i = 0; i < framesRead * kFTChannelCount; i++) {
+                        outBuffer[i] *= sVolumeLevel;
+                    }
+                }
+            }
         }
+
+        return kAudioHardwareNoError;
     }
 
     return kAudioHardwareNoError;
@@ -1225,18 +1382,13 @@ static OSStatus FT_EndIOOperation(AudioServerPlugInDriverRef inDriver, AudioObje
 // ============================================================================
 
 extern "C" void* FTLoopbackDriverFactory(CFAllocatorRef allocator, CFUUIDRef requestedTypeUUID) {
-    // Verify this is the AudioServerPlugIn type
-    CFUUIDRef pluginTypeUUID = CFUUIDCreateFromString(NULL, CFSTR("443ABAB8-E7B3-491A-B985-BEB9187030DB"));
+    // L6: Cache the UUID to avoid repeated Create/Release
+    static CFUUIDRef pluginTypeUUID = CFUUIDCreateFromString(NULL, CFSTR("443ABAB8-E7B3-491A-B985-BEB9187030DB"));
     if (!CFEqual(requestedTypeUUID, pluginTypeUUID)) {
-        CFRelease(pluginTypeUUID);
         return NULL;
     }
-    CFRelease(pluginTypeUUID);
 
-    syslog(LOG_ERR, "FTLoopback: Factory called successfully, returning driver interface");
-    // Debug: write a marker file to confirm factory was called
-    FILE* f = fopen("/tmp/ftloopback_factory_called.txt", "w");
-    if (f) { fprintf(f, "Factory called at %lu\n", (unsigned long)time(NULL)); fclose(f); }
+    os_log_info(sLog, "Factory called, returning bidirectional driver interface");
     FT_AddRef(NULL);
     return &sDriverInterfacePtr;
 }

@@ -223,6 +223,10 @@ struct AppSettings: Codable, Equatable {
     // Popup
     var popupSize: MenuBarPopupSize = .comfortable  // Overall menu bar popup size and density
 
+    // Lossless Recording (Virtual Audio Cable)
+    var losslessRecordingEnabled: Bool = false       // Route system output through FineTune Loopback
+    var previousOutputDeviceUID: String? = nil       // UID of the output device to restore on disable
+
     init() {}
 
     mutating func setUnifiedLoudnessEnabled(_ enabled: Bool) {
@@ -245,6 +249,8 @@ struct AppSettings: Codable, Equatable {
         customShortcuts = try c.decodeIfPresent([String: ShortcutCodable].self, forKey: .customShortcuts) ?? [:]
         appearance = try c.decodeIfPresent(AppearancePreference.self, forKey: .appearance) ?? .system
         popupSize = try c.decodeIfPresent(MenuBarPopupSize.self, forKey: .popupSize) ?? .comfortable
+        losslessRecordingEnabled = try c.decodeIfPresent(Bool.self, forKey: .losslessRecordingEnabled) ?? false
+        previousOutputDeviceUID = try c.decodeIfPresent(String.self, forKey: .previousOutputDeviceUID)
     }
 }
 

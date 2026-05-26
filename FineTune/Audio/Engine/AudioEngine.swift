@@ -7,6 +7,20 @@ import UserNotifications
 @Observable
 @MainActor
 final class AudioEngine {
+
+    /// Known DAW bundle-ID substrings. Used to skip loopback routing for apps that
+    /// read from the loopback device (prevents feedback loops).
+    private static let dawBundleIDSubstrings: Set<String> = [
+        "ableton",
+        "apple.logic",
+        "steinberg",
+        "bitwig",
+        "reaper",
+        "image-line"  // FL Studio
+    ]
+
+    /// Default sample rate for loopback ring buffers. Must match enableLoopback()'s default.
+    private static let kDefaultLoopbackSampleRate: Float64 = 48000.0
     let processMonitor: any AudioProcessMonitoring
     let deviceMonitor: any AudioDeviceProviding
     let bluetoothDeviceMonitor: BluetoothDeviceMonitor
@@ -679,11 +693,44 @@ final class AudioEngine {
         loopbackManager.isAppRouted(app.id)
     }
 
+    /// Reassigns loopback to the best available non-DAW app after the current
+    /// loopback source is removed. Called when a loopback-routed app quits.
+    private func reassignLoopback() {
+        guard loopbackManager.isDriverInstalled, loopbackManager.activeApps.isEmpty else { return }
+
+        for (pid, tap) in taps {
+            let bundleID = (tap.app.bundleID ?? "").lowercased()
+            let isDAW = Self.dawBundleIDSubstrings.contains(where: { bundleID.contains($0) })
+            if !isDAW {
+                do {
+                    let buffer = try loopbackManager.enableLoopback(
+                        sampleRate: Self.kDefaultLoopbackSampleRate,
+                        channels: 2
+                    )
+                    tap.setLoopbackBuffer(buffer)
+                    loopbackManager.addApp(pid)
+                    logger.info("Loopback reassigned to \(tap.app.name)")
+                    return
+                } catch {
+                    logger.error("Failed to reassign loopback to \(tap.app.name): \(error)")
+                }
+            }
+        }
+        logger.debug("No eligible app found for loopback reassignment")
+    }
+
     // MARK: - Settings Reset
 
     /// Resets all persisted settings and synchronizes in-memory engine state.
     /// Active taps are kept alive but reverted to defaults (unity volume, unmuted, flat EQ).
     func handleSettingsReset() {
+        // 0. Restore output device before resetting settings
+        if loopbackManager.isLosslessRecordingActive {
+            loopbackManager.disableLosslessRecording(
+                restoreDeviceUID: settingsManager.appSettings.previousOutputDeviceUID
+            )
+        }
+
         // 1. Clear persisted state
         settingsManager.resetAllSettings()
 
@@ -1289,22 +1336,19 @@ final class AudioEngine {
             //    loopback device, so writing their output back creates distortion).
             if loopbackManager.isDriverInstalled && loopbackManager.activeApps.isEmpty {
                 let bundleID = (app.bundleID ?? "").lowercased()
-                let isDAW = bundleID.contains("ableton") ||
-                            bundleID.contains("apple.logic") ||
-                            bundleID.contains("steinberg") ||
-                            bundleID.contains("bitwig") ||
-                            bundleID.contains("reaper") ||
-                            bundleID.contains("image-line")  // FL Studio
+                let isDAW = Self.dawBundleIDSubstrings.contains(where: { bundleID.contains($0) })
                 if !isDAW {
                     do {
                         let buffer = try loopbackManager.enableLoopback(
-                            sampleRate: Float64(44100.0),  // Match common macOS sample rate
+                            sampleRate: Self.kDefaultLoopbackSampleRate,
                             channels: 2
                         )
                         tap.setLoopbackBuffer(buffer)
                         loopbackManager.addApp(app.id)
                         logger.info("Loopback auto-enabled for \(app.name) (exclusive)")
                     } catch {
+                        // TODO: M10 — Surface this error to the user via notification or UI state
+                        // so they know loopback auto-enable failed (e.g. shared memory exhaustion).
                         logger.error("Failed to auto-enable loopback for \(app.name): \(error)")
                     }
                 } else {
@@ -1927,8 +1971,19 @@ final class AudioEngine {
 
                 // Now safe to cleanup
                 if let tap = self.taps.removeValue(forKey: pid) {
+                    tap.setLoopbackBuffer(nil)
                     tap.invalidate()
                     self.logger.debug("Cleaned up stale tap for PID \(pid)")
+                }
+                // Clean up loopback routing for this app
+                if self.loopbackManager.isAppRouted(pid) {
+                    self.loopbackManager.removeApp(pid)
+                    if self.loopbackManager.activeApps.isEmpty {
+                        self.loopbackManager.disableLoopback()
+                        self.logger.debug("Loopback disabled after stale app cleanup")
+                        // Re-enable loopback for an existing non-DAW tap
+                        self.reassignLoopback()
+                    }
                 }
                 self.appDeviceRouting.removeValue(forKey: pid)
                 self.followsDefault.remove(pid)

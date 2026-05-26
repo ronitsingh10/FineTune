@@ -1,8 +1,8 @@
 // FineTuneLoopback/FTLoopbackDriver.h
 //
 // CoreAudio AudioServerPlugIn driver for the FineTune Loopback virtual audio device.
-// This creates a virtual input device that reads audio from POSIX shared memory
-// written by the FineTune app's audio callback.
+// Bidirectional virtual audio cable: apps can output TO the device (like BlackHole)
+// and other apps can record FROM the device's input stream.
 
 #ifndef FTLOOPBACK_DRIVER_H
 #define FTLOOPBACK_DRIVER_H
@@ -18,11 +18,11 @@
 
 // Object IDs — fixed static layout
 enum {
-    kFTObjectID_PlugIn      = kAudioObjectPlugInObject,  // 1 (required by HAL)
-    kFTObjectID_Device      = 2,
-    kFTObjectID_Stream      = 3,
-    // Volume control on the virtual device (optional, useful for DAW level)
-    kFTObjectID_Volume      = 4,
+    kFTObjectID_PlugIn         = kAudioObjectPlugInObject,  // 1 (required by HAL)
+    kFTObjectID_Device         = 2,
+    kFTObjectID_Stream_Input   = 3,   // Input stream (Ableton reads FROM this)
+    kFTObjectID_Volume         = 4,
+    kFTObjectID_Stream_Output  = 5,   // Output stream (rekordbox writes TO this)
 };
 
 // Device constants
@@ -37,7 +37,7 @@ static const Float64 kFTSupportedSampleRates[] = { 44100.0, 48000.0, 96000.0 };
 
 // Default configuration
 #define kFTDefaultSampleRate        44100.0
-#define kFTDefaultBufferFrames      512
+#define kFTDefaultBufferFrames      256
 #define kFTMinBufferFrames          64
 #define kFTMaxBufferFrames          4096
 #define kFTChannelCount             2

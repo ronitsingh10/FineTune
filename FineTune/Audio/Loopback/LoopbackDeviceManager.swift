@@ -7,6 +7,7 @@
 //   - Tracks which apps are routing audio to loopback
 
 import Foundation
+import AudioToolbox
 import os
 
 /// Path where CoreAudio HAL plugins are installed
@@ -97,6 +98,8 @@ final class LoopbackDeviceManager {
         process.standardError = pipe
 
         try process.run()
+        // TODO: M12 — Replace waitUntilExit() with async continuation using process.terminationHandler
+        // to avoid blocking the main thread during driver installation.
         process.waitUntilExit()
 
         if process.terminationStatus != 0 {
@@ -134,7 +137,15 @@ final class LoopbackDeviceManager {
         process.arguments = ["-e", script]
 
         try process.run()
+        // TODO: M12 — Replace waitUntilExit() with async continuation using process.terminationHandler
+        // to avoid blocking the main thread during driver uninstallation.
         process.waitUntilExit()
+
+        guard process.terminationStatus == 0 else {
+            logger.error("Driver uninstall failed with exit code \(process.terminationStatus)")
+            self.isDriverInstalled = checkDriverInstalled()
+            return
+        }
 
         try await Task.sleep(for: .seconds(2))
 
@@ -218,6 +229,209 @@ final class LoopbackDeviceManager {
     /// Checks if an app is currently routing to loopback.
     func isAppRouted(_ pid: pid_t) -> Bool {
         activeApps.contains(pid)
+    }
+
+    // MARK: - Lossless Recording Mode (Virtual Audio Cable)
+
+    /// The UID of the FineTune Loopback virtual audio device.
+    static let loopbackDeviceUID = "com.finetuneapp.loopback"
+
+    /// Enables lossless recording mode: saves the current system output device,
+    /// then switches system output to FineTune Loopback so apps output through
+    /// the virtual cable.
+    ///
+    /// Returns the UID of the previous output device (for later restoration).
+    @discardableResult
+    func enableLosslessRecording() -> String? {
+        guard isDriverInstalled else {
+            logger.error("Cannot enable lossless recording: driver not installed")
+            return nil
+        }
+
+        // Save current default output device UID
+        let previousUID = Self.currentDefaultOutputDeviceUID()
+        logger.info("Lossless recording: saving previous output device: \(previousUID ?? "nil")")
+
+        // Find the FineTune Loopback device and set it as default output
+        guard let loopbackID = Self.findDeviceByUID(Self.loopbackDeviceUID) else {
+            logger.error("FineTune Loopback device not found in audio system")
+            return nil
+        }
+
+        let err = Self.setDefaultOutputDevice(loopbackID)
+        if err == noErr {
+            isLosslessRecordingActive = true
+            logger.info("Lossless recording enabled: system output → FineTune Loopback")
+        } else {
+            logger.error("Failed to set FineTune Loopback as default output: \(err)")
+        }
+
+        return previousUID
+    }
+
+    /// Disables lossless recording mode: restores the specified output device
+    /// as the system default.
+    func disableLosslessRecording(restoreDeviceUID: String?) {
+        if let uid = restoreDeviceUID, let deviceID = Self.findDeviceByUID(uid) {
+            let err = Self.setDefaultOutputDevice(deviceID)
+            if err == noErr {
+                logger.info("Lossless recording disabled: restored output → \(uid)")
+            } else {
+                logger.error("Failed to restore output device \(uid): \(err)")
+            }
+        } else {
+            // Fallback: query the current system default output device.
+            // If it's still our loopback device, enumerate all outputs
+            // and pick the first non-loopback device.
+            var fallbackID = AudioObjectID(kAudioObjectUnknown)
+            var fbSize = UInt32(MemoryLayout<AudioObjectID>.size)
+            var fbAddr = AudioObjectPropertyAddress(
+                mSelector: kAudioHardwarePropertyDefaultOutputDevice,
+                mScope: kAudioObjectPropertyScopeGlobal,
+                mElement: kAudioObjectPropertyElementMain
+            )
+            let fbErr = AudioObjectGetPropertyData(
+                AudioObjectID(kAudioObjectSystemObject), &fbAddr, 0, nil, &fbSize, &fallbackID)
+
+            if fbErr == noErr && fallbackID != kAudioObjectUnknown {
+                // Check if the current default is our loopback device
+                let currentUID = Self.deviceUID(for: fallbackID)
+                if currentUID == Self.loopbackDeviceUID {
+                    // Find first non-loopback output device
+                    if let nonLoopback = Self.firstNonLoopbackOutputDevice() {
+                        Self.setDefaultOutputDevice(nonLoopback)
+                        logger.info("Lossless recording disabled: restored to first non-loopback device")
+                    } else {
+                        logger.warning("Lossless recording disabled: no non-loopback device found")
+                    }
+                } else {
+                    Self.setDefaultOutputDevice(fallbackID)
+                    logger.info("Lossless recording disabled: restored to current default")
+                }
+            } else {
+                logger.warning("Lossless recording disabled: could not query default output device")
+            }
+        }
+
+        isLosslessRecordingActive = false
+    }
+
+    /// Whether lossless recording mode is currently active (system output is FineTune Loopback).
+    private(set) var isLosslessRecordingActive: Bool = false
+
+    // MARK: - CoreAudio Helpers
+
+    /// Returns the UID of the current default output device.
+    private static func currentDefaultOutputDeviceUID() -> String? {
+        var deviceID: AudioDeviceID = 0
+        var size = UInt32(MemoryLayout<AudioDeviceID>.size)
+        var addr = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDefaultOutputDevice,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        let err = AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &addr, 0, nil, &size, &deviceID)
+        guard err == noErr, deviceID != 0 else { return nil }
+
+        var uidAddr = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyDeviceUID,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var uid: CFTypeRef? = nil
+        var uidSize = UInt32(MemoryLayout<CFTypeRef>.size)
+        let uidErr = AudioObjectGetPropertyData(deviceID, &uidAddr, 0, nil, &uidSize, &uid)
+        guard uidErr == noErr else { return nil }
+        guard let uidString = uid as? String else { return nil }
+        return uidString
+    }
+
+    /// Finds an AudioDeviceID by its UID string.
+    private static func findDeviceByUID(_ uid: String) -> AudioDeviceID? {
+        var propSize: UInt32 = 0
+        var addr = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDevices,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        AudioObjectGetPropertyDataSize(AudioObjectID(kAudioObjectSystemObject), &addr, 0, nil, &propSize)
+        let count = Int(propSize) / MemoryLayout<AudioDeviceID>.size
+        var devices = [AudioDeviceID](repeating: 0, count: count)
+        AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &addr, 0, nil, &propSize, &devices)
+
+        for dev in devices {
+            var uidAddr = AudioObjectPropertyAddress(
+                mSelector: kAudioDevicePropertyDeviceUID,
+                mScope: kAudioObjectPropertyScopeGlobal,
+                mElement: kAudioObjectPropertyElementMain
+            )
+            var devUID: CFTypeRef? = nil
+            var uidSize = UInt32(MemoryLayout<CFTypeRef>.size)
+            AudioObjectGetPropertyData(dev, &uidAddr, 0, nil, &uidSize, &devUID)
+            if let devUIDString = devUID as? String, devUIDString == uid {
+                return dev
+            }
+        }
+        return nil
+    }
+
+    /// Sets the default system output device.
+    @discardableResult
+    private static func setDefaultOutputDevice(_ deviceID: AudioDeviceID) -> OSStatus {
+        var addr = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDefaultOutputDevice,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var devID = deviceID
+        return AudioObjectSetPropertyData(
+            AudioObjectID(kAudioObjectSystemObject), &addr, 0, nil,
+            UInt32(MemoryLayout<AudioDeviceID>.size), &devID
+        )
+    }
+
+    /// Returns the UID string for a given AudioDeviceID, or nil.
+    private static func deviceUID(for deviceID: AudioDeviceID) -> String? {
+        var uidAddr = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyDeviceUID,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var uid: CFTypeRef? = nil
+        var uidSize = UInt32(MemoryLayout<CFTypeRef>.size)
+        let err = AudioObjectGetPropertyData(deviceID, &uidAddr, 0, nil, &uidSize, &uid)
+        guard err == noErr else { return nil }
+        return uid as? String
+    }
+
+    /// Returns the first non-loopback output device ID by enumerating all devices.
+    private static func firstNonLoopbackOutputDevice() -> AudioDeviceID? {
+        var propSize: UInt32 = 0
+        var addr = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDevices,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        AudioObjectGetPropertyDataSize(AudioObjectID(kAudioObjectSystemObject), &addr, 0, nil, &propSize)
+        let count = Int(propSize) / MemoryLayout<AudioDeviceID>.size
+        var devices = [AudioDeviceID](repeating: 0, count: count)
+        AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &addr, 0, nil, &propSize, &devices)
+
+        for dev in devices {
+            guard let uid = deviceUID(for: dev), uid != loopbackDeviceUID else { continue }
+            // Check this device has output streams
+            var streamAddr = AudioObjectPropertyAddress(
+                mSelector: kAudioDevicePropertyStreams,
+                mScope: kAudioObjectPropertyScopeOutput,
+                mElement: kAudioObjectPropertyElementMain
+            )
+            var streamSize: UInt32 = 0
+            AudioObjectGetPropertyDataSize(dev, &streamAddr, 0, nil, &streamSize)
+            if streamSize > 0 {
+                return dev
+            }
+        }
+        return nil
     }
 }
 

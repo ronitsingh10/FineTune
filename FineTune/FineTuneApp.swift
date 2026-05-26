@@ -111,6 +111,16 @@ struct FineTuneApp: App {
         let engine = AudioEngine(permission: permission, settingsManager: settings, autoEQProfileManager: profileManager)
         _audioEngine = State(initialValue: engine)
 
+        // H1: Crash recovery — if lossless was active when we last quit/crashed,
+        // restore the previous output device immediately before the UI renders.
+        if settings.appSettings.losslessRecordingEnabled {
+            engine.loopbackManager.disableLosslessRecording(
+                restoreDeviceUID: settings.appSettings.previousOutputDeviceUID)
+            settings.appSettings.losslessRecordingEnabled = false
+            settings.appSettings.previousOutputDeviceUID = nil
+            settings.flushSync()
+        }
+
         // Media keys / HUD services — instantiated at app scope so the tap
         // and HUD panel outlive popup open/close cycles.
         let accessibilityService = AccessibilityPermissionService()
@@ -225,12 +235,24 @@ struct FineTuneApp: App {
         }
 
         // Flush debounced settings + tear down the CGEventTap before dealloc.
+        // H7: Capture lossless state values upfront so they survive teardown.
+        let wasLosslessEnabled = settings.appSettings.losslessRecordingEnabled
+        let previousDeviceUID = settings.appSettings.previousOutputDeviceUID
         NotificationCenter.default.addObserver(
             forName: NSApplication.willTerminateNotification,
             object: nil,
             queue: .main
-        ) { [settings, monitor, accessibilityService, hud, coordinator] _ in
+        ) { [settings, monitor, accessibilityService, hud, coordinator, engine] _ in
             MainActor.assumeIsolated {
+                // Restore output device if lossless recording was active
+                if settings.appSettings.losslessRecordingEnabled || wasLosslessEnabled {
+                    engine.loopbackManager.disableLosslessRecording(
+                        restoreDeviceUID: settings.appSettings.previousOutputDeviceUID ?? previousDeviceUID
+                    )
+                    settings.appSettings.losslessRecordingEnabled = false
+                    settings.appSettings.previousOutputDeviceUID = nil
+                }
+
                 coordinator.stop()
                 monitor.stop()
                 accessibilityService.stop()

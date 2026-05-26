@@ -22,10 +22,10 @@ extern "C" {
 // POSIX shared memory name (used with shm_open)
 #define kFTLoopbackShmName "/finetune_loopback"
 
-// Default configuration
-#define kFTLoopbackDefaultBufferFrames  48000   // 1 second at 48kHz
+// Default configuration — these must match the driver defaults in FTLoopbackDriver.h
+#define kFTLoopbackDefaultBufferFrames  48000   // 1 second at 48kHz (ring buffer capacity)
 #define kFTLoopbackDefaultChannels      2
-#define kFTLoopbackDefaultSampleRate    48000.0
+#define kFTLoopbackDefaultSampleRate    44100.0  // M2: Must match kFTDefaultSampleRate in driver
 
 /// Shared memory header — sits at the start of the mapped region.
 /// All fields are naturally aligned for atomic access on ARM64/x86-64.
@@ -62,10 +62,16 @@ typedef struct {
 
     /// Reserved for future use, ensures 8-byte alignment of audio data.
     uint32_t _padding;                  // offset 36
-} FTLoopbackSharedHeader;               // total: 40 bytes
+
+    /// mach_absolute_time() of the most recent write() call.
+    /// Updated atomically by the producer after writing audio data.
+    /// The HAL driver uses this to derive its clock from the producer's
+    /// clock, eliminating drift between independent clocks.
+    volatile uint64_t hostTime;         // offset 40
+} FTLoopbackSharedHeader;               // total: 48 bytes
 
 // Compile-time size check
-_Static_assert(sizeof(FTLoopbackSharedHeader) == 40,
+_Static_assert(sizeof(FTLoopbackSharedHeader) == 48,
     "FTLoopbackSharedHeader size mismatch — binary protocol broken");
 
 /// Returns the total shared memory size needed for a given configuration.

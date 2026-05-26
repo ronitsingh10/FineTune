@@ -27,6 +27,7 @@ struct FTLoopbackSharedHeader {
     var isActive: UInt32        // 1 = connected, 0 = idle
     var bufferFrames: UInt32    // ring buffer capacity in frames
     var _padding: UInt32        // alignment
+    var hostTime: UInt64        // mach_absolute_time of last write (for clock sync)
 }
 
 /// Lock-free single-producer, single-consumer ring buffer backed by POSIX shared memory.
@@ -126,6 +127,7 @@ final class LoopbackRingBuffer: @unchecked Sendable {
         header!.pointee.isActive = 0
         header!.pointee.bufferFrames = bufferFrames
         header!.pointee._padding = 0
+        header!.pointee.hostTime = 0
 
         // Zero the audio buffer
         memset(audioData!, 0, Int(bufferFrames) * Int(channels) * MemoryLayout<Float>.size)
@@ -247,6 +249,8 @@ final class LoopbackRingBuffer: @unchecked Sendable {
         // audio data — this ordering guarantees it sees complete frames.
         OSMemoryBarrier()
         header.pointee.writeHead = currentWrite + UInt64(framesToWrite)
+        // Write host time AFTER writeHead so consumer sees consistent data
+        header.pointee.hostTime = mach_absolute_time()
     }
 }
 
