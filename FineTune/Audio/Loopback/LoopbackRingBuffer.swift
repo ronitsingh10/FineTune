@@ -252,6 +252,57 @@ final class LoopbackRingBuffer: @unchecked Sendable {
         // Write host time AFTER writeHead so consumer sees consistent data
         header.pointee.hostTime = mach_absolute_time()
     }
+
+    // MARK: - Ring Buffer Diagnostics
+
+    struct BufferStats {
+        let writeHead: UInt64
+        let readHead: UInt64
+        let fillLevel: Double       // (writeHead - readHead) / bufferFrames
+        let isActive: Bool
+        let sampleRate: Float64
+        let channels: UInt32
+        let bufferFrames: UInt32
+        let isOverrun: Bool         // fillLevel > 0.9
+        let isUnderrun: Bool        // fillLevel < 0.05 && isActive
+    }
+
+    var stats: BufferStats {
+        guard let header else {
+            return BufferStats(
+                writeHead: 0,
+                readHead: 0,
+                fillLevel: 0.0,
+                isActive: false,
+                sampleRate: sampleRate,
+                channels: channels,
+                bufferFrames: bufferFrames,
+                isOverrun: false,
+                isUnderrun: false
+            )
+        }
+        let wh = header.pointee.writeHead
+        let rh = header.pointee.readHead
+        let active = header.pointee.isActive != 0
+        let sr = header.pointee.sampleRate
+        let ch = header.pointee.channels
+        let bf = header.pointee.bufferFrames
+        
+        let framesAvailable = wh >= rh ? Double(wh - rh) : 0.0
+        let fill = bf > 0 ? framesAvailable / Double(bf) : 0.0
+        
+        return BufferStats(
+            writeHead: wh,
+            readHead: rh,
+            fillLevel: fill,
+            isActive: active,
+            sampleRate: sr,
+            channels: ch,
+            bufferFrames: bf,
+            isOverrun: fill > 0.9,
+            isUnderrun: fill < 0.05 && active
+        )
+    }
 }
 
 // MARK: - Errors

@@ -600,6 +600,77 @@ final class AudioEngine {
         taps[app.id]?.audioLevel ?? 0.0
     }
 
+    // MARK: - Debug Info
+
+    /// Snapshot of a single tap's state for the debug panel.
+    struct TapDebugInfo {
+        let pid: pid_t
+        let appName: String
+        let bundleID: String?
+        let audioLevel: Float
+        let volume: Float
+        let isMuted: Bool
+        let isUnmutedCapture: Bool
+        let isLoopbackEnabled: Bool
+        let deviceUID: String?
+        let deviceUIDs: [String]
+        let tapSourceDeviceUID: String?
+        let isFollowingDefault: Bool
+        let ioStats: ProcessTapController.IOStats?
+        let sampleRate: Float64
+        let deviceSampleRate: Float64
+        let sampleRateMismatch: Bool
+    }
+
+    /// Returns debug info for all active taps.
+    var debugTapInfos: [TapDebugInfo] {
+        apps.map { app in
+            let tap = taps[app.id]
+            let stats = tap?.ioStats
+            let tapSR = stats?.tapSampleRate ?? 0
+            var deviceSR: Float64 = 0
+            if let aggID = tap?.primaryAggregateDeviceID, aggID != .unknown {
+                deviceSR = (try? aggID.readNominalSampleRate()) ?? 0
+            }
+            let mismatch = tapSR > 0 && deviceSR > 0 && abs(tapSR - deviceSR) > 0.1
+            
+            return TapDebugInfo(
+                pid: app.id,
+                appName: app.name,
+                bundleID: app.bundleID,
+                audioLevel: tap?.audioLevel ?? 0,
+                volume: tap?.volume ?? 0,
+                isMuted: tap?.isMuted ?? false,
+                isUnmutedCapture: tap?.isUnmutedCapture ?? false,
+                isLoopbackEnabled: loopbackManager.isAppRouted(app.id),
+                deviceUID: tap?.currentDeviceUID,
+                deviceUIDs: tap?.currentDeviceUIDs ?? [],
+                tapSourceDeviceUID: tap?.tapSourceDeviceUID,
+                isFollowingDefault: followsDefault.contains(app.id),
+                ioStats: stats,
+                sampleRate: tapSR,
+                deviceSampleRate: deviceSR,
+                sampleRateMismatch: mismatch
+            )
+        }
+    }
+
+    struct LoopbackDebugInfo {
+        let isDriverInstalled: Bool
+        let isActive: Bool
+        let activeAppPIDs: Set<pid_t>
+        let bufferStats: LoopbackRingBuffer.BufferStats?
+    }
+
+    var debugLoopbackInfo: LoopbackDebugInfo {
+        LoopbackDebugInfo(
+            isDriverInstalled: loopbackManager.isDriverInstalled,
+            isActive: loopbackManager.isActive,
+            activeAppPIDs: loopbackManager.activeApps,
+            bufferStats: loopbackManager.getRingBuffer()?.stats
+        )
+    }
+
     func start() {
         // Monitors have internal guards against double-starting
         if permission.status == .authorized {
@@ -658,29 +729,70 @@ final class AudioEngine {
     }
 
     /// Enables loopback routing for a specific app.
-    /// Creates the shared memory ring buffer if not already active.
+    /// Switches the tap to `.unmuted` so the app plays through its own device normally.
+    /// The IO callback captures raw audio to the ring buffer for the loopback virtual device.
     func enableLoopback(for app: AudioApp) throws {
-        let buffer = try loopbackManager.enableLoopback()
-        loopbackManager.addApp(app.id)
-
-        // Assign the ring buffer to the app's tap
-        if let tap = taps[app.id] {
-            tap.setLoopbackBuffer(buffer)
+        guard let tap = taps[app.id] else {
+            logger.warning("Cannot enable loopback for \(app.name): no active tap")
+            return
         }
 
-        logger.info("Loopback enabled for \(app.name)")
+        // Disable any existing loopback routing first (only one app at a time — SPSC ring buffer)
+        for existingPID in loopbackManager.activeApps {
+            if existingPID != app.id, let existingTap = taps[existingPID] {
+                existingTap.setLoopbackBuffer(nil)
+                // Restore muted behavior on the evicted app
+                if let ptc = existingTap as? ProcessTapController {
+                    ptc.isUnmutedCapture = false
+                    Task { try? await existingTap.refreshTapSource(existingTap.tapSourceDeviceUID) }
+                }
+            }
+            loopbackManager.removeApp(existingPID)
+        }
+
+        // Read the actual device sample rate from the tap's aggregate device
+        let actualSampleRate: Float64
+        if let aggID = (tap as? ProcessTapController)?.primaryAggregateDeviceID,
+           let sr = try? aggID.readNominalSampleRate() {
+            actualSampleRate = sr
+        } else {
+            actualSampleRate = Self.kDefaultLoopbackSampleRate
+        }
+
+        let buffer = try loopbackManager.enableLoopback(sampleRate: actualSampleRate, channels: 2)
+        loopbackManager.addApp(app.id)
+        tap.setLoopbackBuffer(buffer)
+
+        // Switch to unmuted capture: app plays normally, we just observe and capture
+        if let ptc = tap as? ProcessTapController, !ptc.isUnmutedCapture {
+            ptc.isUnmutedCapture = true
+            Task {
+                try? await tap.refreshTapSource(tap.tapSourceDeviceUID)
+                logger.info("Tap switched to unmuted capture for \(app.name)")
+            }
+        }
+
+        logger.info("Loopback enabled for \(app.name) at \(actualSampleRate)Hz")
     }
 
     /// Disables loopback routing for a specific app.
+    /// Restores `.mutedWhenTapped` so FineTune volume/EQ controls work again.
     func disableLoopback(for app: AudioApp) {
         loopbackManager.removeApp(app.id)
 
-        // Remove the ring buffer from the tap
         if let tap = taps[app.id] {
             tap.setLoopbackBuffer(nil)
+
+            // Restore muted behavior for normal FineTune control
+            if let ptc = tap as? ProcessTapController, ptc.isUnmutedCapture {
+                ptc.isUnmutedCapture = false
+                Task {
+                    try? await tap.refreshTapSource(tap.tapSourceDeviceUID)
+                    logger.info("Tap restored to muted for \(app.name)")
+                }
+            }
         }
 
-        // If no more apps are using loopback, disable the system
         if loopbackManager.activeApps.isEmpty {
             loopbackManager.disableLoopback()
         }
@@ -709,6 +821,10 @@ final class AudioEngine {
                     )
                     tap.setLoopbackBuffer(buffer)
                     loopbackManager.addApp(pid)
+                    if let ptc = tap as? ProcessTapController {
+                        ptc.isUnmutedCapture = true
+                        Task { try? await tap.refreshTapSource(tap.tapSourceDeviceUID) }
+                    }
                     logger.info("Loopback reassigned to \(tap.app.name)")
                     return
                 } catch {
@@ -1345,6 +1461,11 @@ final class AudioEngine {
                         )
                         tap.setLoopbackBuffer(buffer)
                         loopbackManager.addApp(app.id)
+                        // Enable unmuted capture so app plays normally
+                        if let ptc = tap as? ProcessTapController {
+                            ptc.isUnmutedCapture = true
+                            Task { try? await tap.refreshTapSource(tap.tapSourceDeviceUID) }
+                        }
                         logger.info("Loopback auto-enabled for \(app.name) (exclusive)")
                     } catch {
                         // TODO: M10 — Surface this error to the user via notification or UI state

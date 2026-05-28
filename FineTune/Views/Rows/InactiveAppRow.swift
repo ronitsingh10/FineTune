@@ -148,6 +148,8 @@ struct InactiveAppRow: View {
                     defaultDeviceUID: defaultDeviceUID,
                     deviceSelectionMode: deviceSelectionMode,
                     boost: boost,
+                    isLoopbackAvailable: false,
+                    isLoopbackEnabled: false,
                     isEQExpanded: isEQExpanded,
                     onVolumeChange: onVolumeChange,
                     onMuteChange: onMuteChange,
@@ -156,6 +158,7 @@ struct InactiveAppRow: View {
                     onDevicesSelected: onDevicesSelected,
                     onDeviceModeChange: onDeviceModeChange,
                     onSelectFollowDefault: onSelectFollowDefault,
+                    onLoopbackToggle: {},
                     onEQToggle: onEQToggle
                 )
             }

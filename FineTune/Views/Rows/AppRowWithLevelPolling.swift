@@ -33,6 +33,9 @@ struct AppRowWithLevelPolling: View {
     let isEQExpanded: Bool
     let onEQToggle: () -> Void
     let isFocused: Bool
+    let isLoopbackAvailable: Bool
+    let isLoopbackEnabled: Bool
+    let onLoopbackToggle: () -> Void
 
     @State private var displayLevel: Float = 0
     @State private var levelTimer: Timer?
@@ -67,7 +70,10 @@ struct AppRowWithLevelPolling: View {
         onRenameUserPreset: @escaping (UUID, String) -> Void = { _, _ in },
         isEQExpanded: Bool = false,
         onEQToggle: @escaping () -> Void = {},
-        isFocused: Bool = false
+        isFocused: Bool = false,
+        isLoopbackAvailable: Bool = false,
+        isLoopbackEnabled: Bool = false,
+        onLoopbackToggle: @escaping () -> Void = {}
     ) {
         self.app = app
         self.volume = volume
@@ -99,6 +105,9 @@ struct AppRowWithLevelPolling: View {
         self.isEQExpanded = isEQExpanded
         self.onEQToggle = onEQToggle
         self.isFocused = isFocused
+        self.isLoopbackAvailable = isLoopbackAvailable
+        self.isLoopbackEnabled = isLoopbackEnabled
+        self.onLoopbackToggle = onLoopbackToggle
     }
 
     var body: some View {
@@ -131,7 +140,10 @@ struct AppRowWithLevelPolling: View {
             onRenameUserPreset: onRenameUserPreset,
             isEQExpanded: isEQExpanded,
             onEQToggle: onEQToggle,
-            isFocused: isFocused
+            isFocused: isFocused,
+            isLoopbackAvailable: isLoopbackAvailable,
+            isLoopbackEnabled: isLoopbackEnabled,
+            onLoopbackToggle: onLoopbackToggle
         )
         .onAppear {
             if isPopupVisible {

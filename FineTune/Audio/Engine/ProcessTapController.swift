@@ -38,6 +38,10 @@ final class ProcessTapController: ProcessTapControlling {
     /// Non-nil means stream-specific tap; nil means stereo mixdown.
     var tapSourceDeviceUID: String? { preferredTapSourceDeviceUID }
 
+    /// Exposes the primary aggregate device ID for sample rate queries.
+    /// Used by AudioEngine to create loopback ring buffers at the actual device sample rate.
+    var primaryAggregateDeviceID: AudioObjectID { primaryResources.aggregateDeviceID }
+
     // MARK: - RT-Safe State (nonisolated(unsafe) for lock-free audio thread access)
     //
     // These variables are accessed from CoreAudio's real-time thread without locks.
@@ -75,6 +79,22 @@ final class ProcessTapController: ProcessTapControlling {
     private nonisolated(unsafe) var _activationHostTime: UInt64 = 0
     /// Set once any audio callback has rendered at least one buffer.
     private nonisolated(unsafe) var _hasRenderedAudio: Bool = false
+
+    // MARK: - IO Diagnostics (written from RT thread, read from main thread)
+
+    /// Total number of IO callbacks fired since activation.
+    private nonisolated(unsafe) var _ioCallbackCount: UInt64 = 0
+    /// Total audio frames processed since activation.
+    private nonisolated(unsafe) var _ioTotalFrames: UInt64 = 0
+    /// mach_absolute_time of the very first callback.
+    private nonisolated(unsafe) var _ioFirstTimestamp: UInt64 = 0
+    /// Peak level of the raw input signal (before processing).
+    private nonisolated(unsafe) var _inputPeakLevel: Float = 0
+    /// Per-output-buffer peak levels after processing (up to 8 sub-devices).
+    /// Using a fixed-size tuple for RT-safety (no heap allocation).
+    private nonisolated(unsafe) var _outputPeaks: (Float, Float, Float, Float, Float, Float, Float, Float) = (0,0,0,0,0,0,0,0)
+    /// Number of output buffers in the current aggregate device.
+    private nonisolated(unsafe) var _outputBufferCount: Int = 0
 
     /// Callback role identification — RT-safe via atomic UInt32 reads.
     /// Each IO proc closure captures an immutable callbackID at creation.
@@ -123,6 +143,15 @@ final class ProcessTapController: ProcessTapControlling {
     /// Set from main thread; read from HAL I/O thread (pointer read is atomic on ARM64/x86-64).
     private nonisolated(unsafe) var _loopbackBuffer: LoopbackRingBuffer?
 
+    /// When true, the process tap uses `.unmuted` behavior so the app's own audio
+    /// continues to play normally. The IO callback captures raw audio to the loopback
+    /// ring buffer and writes silence to the aggregate output (prevents double audio).
+    private nonisolated(unsafe) var _unmutedCapture: Bool = false
+    var isUnmutedCapture: Bool {
+        get { _unmutedCapture }
+        set { _unmutedCapture = newValue }
+    }
+
     // Target device UIDs for synchronized multi-output (first is clock source)
     private var targetDeviceUIDs: [String]
     // Current active device UIDs
@@ -154,6 +183,84 @@ final class ProcessTapController: ProcessTapControlling {
         guard info.denom != 0 else { return 1.0 }
         return Double(info.numer) / Double(info.denom)
     }()
+
+    // MARK: - IO Stats (read-only diagnostic snapshot)
+
+    /// Diagnostic snapshot of IO callback health.
+    struct IOStats {
+        let callbackCount: UInt64
+        let totalFrames: UInt64
+        let callbacksPerSecond: Double
+        let framesPerCallback: Double
+        let inputPeak: Float
+        let outputPeaks: [Float]
+        let lastCallbackAgo: Double   // seconds since last callback
+        let tapSampleRate: Float64
+    }
+
+    /// Returns a non-blocking snapshot of IO callback statistics.
+    var ioStats: IOStats {
+        let count = _ioCallbackCount
+        let frames = _ioTotalFrames
+        let first = _ioFirstTimestamp
+        let last = _lastRenderHostTime
+        let now = mach_absolute_time()
+
+        let elapsedNanos = first > 0 ? Double(now - first) * Self.hostTimeNanosScale : 0
+        let elapsedSec = elapsedNanos / 1_000_000_000.0
+        let cps = elapsedSec > 0.1 ? Double(count) / elapsedSec : 0
+        let fpc = count > 0 ? Double(frames) / Double(count) : 0
+
+        let lastAgoNanos = last > 0 ? Double(now - last) * Self.hostTimeNanosScale : Double.infinity
+        let lastAgo = lastAgoNanos / 1_000_000_000.0
+
+        let peaks = _outputPeaks
+        var peakArray: [Float] = []
+        let subDeviceCount = currentDeviceUIDs.count
+        if subDeviceCount > 0 {
+            let primaryPeak = peaks.0
+            for i in 0..<subDeviceCount {
+                if i == 0 {
+                    peakArray.append(primaryPeak)
+                } else {
+                    switch i {
+                    case 1: peakArray.append(peaks.1 > 0 ? peaks.1 : primaryPeak)
+                    case 2: peakArray.append(peaks.2 > 0 ? peaks.2 : primaryPeak)
+                    case 3: peakArray.append(peaks.3 > 0 ? peaks.3 : primaryPeak)
+                    case 4: peakArray.append(peaks.4 > 0 ? peaks.4 : primaryPeak)
+                    case 5: peakArray.append(peaks.5 > 0 ? peaks.5 : primaryPeak)
+                    case 6: peakArray.append(peaks.6 > 0 ? peaks.6 : primaryPeak)
+                    case 7: peakArray.append(peaks.7 > 0 ? peaks.7 : primaryPeak)
+                    default: peakArray.append(primaryPeak)
+                    }
+                }
+            }
+        } else {
+            let bufCount = _outputBufferCount
+            if bufCount > 0 { peakArray.append(peaks.0) }
+            if bufCount > 1 { peakArray.append(peaks.1) }
+            if bufCount > 2 { peakArray.append(peaks.2) }
+            if bufCount > 3 { peakArray.append(peaks.3) }
+            if bufCount > 4 { peakArray.append(peaks.4) }
+            if bufCount > 5 { peakArray.append(peaks.5) }
+            if bufCount > 6 { peakArray.append(peaks.6) }
+            if bufCount > 7 { peakArray.append(peaks.7) }
+        }
+
+        return IOStats(
+            callbackCount: count,
+            totalFrames: frames,
+            callbacksPerSecond: cps,
+            framesPerCallback: fpc,
+            inputPeak: _inputPeakLevel,
+            outputPeaks: peakArray,
+            lastCallbackAgo: lastAgo,
+            tapSampleRate: _tapSampleRate
+        )
+    }
+
+    /// The sample rate the tap was created at.
+    private nonisolated(unsafe) var _tapSampleRate: Float64 = 0
 
     /// Returns true when the audio callback has run within the requested interval.
     func hasRecentAudioCallback(within seconds: Double) -> Bool {
@@ -371,7 +478,7 @@ final class ProcessTapController: ProcessTapControlling {
             if let outputStream = outputStreamIndex(for: deviceUID) {
                 let streamTap = CATapDescription(processes: app.processObjectIDs, deviceUID: deviceUID, stream: outputStream)
                 streamTap.uuid = UUID()
-                streamTap.muteBehavior = .mutedWhenTapped
+                streamTap.muteBehavior = _unmutedCapture ? .unmuted : .mutedWhenTapped
                 streamTap.isPrivate = true
 
                 var tapID: AudioObjectID = .unknown
@@ -391,7 +498,7 @@ final class ProcessTapController: ProcessTapControlling {
 
         let mixdownTap = CATapDescription(stereoMixdownOfProcesses: app.processObjectIDs)
         mixdownTap.uuid = UUID()
-        mixdownTap.muteBehavior = .mutedWhenTapped
+        mixdownTap.muteBehavior = _unmutedCapture ? .unmuted : .mutedWhenTapped
         mixdownTap.isPrivate = true
 
         var mixdownTapID: AudioObjectID = .unknown
@@ -433,6 +540,9 @@ final class ProcessTapController: ProcessTapControlling {
 
         primaryResources.tapID = tapID
         logger.debug("Created process tap #\(tapID)")
+        if let asbd = try? tapID.readAudioTapStreamBasicDescription() {
+            _tapSampleRate = asbd.mSampleRate
+        }
 
         // Build multi-device aggregate description
         // First device is clock source, others have drift compensation for sync
@@ -457,12 +567,10 @@ final class ProcessTapController: ProcessTapControlling {
             throw NSError(domain: "ProcessTapController", code: -1, userInfo: [NSLocalizedDescriptionKey: "Aggregate device not ready within timeout"])
         }
 
-        // Force aggregate device buffer size to 2048 frames (~46ms at 44.1kHz).
-        // Without this, macOS negotiates the buffer to the smallest sub-device
-        // value (often 128 frames = 2.9ms), which causes client timeout overloads
-        // because rekordbox/Ableton can't complete their IO callback in 2.9ms
-        // under any CPU pressure.
-        var preferredBufferSize: UInt32 = 2048
+        // Set aggregate buffer size to 128 frames (~2.9ms at 44.1kHz).
+        // Without a floor, macOS negotiates to sub-device minimum (sometimes 16-32 frames)
+        // which causes callback overloads and distortion. 128 is the smallest safe value.
+        var preferredBufferSize: UInt32 = 128
         var bufferSizeAddress = AudioObjectPropertyAddress(
             mSelector: kAudioDevicePropertyBufferFrameSize,
             mScope: kAudioObjectPropertyScopeGlobal,
@@ -477,8 +585,6 @@ final class ProcessTapController: ProcessTapControlling {
         )
         if setErr != noErr {
             logger.warning("Failed to set aggregate buffer size to \(preferredBufferSize): \(setErr)")
-        } else {
-            logger.info("Set aggregate buffer size to \(preferredBufferSize) frames")
         }
 
         logger.debug("Created aggregate device #\(self.primaryResources.aggregateDeviceID)")
@@ -927,6 +1033,10 @@ final class ProcessTapController: ProcessTapControlling {
     private func promoteSecondaryToPrimary() {
         primaryResources = secondaryResources
         secondaryResources = TapResources()
+        let tapID = primaryResources.tapID
+        if tapID.isValid, let asbd = try? tapID.readAudioTapStreamBasicDescription() {
+            _tapSampleRate = asbd.mSampleRate
+        }
 
         if let deviceSampleRate = try? primaryResources.aggregateDeviceID.readNominalSampleRate() {
             let rampTimeSeconds: Float = 0.030
@@ -1305,6 +1415,8 @@ final class ProcessTapController: ProcessTapControlling {
     ) {
         _lastRenderHostTime = mach_absolute_time()
         _hasRenderedAudio = true
+        _ioCallbackCount &+= 1
+        if _ioFirstTimestamp == 0 { _ioFirstTimestamp = _lastRenderHostTime }
 
         let isPrimary = (callbackID == _primaryCallbackID)
         let isSecondary = !isPrimary && (callbackID == _secondaryCallbackID)
@@ -1334,6 +1446,35 @@ final class ProcessTapController: ProcessTapControlling {
             return
         }
 
+        // Unmuted capture mode: the app plays through its own device (tap is .unmuted).
+        // We capture raw input audio to the loopback ring buffer and silence the
+        // aggregate output to prevent double audio.
+        if _unmutedCapture {
+            if isPrimary, let loopback = _loopbackBuffer {
+                // Write raw input directly to ring buffer (no volume/EQ processing)
+                if let firstInput = inputBuffers.first, let inputData = firstInput.mData {
+                    let inputSamples = inputData.assumingMemoryBound(to: Float.self)
+                    let channels = max(1, Int(firstInput.mNumberChannels))
+                    let sampleCount = Int(firstInput.mDataByteSize) / MemoryLayout<Float>.size
+                    let frameCount = sampleCount / channels
+                    loopback.write(inputSamples, frameCount: frameCount, channels: channels)
+
+                    // Track peak level for VU meter even in unmuted mode
+                    var maxPeak: Float = 0.0
+                    for i in stride(from: 0, to: sampleCount, by: channels) {
+                        let absSample = abs(inputSamples[i])
+                        if absSample > maxPeak { maxPeak = absSample }
+                    }
+                    _peakLevel = _peakLevel + levelSmoothingFactor * (min(maxPeak, 1.0) - _peakLevel)
+                }
+            }
+            // Silence output to prevent double audio
+            for buf in outputBuffers {
+                if let data = buf.mData { memset(data, 0, Int(buf.mDataByteSize)) }
+            }
+            return
+        }
+
         // Track peak level for VU meter
         var maxPeak: Float = 0.0
         var totalSamplesThisBuffer: Int = 0
@@ -1354,6 +1495,8 @@ final class ProcessTapController: ProcessTapControlling {
 
         if isPrimary {
             _peakLevel = _peakLevel + levelSmoothingFactor * (rawPeak - _peakLevel)
+            _inputPeakLevel = _inputPeakLevel + levelSmoothingFactor * (rawPeak - _inputPeakLevel)
+            _ioTotalFrames &+= UInt64(totalSamplesThisBuffer)
         } else {
             _secondaryPeakLevel = _secondaryPeakLevel + levelSmoothingFactor * (rawPeak - _secondaryPeakLevel)
             // Only the secondary callback advances crossfade progress (single-writer pattern).
@@ -1423,6 +1566,45 @@ final class ProcessTapController: ProcessTapControlling {
 
         if isPrimary {
             _primaryCurrentVolume = currentVol
+
+            // Per-output peak measurement (RT-safe: tuple of Floats)
+            _outputBufferCount = outputBuffers.count
+            var peaks: (Float, Float, Float, Float, Float, Float, Float, Float) = (0,0,0,0,0,0,0,0)
+            for i in 0..<min(outputBuffers.count, 8) {
+                let buf = outputBuffers[i]
+                guard let data = buf.mData else { continue }
+                let samples = data.assumingMemoryBound(to: Float.self)
+                let count = Int(buf.mDataByteSize) / MemoryLayout<Float>.size
+                var peak: Float = 0
+                for s in 0..<count {
+                    let a = abs(samples[s])
+                    if a > peak { peak = a }
+                }
+                let smoothed: Float
+                switch i {
+                case 0: smoothed = _outputPeaks.0 + levelSmoothingFactor * (peak - _outputPeaks.0)
+                case 1: smoothed = _outputPeaks.1 + levelSmoothingFactor * (peak - _outputPeaks.1)
+                case 2: smoothed = _outputPeaks.2 + levelSmoothingFactor * (peak - _outputPeaks.2)
+                case 3: smoothed = _outputPeaks.3 + levelSmoothingFactor * (peak - _outputPeaks.3)
+                case 4: smoothed = _outputPeaks.4 + levelSmoothingFactor * (peak - _outputPeaks.4)
+                case 5: smoothed = _outputPeaks.5 + levelSmoothingFactor * (peak - _outputPeaks.5)
+                case 6: smoothed = _outputPeaks.6 + levelSmoothingFactor * (peak - _outputPeaks.6)
+                case 7: smoothed = _outputPeaks.7 + levelSmoothingFactor * (peak - _outputPeaks.7)
+                default: smoothed = 0
+                }
+                switch i {
+                case 0: peaks.0 = smoothed
+                case 1: peaks.1 = smoothed
+                case 2: peaks.2 = smoothed
+                case 3: peaks.3 = smoothed
+                case 4: peaks.4 = smoothed
+                case 5: peaks.5 = smoothed
+                case 6: peaks.6 = smoothed
+                case 7: peaks.7 = smoothed
+                default: break
+                }
+            }
+            _outputPeaks = peaks
         } else {
             _secondaryCurrentVolume = currentVol
         }

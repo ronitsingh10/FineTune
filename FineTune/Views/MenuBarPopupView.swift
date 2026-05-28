@@ -116,6 +116,7 @@ struct MenuBarPopupView: View {
                 }
                 Spacer()
                 editPriorityButton
+                debugButton
                 settingsButton
             }
             .padding(.bottom, DesignTokens.Spacing.xs)
@@ -264,6 +265,29 @@ struct MenuBarPopupView: View {
         .contentShape(Rectangle())
         .animation(.spring(response: 0.3, dampingFraction: 0.75), value: isEditingDevicePriority)
         .help(isEditingDevicePriority ? "Done reordering" : "Reorder devices")
+    }
+
+    // MARK: - Debug Button
+
+    private var debugButton: some View {
+        Button(action: {
+            AudioDebugWindowController.shared.showWindow(audioEngine: audioEngine)
+        }) {
+            Image(systemName: "ant.fill")
+                .font(.system(size: 11))
+                .symbolRenderingMode(.hierarchical)
+                .foregroundStyle(DesignTokens.Colors.interactiveDefault)
+        }
+        .buttonStyle(.plain)
+        .font(.system(size: 11))
+        .symbolRenderingMode(.hierarchical)
+        .foregroundStyle(DesignTokens.Colors.interactiveDefault)
+        .frame(
+            minWidth: DesignTokens.Dimensions.minTouchTarget,
+            minHeight: DesignTokens.Dimensions.minTouchTarget
+        )
+        .contentShape(Rectangle())
+        .help("Audio Debug Panel")
     }
 
     // MARK: - Settings Button
@@ -901,7 +925,16 @@ struct MenuBarPopupView: View {
                 onEQToggle: {
                     toggleEQ(for: displayableApp.id, scrollProxy: scrollProxy)
                 },
-                isFocused: hasKeyboardEngaged && selectedRow == .app(persistenceID: displayableApp.id)
+                isFocused: hasKeyboardEngaged && selectedRow == .app(persistenceID: displayableApp.id),
+                isLoopbackAvailable: audioEngine.isLoopbackDriverInstalled,
+                isLoopbackEnabled: audioEngine.isLoopbackEnabled(for: app),
+                onLoopbackToggle: {
+                    if audioEngine.isLoopbackEnabled(for: app) {
+                        audioEngine.disableLoopback(for: app)
+                    } else {
+                        try? audioEngine.enableLoopback(for: app)
+                    }
+                }
             )
             .id(PopupKeyboardNavModel.RowID.app(persistenceID: displayableApp.id))
         }

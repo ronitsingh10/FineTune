@@ -32,6 +32,9 @@ struct AppRow: View {
     let onRenameUserPreset: (UUID, String) -> Void
     let isEQExpanded: Bool
     let onEQToggle: () -> Void
+    let isLoopbackAvailable: Bool
+    let isLoopbackEnabled: Bool
+    let onLoopbackToggle: () -> Void
     let isFocused: Bool
 
     @State private var isIconHovered = false
@@ -66,7 +69,10 @@ struct AppRow: View {
         onRenameUserPreset: @escaping (UUID, String) -> Void = { _, _ in },
         isEQExpanded: Bool = false,
         onEQToggle: @escaping () -> Void = {},
-        isFocused: Bool = false
+        isFocused: Bool = false,
+        isLoopbackAvailable: Bool = false,
+        isLoopbackEnabled: Bool = false,
+        onLoopbackToggle: @escaping () -> Void = {}
     ) {
         self.app = app
         self.volume = volume
@@ -97,6 +103,9 @@ struct AppRow: View {
         self.isEQExpanded = isEQExpanded
         self.onEQToggle = onEQToggle
         self.isFocused = isFocused
+        self.isLoopbackAvailable = isLoopbackAvailable
+        self.isLoopbackEnabled = isLoopbackEnabled
+        self.onLoopbackToggle = onLoopbackToggle
         // Initialize local EQ state for reactive UI updates
         self._localEQSettings = State(initialValue: eqSettings)
     }
@@ -162,6 +171,8 @@ struct AppRow: View {
                     defaultDeviceUID: defaultDeviceUID,
                     deviceSelectionMode: deviceSelectionMode,
                     boost: boost,
+                    isLoopbackAvailable: isLoopbackAvailable,
+                    isLoopbackEnabled: isLoopbackEnabled,
                     isEQExpanded: isEQExpanded,
                     onVolumeChange: onVolumeChange,
                     onMuteChange: onMuteChange,
@@ -170,6 +181,7 @@ struct AppRow: View {
                     onDevicesSelected: onDevicesSelected,
                     onDeviceModeChange: onDeviceModeChange,
                     onSelectFollowDefault: onSelectFollowDefault,
+                    onLoopbackToggle: onLoopbackToggle,
                     onEQToggle: onEQToggle
                 )
             }

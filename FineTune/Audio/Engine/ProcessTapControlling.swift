@@ -1,3 +1,5 @@
+import AudioToolbox
+
 /// Abstraction over process tap controllers for testability.
 ///
 /// **Threading:** Intentionally NOT `@MainActor`. Concrete implementations straddle
@@ -36,9 +38,32 @@ protocol ProcessTapControlling: AnyObject {
     /// so the FineTuneLoopback HAL plugin can read them as an input device.
     /// Pass nil to disconnect from loopback.
     func setLoopbackBuffer(_ buffer: LoopbackRingBuffer?)
+
+    /// Enables unmuted capture mode. When true, the process tap uses `.unmuted`
+    /// behavior so the app's own audio output is NOT silenced. The IO callback
+    /// captures raw audio to the loopback ring buffer and writes silence to the
+    /// aggregate output (preventing double audio). Requires tap recreation.
+    var isUnmutedCapture: Bool { get }
+    var ioStats: ProcessTapController.IOStats { get }
+    var primaryAggregateDeviceID: AudioObjectID { get }
 }
 
 extension ProcessTapControlling {
+    var primaryAggregateDeviceID: AudioObjectID { .unknown }
+
+    var ioStats: ProcessTapController.IOStats {
+        ProcessTapController.IOStats(
+            callbackCount: 0,
+            totalFrames: 0,
+            callbacksPerSecond: 0,
+            framesPerCallback: 0,
+            inputPeak: 0,
+            outputPeaks: [],
+            lastCallbackAgo: Double.infinity,
+            tapSampleRate: 0
+        )
+    }
+
     /// Convenience: defaults sourceDeviceDead to false.
     func switchDevice(to newDeviceUID: String, preferredTapSourceDeviceUID: String?) async throws {
         try await switchDevice(to: newDeviceUID, preferredTapSourceDeviceUID: preferredTapSourceDeviceUID, sourceDeviceDead: false)
@@ -60,4 +85,6 @@ extension ProcessTapControlling {
     func setLoopbackBuffer(_ buffer: LoopbackRingBuffer?) {
         // Default no-op for mocks that don't override
     }
+
+    var isUnmutedCapture: Bool { false }
 }
