@@ -13,6 +13,8 @@ struct AppRowControls: View {
     let defaultDeviceUID: String?
     let deviceSelectionMode: DeviceSelectionMode
     let boost: BoostLevel
+    let isLoopbackAvailable: Bool
+    let isLoopbackEnabled: Bool
     let isEQExpanded: Bool
     let onVolumeChange: (Float) -> Void
     let onMuteChange: (Bool) -> Void
@@ -21,10 +23,12 @@ struct AppRowControls: View {
     let onDevicesSelected: (Set<String>) -> Void
     let onDeviceModeChange: (DeviceSelectionMode) -> Void
     let onSelectFollowDefault: () -> Void
+    let onLoopbackToggle: () -> Void
     let onEQToggle: () -> Void
 
     @State private var dragOverrideValue: Double?
     @State private var isEQButtonHovered = false
+    @State private var isLoopbackButtonHovered = false
 
     private var sliderValue: Double {
         dragOverrideValue ?? VolumeMapping.gainToSlider(volume)
@@ -124,6 +128,34 @@ struct AppRowControls: View {
                 triggerWidth: 0,
                 triggerStyle: .iconOnly
             )
+
+            // Loopback routing button (only visible when driver is installed)
+            if isLoopbackAvailable {
+                Button {
+                    onLoopbackToggle()
+                } label: {
+                    Image(systemName: isLoopbackEnabled ? "record.circle.fill" : "record.circle")
+                        .font(.system(size: 12))
+                        .symbolRenderingMode(.hierarchical)
+                        .foregroundStyle(
+                            isLoopbackEnabled
+                                ? Color.red
+                                : (isLoopbackButtonHovered
+                                    ? DesignTokens.Colors.interactiveHover
+                                    : DesignTokens.Colors.interactiveDefault)
+                        )
+                        .frame(
+                            minWidth: DesignTokens.Dimensions.minTouchTarget,
+                            minHeight: DesignTokens.Dimensions.minTouchTarget
+                        )
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(isLoopbackEnabled ? "Disable Loopback" : "Enable Loopback")
+                .onHover { isLoopbackButtonHovered = $0 }
+                .help(isLoopbackEnabled ? "Disable loopback routing" : "Route to FineTune Loopback")
+                .animation(DesignTokens.Animation.hover, value: isLoopbackButtonHovered)
+            }
 
             // EQ button
             Button {
