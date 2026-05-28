@@ -184,6 +184,52 @@ struct LoudnessCompensatorHeadroomTests {
         #expect(maxAbsError <= 3.0, "Max fitted-response error should stay within 3 dB, got \(maxAbsError) dB")
     }
 
+    @Test("Headroom subtraction ensures cascade peak never exceeds 0 dBFS")
+    func headroomSubtractionKeepsPeakAtOrBelowZero() {
+        let sampleRate = 48_000.0
+        // Test at multiple phon levels where compensation is active
+        for phon in [20.0, 30.0, 40.0, 50.0, 60.0] {
+            let fittedGains = LoudnessCompensator.fittedSectionGains(forPhon: phon, sampleRate: sampleRate)
+            let rawCoefficients = LoudnessCompensator.coefficientsForBands(gains: fittedGains, sampleRate: sampleRate)
+
+            // Find the peak of the raw cascade response
+            var maxRawDB: Double = -200
+            for index in 0..<96 {
+                let frequency = 20.0 * pow(20_000.0 / 20.0, Double(index) / 95.0)
+                let responseDB = cascadeResponseDB(
+                    coefficients: rawCoefficients,
+                    sectionCount: LoudnessCompensator.bandCount,
+                    sampleRate: sampleRate,
+                    frequency: frequency
+                )
+                if responseDB > maxRawDB { maxRawDB = responseDB }
+            }
+            let headroom = max(maxRawDB, 0.0)
+
+            // Subtract headroom from all gains and recompute coefficients
+            let adjustedGains = fittedGains.map { $0 - Float(headroom) }
+            let adjustedCoefficients = LoudnessCompensator.coefficientsForBands(
+                gains: adjustedGains,
+                sampleRate: sampleRate
+            )
+
+            // Verify the adjusted cascade peak is at or below 0 dBFS
+            var maxAdjustedDB: Double = -200
+            for index in 0..<96 {
+                let frequency = 20.0 * pow(20_000.0 / 20.0, Double(index) / 95.0)
+                let responseDB = cascadeResponseDB(
+                    coefficients: adjustedCoefficients,
+                    sectionCount: LoudnessCompensator.bandCount,
+                    sampleRate: sampleRate,
+                    frequency: frequency
+                )
+                if responseDB > maxAdjustedDB { maxAdjustedDB = responseDB }
+            }
+            #expect(maxAdjustedDB <= 0.1,
+                    "At \(phon) phon, cascade peak \(maxAdjustedDB) dB should be ≤ 0 dBFS after headroom subtraction")
+        }
+    }
+
     private func cascadeResponseDB(
         coefficients: [Double],
         sectionCount: Int,

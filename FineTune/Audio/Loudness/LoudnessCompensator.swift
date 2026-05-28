@@ -7,8 +7,9 @@ import Accelerate
 /// to bass and treble at low listening levels. At the reference level (~80 phon),
 /// compensation is flat (bypassed). At lower levels, the contour difference is
 /// normalized around 1 kHz so only spectral balance is corrected. The app then fits
-/// that target curve with a low-cost four-section shelf/bell cascade. The downstream
-/// SoftLimiter handles any peaks that exceed unity after EQ boost.
+/// that target curve with a low-cost four-section shelf/bell cascade.
+/// Headroom is computed from the realized cascade response and subtracted from all
+/// band gains so the cascade peak never exceeds 0 dBFS.
 ///
 /// Subclass of `BiquadProcessor` — inherits atomic setup swaps, stereo biquad processing,
 /// delay buffer management, and NaN safety. Follows the same pattern as `EQProcessor`.
@@ -69,15 +70,25 @@ final class LoudnessCompensator: BiquadProcessor, @unchecked Sendable {
     ///   which the RT audio callback reads via `nonisolated(unsafe)`. Calling from any other
     ///   thread creates a data race. Not annotated `@MainActor` because `BiquadProcessor`
     ///   is not actor-isolated and test call sites run on arbitrary Swift Testing threads.
-    func updateForVolume(_ systemVolume: Float) {
+    func updateForVolume(_ systemVolume: Float, intensity: Float = 1.0) {
+        // Volume-based phon estimation (primary — tracks user's intended listening level,
+        // matching Dolby Volume Modeler / THX Loudness Plus architecture).
         let phon = ISO226Contours.estimatedPhon(fromSystemVolume: systemVolume)
+
+        // Intensity scales the distance from reference phon.
+        // At intensity=1.0, full ISO compensation. Below 1.0, less compensation
+        // (shifts phon toward reference, reducing bass/treble boost).
+        // Above 1.0, more compensation (shifts phon away from reference).
+        let referencePhon = ISO226Contours.defaultReferencePhon
+        let clampedIntensity = min(max(intensity, 0.0), 1.5)
+        let adjustedPhon = referencePhon + (phon - referencePhon) * Double(clampedIntensity)
 
         // Coalesce rapid updates, but never skip a disabled processor because re-enabling
         // loudness from the UI must rebuild coefficients immediately even at the same volume.
-        guard !isEnabled || abs(phon - _currentPhon) >= 1.0 else { return }
-        _currentPhon = phon
+        guard !isEnabled || abs(adjustedPhon - _currentPhon) >= 1.0 else { return }
+        _currentPhon = adjustedPhon
 
-        let gains = computeBandGains(phon: phon)
+        let gains = computeBandGains(phon: adjustedPhon)
 
         // Bypass when all gains are negligible (near reference level)
         let allNegligible = gains.allSatisfy { abs($0) < 0.1 }
@@ -98,8 +109,15 @@ final class LoudnessCompensator: BiquadProcessor, @unchecked Sendable {
     // MARK: - Coefficient Computation
 
     /// Compute per-section gains (dB) for the fixed four-filter loudness topology.
+    ///
+    /// Post-processes the fitted gains by computing the realized cascade response,
+    /// finding its peak (the "headroom" needed), and subtracting that peak from all
+    /// band gains so the cascade never clips.
     private func computeBandGains(phon: Double) -> [Float] {
-        Self.fittedSectionGains(forPhon: phon, sampleRate: sampleRate)
+        let gains = Self.fittedSectionGains(forPhon: phon, sampleRate: sampleRate)
+        let realized = Self.realizedResponseDB(sectionGains: gains.map(Double.init), sampleRate: sampleRate)
+        let peakDB = max(realized.max() ?? 0.0, 0.0)
+        return gains.map { $0 - Float(peakDB) }
     }
 
     /// Fit the fixed four-section loudness topology to the ISO-derived target curve.
