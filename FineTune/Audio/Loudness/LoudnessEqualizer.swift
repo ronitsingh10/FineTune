@@ -38,10 +38,8 @@ final class LoudnessEqualizer: @unchecked Sendable {
     /// `(releaseSpeed / 6.0) / sampleRate`
     private let releaseSpeedNorm: Float
 
-    /// Custom parametric EQ sidechain filters.
-    private var customFilter: ParametricSidechainFilter
-    private var customFilterBass: ParametricSidechainFilter
-    private var customFilterMaster: ParametricSidechainFilter
+    /// Custom parametric EQ sidechain filters (vectorized).
+    private var sidechainFilter: ParametricSidechainFilter
 
     /// Per-sample fallback coefficient (from silenceGateFallbackTimeS).
     private let fallbackAlpha: Float
@@ -93,9 +91,7 @@ final class LoudnessEqualizer: @unchecked Sendable {
         self.settings = settings
         self.attackSpeedNorm = (settings.attackSpeedDbPerSecPer6Db / 6.0) / sampleRate
         self.releaseSpeedNorm = (settings.releaseSpeedDbPerSecPer6Db / 6.0) / sampleRate
-        self.customFilter = ParametricSidechainFilter(sampleRate: sampleRate)
-        self.customFilterBass = ParametricSidechainFilter(sampleRate: sampleRate)
-        self.customFilterMaster = ParametricSidechainFilter(sampleRate: sampleRate)
+        self.sidechainFilter = ParametricSidechainFilter(sampleRate: sampleRate)
 
         let fallbackTime = settings.silenceGateFallbackTimeS
         if fallbackTime > 0 {
@@ -205,9 +201,16 @@ final class LoudnessEqualizer: @unchecked Sendable {
                 let (lowL, highL) = crossoverL.process(drivenL)
                 let (lowR, highR) = crossoverR.process(drivenR)
 
-                // 3. Sidechain: downmix driven stereo to mono + weighting filter
+                // 3. Sidechain: downmix driven stereo to mono and filter in parallel via SIMD
                 let mono = (drivenL + drivenR) * 0.5
-                let weighted = customFilter.processSample(mono)
+                let bassMono = (lowL + lowR) * 0.5
+                let masterMono = (highL + highR) * 0.5
+
+                let (weighted, bassMonoWeighted, masterMonoWeighted) = sidechainFilter.process(
+                    mono: mono,
+                    bass: bassMono,
+                    master: masterMono
+                )
 
                 // 4. Update broadband envelope and gating factor
                 let sampleSq = weighted * weighted
@@ -225,20 +228,13 @@ final class LoudnessEqualizer: @unchecked Sendable {
                     gatingFactor = levelDb >= silenceGateThreshold ? 1.0 : 0.0
                 }
 
-                // 5. Downmix individual band signals to mono for envelope detection
-                var bassMono = (lowL + lowR) * 0.5
-                var masterMono = (highL + highR) * 0.5
-
-                bassMono = customFilterBass.processSample(bassMono)
-                masterMono = customFilterMaster.processSample(masterMono)
-
                 let bassDrivenPeak = max(abs(lowL), abs(lowR))
                 let masterDrivenPeak = max(abs(highL), abs(highR))
 
-                // 6. Process AGC for both bands
+                // 5. Process AGC for both bands
                 processBandSample(
                     band: &bassBand,
-                    weighted: bassMono,
+                    weighted: bassMonoWeighted,
                     drivenPeak: bassDrivenPeak,
                     targetDb: targetDb,
                     attackNorm: attackNorm,
@@ -259,7 +255,7 @@ final class LoudnessEqualizer: @unchecked Sendable {
 
                 processBandSample(
                     band: &masterBand,
-                    weighted: masterMono,
+                    weighted: masterMonoWeighted,
                     drivenPeak: masterDrivenPeak,
                     targetDb: targetDb,
                     attackNorm: attackNorm,
@@ -278,12 +274,12 @@ final class LoudnessEqualizer: @unchecked Sendable {
                     targetIdleGain: targetIdleGain
                 )
 
-                // 7. Apply Bass-to-Master coupling clamp
+                // 6. Apply Bass-to-Master coupling clamp
                 bassBand.currentGainDb = min(bassBand.currentGainDb, masterBand.currentGainDb + 3.0)
                 if bassBand.currentGainDb > 0 { bassBand.currentGainDb = 0 }
                 bassBand.currentGainLinear = LoudnessEqualizerMath.dbToLinear(bassBand.currentGainDb)
 
-                // 8. Apply gains to bands and sum
+                // 7. Apply gains to bands and sum
                 let outL = lowL * bassBand.currentGainLinear + highL * masterBand.currentGainLinear
                 let outR = lowR * bassBand.currentGainLinear + highR * masterBand.currentGainLinear
 
@@ -298,8 +294,12 @@ final class LoudnessEqualizer: @unchecked Sendable {
                 // 2. Split driven mono with Crossover
                 let (low, high) = crossoverL.process(driven)
 
-                // 3. Sidechain: downmix/mono is just the driven signal
-                let weighted = customFilter.processSample(driven)
+                // 3. Sidechain: filter inputs in parallel via SIMD
+                let (weighted, bassMonoWeighted, masterMonoWeighted) = sidechainFilter.process(
+                    mono: driven,
+                    bass: low,
+                    master: high
+                )
 
                 // 4. Update broadband envelope and gating factor
                 let sampleSq = weighted * weighted
@@ -317,20 +317,13 @@ final class LoudnessEqualizer: @unchecked Sendable {
                     gatingFactor = levelDb >= silenceGateThreshold ? 1.0 : 0.0
                 }
 
-                // 5. Envelope inputs for each band
-                var bassMono = low
-                var masterMono = high
-
-                bassMono = customFilterBass.processSample(bassMono)
-                masterMono = customFilterMaster.processSample(masterMono)
-
                 let bassDrivenPeak = abs(low)
                 let masterDrivenPeak = abs(high)
 
-                // 6. Process AGC for both bands
+                // 5. Process AGC for both bands
                 processBandSample(
                     band: &bassBand,
-                    weighted: bassMono,
+                    weighted: bassMonoWeighted,
                     drivenPeak: bassDrivenPeak,
                     targetDb: targetDb,
                     attackNorm: attackNorm,
@@ -351,7 +344,7 @@ final class LoudnessEqualizer: @unchecked Sendable {
 
                 processBandSample(
                     band: &masterBand,
-                    weighted: masterMono,
+                    weighted: masterMonoWeighted,
                     drivenPeak: masterDrivenPeak,
                     targetDb: targetDb,
                     attackNorm: attackNorm,
@@ -370,12 +363,12 @@ final class LoudnessEqualizer: @unchecked Sendable {
                     targetIdleGain: targetIdleGain
                 )
 
-                // 7. Apply Bass-to-Master coupling clamp
+                // 6. Apply Bass-to-Master coupling clamp
                 bassBand.currentGainDb = min(bassBand.currentGainDb, masterBand.currentGainDb + 3.0)
                 if bassBand.currentGainDb > 0 { bassBand.currentGainDb = 0 }
                 bassBand.currentGainLinear = LoudnessEqualizerMath.dbToLinear(bassBand.currentGainDb)
 
-                // 8. Apply gains to bands and sum
+                // 7. Apply gains to bands and sum
                 output[frame] = low * bassBand.currentGainLinear + high * masterBand.currentGainLinear
             }
         } else {
@@ -394,7 +387,14 @@ final class LoudnessEqualizer: @unchecked Sendable {
                 }
                 drivenMono *= invCh
 
-                let weighted = customFilter.processSample(drivenMono)
+                // Filter sidechains in parallel via SIMD.
+                // Bass lane ([1]) is unused in multi-channel — no crossover splitting.
+                // The zero input accumulates harmless filter state; lane is discarded via `_`.
+                let (weighted, _, masterMonoWeighted) = sidechainFilter.process(
+                    mono: drivenMono,
+                    bass: 0.0,
+                    master: drivenMono
+                )
 
                 // Broadband Envelope
                 let sampleSq = weighted * weighted
@@ -412,12 +412,9 @@ final class LoudnessEqualizer: @unchecked Sendable {
                     gatingFactor = levelDb >= silenceGateThreshold ? 1.0 : 0.0
                 }
 
-                // Process AGC using masterBand as the broadband representation
-                let masterMono = customFilterMaster.processSample(drivenMono)
-
                 processBandSample(
                     band: &masterBand,
-                    weighted: masterMono,
+                    weighted: masterMonoWeighted,
                     drivenPeak: maxDrivenAbs,
                     targetDb: targetDb,
                     attackNorm: attackNorm,

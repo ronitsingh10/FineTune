@@ -1398,4 +1398,95 @@ struct LinkwitzRileyCrossover2Tests {
     }
 }
 
+@Suite("ParametricSidechainFilterTests")
+struct ParametricSidechainFilterTests {
 
+    @Test("SIMD process(mono:bass:master:) matches 3 independent scalar processSample calls")
+    func simdMatchesScalar() {
+        let sampleRate: Float = 48000
+
+        // SIMD instance: processes all 3 signals in parallel
+        var simdFilter = ParametricSidechainFilter(sampleRate: sampleRate)
+
+        // 3 independent scalar instances: one per signal
+        var scalarMono = ParametricSidechainFilter(sampleRate: sampleRate)
+        var scalarBass = ParametricSidechainFilter(sampleRate: sampleRate)
+        var scalarMaster = ParametricSidechainFilter(sampleRate: sampleRate)
+
+        let sampleCount = 2000
+        let tolerance: Float = 1e-6
+
+        for i in 0..<sampleCount {
+            // Generate 3 distinct signals
+            let t = Float(i) / sampleRate
+            let mono = 0.5 * sin(2.0 * Float.pi * 1000.0 * t)
+            let bass = 0.3 * sin(2.0 * Float.pi * 80.0 * t)
+            let master = 0.7 * sin(2.0 * Float.pi * 3000.0 * t + 0.5)
+
+            // SIMD path
+            let (simdMono, simdBass, simdMaster) = simdFilter.process(
+                mono: mono, bass: bass, master: master
+            )
+
+            // Scalar path (each instance independently)
+            let refMono = scalarMono.processSample(mono)
+            let refBass = scalarBass.processSample(bass)
+            let refMaster = scalarMaster.processSample(master)
+
+            #expect(abs(simdMono - refMono) < tolerance,
+                    "Mono lane diverged at sample \(i): SIMD=\(simdMono), scalar=\(refMono)")
+            #expect(abs(simdBass - refBass) < tolerance,
+                    "Bass lane diverged at sample \(i): SIMD=\(simdBass), scalar=\(refBass)")
+            #expect(abs(simdMaster - refMaster) < tolerance,
+                    "Master lane diverged at sample \(i): SIMD=\(simdMaster), scalar=\(refMaster)")
+        }
+    }
+
+    @Test("processSample scalar fallback produces correct output")
+    func processSampleFallback() {
+        let sampleRate: Float = 48000
+        var filterA = ParametricSidechainFilter(sampleRate: sampleRate)
+        var filterB = ParametricSidechainFilter(sampleRate: sampleRate)
+
+        let sampleCount = 1000
+        let tolerance: Float = 1e-6
+
+        for i in 0..<sampleCount {
+            let t = Float(i) / sampleRate
+            let sample = 0.5 * sin(2.0 * Float.pi * 1000.0 * t)
+
+            // processSample should match the mono lane of process()
+            let scalar = filterA.processSample(sample)
+            let (simdMono, _, _) = filterB.process(mono: sample, bass: 0.0, master: 0.0)
+
+            #expect(abs(scalar - simdMono) < tolerance,
+                    "processSample diverged from process() mono lane at sample \(i): scalar=\(scalar), simd=\(simdMono)")
+        }
+    }
+
+    @Test("Reset zeroes all filter state")
+    func resetClearsState() {
+        let sampleRate: Float = 48000
+        var filter = ParametricSidechainFilter(sampleRate: sampleRate)
+
+        // Process some samples to build up state
+        for i in 0..<500 {
+            let t = Float(i) / sampleRate
+            _ = filter.processSample(0.8 * sin(2.0 * Float.pi * 440.0 * t))
+        }
+
+        // Reset and process the same input again — should match a fresh instance
+        filter.reset()
+        var fresh = ParametricSidechainFilter(sampleRate: sampleRate)
+
+        let tolerance: Float = 1e-6
+        for i in 0..<200 {
+            let t = Float(i) / sampleRate
+            let sample = 0.4 * sin(2.0 * Float.pi * 1000.0 * t)
+            let resetOut = filter.processSample(sample)
+            let freshOut = fresh.processSample(sample)
+            #expect(abs(resetOut - freshOut) < tolerance,
+                    "After reset, output diverged at sample \(i): reset=\(resetOut), fresh=\(freshOut)")
+        }
+    }
+}

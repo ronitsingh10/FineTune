@@ -5,19 +5,21 @@ import Foundation
 /// Uses 7 inline biquad stages (struct-based, stack-allocated) for maximum
 /// RT-thread performance. Each stage is a direct-form II transposed biquad.
 ///
-/// **Performance**: ~35× faster than the previous class-based array implementation
-/// because all filter state lives contiguously in memory (no heap indirection,
-/// no ARC retain/release, full compiler inlining).
+/// **Performance**: Optimized via SIMD4 to process three signals (mono, bass, master)
+/// in parallel inside a single execution pass.
+///
+/// Lane layout: `[0]=mono, [1]=bass, [2]=master, [3]=unused`
 struct ParametricSidechainFilter: @unchecked Sendable {
 
-    // MARK: - Inline Biquad Stage (value type, stack-allocated)
+    // MARK: - Inline Biquad Stage (value type, stack-allocated, SIMD-enabled)
 
     /// A single biquad filter section using direct-form II transposed structure.
-    /// Stored as a value type for zero-overhead inline processing.
+    /// Processes a vector of 4 channels in parallel.
     private struct Stage {
-        var b0: Float, b1: Float, b2: Float
-        var a1: Float, a2: Float
-        var z1: Float = 0, z2: Float = 0
+        let b0: Float, b1: Float, b2: Float
+        let a1: Float, a2: Float
+        var z1: SIMD4<Float> = .zero
+        var z2: SIMD4<Float> = .zero
 
         init(coefficients: [Double]) {
             precondition(coefficients.count == 5)
@@ -29,7 +31,7 @@ struct ParametricSidechainFilter: @unchecked Sendable {
         }
 
         @inline(__always)
-        mutating func process(_ x: Float) -> Float {
+        mutating func process(_ x: SIMD4<Float>) -> SIMD4<Float> {
             let y = b0 * x + z1
             z1 = b1 * x - a1 * y + z2
             z2 = b2 * x - a2 * y
@@ -37,7 +39,8 @@ struct ParametricSidechainFilter: @unchecked Sendable {
         }
 
         mutating func reset() {
-            z1 = 0; z2 = 0
+            z1 = .zero
+            z2 = .zero
         }
     }
 
@@ -87,9 +90,14 @@ struct ParametricSidechainFilter: @unchecked Sendable {
 
     // MARK: - Processing
 
+    /// Process three signals in parallel using SIMD4.
     @inline(__always)
-    mutating func processSample(_ sample: Float) -> Float {
-        var x = sample
+    mutating func process(
+        mono: Float,
+        bass: Float,
+        master: Float
+    ) -> (weighted: Float, bassWeighted: Float, masterWeighted: Float) {
+        var x = SIMD4<Float>(mono, bass, master, 0.0)
         x = s0.process(x)
         x = s1.process(x)
         x = s2.process(x)
@@ -97,7 +105,14 @@ struct ParametricSidechainFilter: @unchecked Sendable {
         x = s4.process(x)
         x = s5.process(x)
         x = s6.process(x)
-        return x
+        return (x[0], x[1], x[2])
+    }
+
+    /// Fallback scalar processing for single sample streams.
+    @inline(__always)
+    mutating func processSample(_ sample: Float) -> Float {
+        let res = process(mono: sample, bass: 0.0, master: 0.0)
+        return res.weighted
     }
 
     mutating func reset() {
