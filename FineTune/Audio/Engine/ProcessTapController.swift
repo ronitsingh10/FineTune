@@ -94,6 +94,23 @@ final class ProcessTapController: ProcessTapControlling {
     /// See CrossfadeState for phase machine details.
     private nonisolated(unsafe) var crossfadeState = CrossfadeState()
 
+    /// Output-gate state machine for silent→non-silent soft-start. Phases:
+    ///   0 = armed (output muted, waiting for first non-silent input)
+    ///   1 = ramping (half-cosine fade-in over `_outputGateRampSamples`)
+    ///   2 = open   (passthrough)
+    /// After sustained input silence ≥ `_outputGateSilenceHoldSamples`, re-arms to 0.
+    /// UInt8 / Float / Int32 reads/writes are atomic on Apple ARM64/x86-64. Only the
+    /// primary callback advances this state; the secondary callback uses crossfadeState.
+    private nonisolated(unsafe) var _outputGateRawPhase: UInt8 = 0
+    private nonisolated(unsafe) var _outputGateProgress: Float = 0
+    private nonisolated(unsafe) var _outputGateSilentSamples: Int32 = 0
+    /// Sample count for the 40 ms half-cosine ramp (recomputed in activate from device rate).
+    private nonisolated(unsafe) var _outputGateRampSamples: Float = 1920
+    /// Sample count for the 200 ms silence-hold before re-arming (recomputed in activate).
+    private nonisolated(unsafe) var _outputGateSilenceHoldSamples: Int32 = 9600
+    /// Input below this peak magnitude is treated as silence (≈ -80 dBFS).
+    private static let outputGateSilenceThreshold: Float = 0.0001
+
     // MARK: - Non-RT State (modified only from main thread)
 
     /// VU meter smoothing factor. 0.3 gives ~30ms attack/decay at typical 30fps UI refresh.
@@ -496,8 +513,16 @@ final class ProcessTapController: ProcessTapControlling {
             throw NSError(domain: NSOSStatusErrorDomain, code: Int(err), userInfo: [NSLocalizedDescriptionKey: "Failed to create IO proc: \(err)"])
         }
 
-        // Seed the ramp target so the first IOProc tick is a no-op slide.
+        // Seed the ramp target before AudioDeviceStart so the first IOProc callback
+        // ramps from userVolume→userVolume (no-op) instead of 1.0→userVolume.
         _primaryCurrentVolume = _volume
+
+        // Reset output gate to armed; size the ramp/hold windows from device sample rate.
+        _outputGateRawPhase = 0
+        _outputGateProgress = 0
+        _outputGateSilentSamples = 0
+        _outputGateRampSamples = Float(sampleRate) * 0.040
+        _outputGateSilenceHoldSamples = Int32(sampleRate * 0.200)
 
         err = AudioDeviceStart(primaryResources.aggregateDeviceID, primaryResources.deviceProcID)
         guard err == noErr else {
@@ -1070,12 +1095,63 @@ final class ProcessTapController: ProcessTapControlling {
         primaryResources.destroy()
     }
 
+    /// Advance the output-gate state machine for one buffer and return the multiplier
+    /// to apply to this buffer's output. Pure function; no class state. RT-safe:
+    /// no allocations, no locks, no Foundation. One `cos` per buffer (not per sample).
+    ///
+    /// Phase encoding: 0 armed (muted), 1 ramping (half-cosine fade-in), 2 open.
+    /// Transitions: armed→ramping on first non-silent buffer; ramping→open at progress≥1.
+    /// open→armed after `silenceHoldSamples` of sustained silence (re-arm next wake).
+    @inline(__always)
+    static func advanceOutputGate(
+        phase: inout UInt8,
+        progress: inout Float,
+        silentSamples: inout Int32,
+        maxPeak: Float,
+        frameCount: Int,
+        rampSamples: Float,
+        silenceHoldSamples: Int32
+    ) -> Float {
+        let isSilent = maxPeak <= outputGateSilenceThreshold
+        switch phase {
+        case 0:  // armed — wait for non-silent input
+            if !isSilent {
+                phase = 1
+                progress = 0
+                silentSamples = 0
+            }
+            return 0
+        case 1:  // ramping — half-cosine fade-in
+            progress = min(1.0, progress + Float(frameCount) / rampSamples)
+            if progress >= 1.0 {
+                phase = 2
+                silentSamples = 0
+                return 1.0
+            }
+            return 0.5 * (1 - cos(.pi * progress))
+        case 2:  // open — passthrough; track sustained silence for re-arm
+            if isSilent {
+                silentSamples = silentSamples &+ Int32(frameCount)
+                if silentSamples >= silenceHoldSamples {
+                    phase = 0
+                    silentSamples = 0
+                }
+            } else {
+                silentSamples = 0
+            }
+            return 1.0
+        default:
+            return 1.0  // defensive; should be unreachable
+        }
+    }
+
     @inline(__always)
     static func processMappedBuffers(
         inputBuffers: UnsafeMutableAudioBufferListPointer,
         outputBuffers: UnsafeMutableAudioBufferListPointer,
         targetVol: Float,
         crossfadeMultiplier: Float,
+        outputGateMultiplier: Float,
         rampCoefficient: Float,
         preferredStereoLeft: Int,
         preferredStereoRight: Int,
@@ -1135,7 +1211,7 @@ final class ProcessTapController: ProcessTapControlling {
                 let sampleCount = frameCount * inputChannels
                 for frame in 0..<frameCount {
                     currentVol += (targetVol - currentVol) * rampCoefficient
-                    let gain = currentVol * crossfadeMultiplier
+                    let gain = currentVol * crossfadeMultiplier * outputGateMultiplier
                     let base = frame * inputChannels
                     for ch in 0..<inputChannels {
                         outputSamples[base + ch] = inputSamples[base + ch] * gain
@@ -1147,7 +1223,7 @@ final class ProcessTapController: ProcessTapControlling {
             } else if inputChannels == 2 && outputChannels > 2 {
                 for frame in 0..<frameCount {
                     currentVol += (targetVol - currentVol) * rampCoefficient
-                    let gain = currentVol * crossfadeMultiplier
+                    let gain = currentVol * crossfadeMultiplier * outputGateMultiplier
                     let inBase = frame * 2
                     let outBase = frame * outputChannels
                     let left = inputSamples[inBase] * gain
@@ -1166,7 +1242,7 @@ final class ProcessTapController: ProcessTapControlling {
             } else if inputChannels == 1 && outputChannels > 1 {
                 for frame in 0..<frameCount {
                     currentVol += (targetVol - currentVol) * rampCoefficient
-                    let gain = currentVol * crossfadeMultiplier
+                    let gain = currentVol * crossfadeMultiplier * outputGateMultiplier
                     let sample = inputSamples[frame] * gain
                     let outBase = frame * outputChannels
 
@@ -1183,7 +1259,7 @@ final class ProcessTapController: ProcessTapControlling {
             } else {
                 for frame in 0..<frameCount {
                     currentVol += (targetVol - currentVol) * rampCoefficient
-                    let gain = currentVol * crossfadeMultiplier
+                    let gain = currentVol * crossfadeMultiplier * outputGateMultiplier
                     let inBase = frame * inputChannels
                     let outBase = frame * outputChannels
                     let copiedChannels = min(inputChannels, outputChannels)
@@ -1305,6 +1381,28 @@ final class ProcessTapController: ProcessTapControlling {
             _ = crossfadeState.updateProgress(samples: totalSamplesThisBuffer)
         }
 
+        // Advance the gate before the _isMuted early-return: feeding synthetic silence
+        // while muted lets _outputGateSilentSamples accumulate and re-arm the gate after
+        // the silence hold, so unmute after a long mute still gets a fade-in.
+        // _forceSilence is left to the destructive-switch path, which always pairs with
+        // a fresh activate(initial:) and so resets gate state.
+        let outputGateMultiplier: Float
+        if isPrimary {
+            let gateInputPeak: Float = _isMuted ? 0.0 : rawPeak
+            outputGateMultiplier = Self.advanceOutputGate(
+                phase: &_outputGateRawPhase,
+                progress: &_outputGateProgress,
+                silentSamples: &_outputGateSilentSamples,
+                maxPeak: gateInputPeak,
+                frameCount: totalSamplesThisBuffer,
+                rampSamples: _outputGateRampSamples,
+                silenceHoldSamples: _outputGateSilenceHoldSamples
+            )
+        } else {
+            // Secondary tap fades in via crossfadeState; skip the gate to avoid double-attenuation.
+            outputGateMultiplier = 1.0
+        }
+
         if _isMuted {
             for buf in outputBuffers {
                 if let data = buf.mData { memset(data, 0, Int(buf.mDataByteSize)) }
@@ -1355,6 +1453,7 @@ final class ProcessTapController: ProcessTapControlling {
             outputBuffers: outputBuffers,
             targetVol: targetVol,
             crossfadeMultiplier: crossfadeMultiplier,
+            outputGateMultiplier: outputGateMultiplier,
             rampCoefficient: rampCoeff,
             preferredStereoLeft: stereoLeft,
             preferredStereoRight: stereoRight,
