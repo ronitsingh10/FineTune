@@ -69,7 +69,10 @@ struct FineTuneApp: App {
                 mediaKeyStatus: mediaKeyStatus,
                 mediaKeyMonitor: mediaKeyMonitor,
                 shortcutsRegistry: shortcutsRegistry,
-                updateManager: updateManager
+                updateManager: updateManager,
+                onResetCache: {
+                    audioEngine.handleAudioCacheReset()
+                }
             )
         }
         FluidMenuBarExtra("FineTune", image: launchIconImage, isInserted: $showMenuBarExtra) {

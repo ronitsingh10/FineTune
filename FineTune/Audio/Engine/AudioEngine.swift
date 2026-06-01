@@ -656,6 +656,24 @@ final class AudioEngine {
         logger.info("Settings reset: engine state synchronized")
     }
 
+    /// Refreshes transient audio engine state and output device caches without
+    /// clearing the user's persisted settings.
+    func handleAudioCacheReset() {
+        // Clear in-memory routing and temporary app state.
+        appliedPIDs.removeAll()
+        appDeviceRouting.removeAll()
+        followsDefault.removeAll()
+        volumeState.resetAll()
+
+        // Refresh current device output state so software-backed paths update.
+        deviceVolumeMonitor.refreshOutputDeviceStates()
+
+        // Re-apply persisted settings from a clean transient state.
+        applyPersistedSettings()
+
+        logger.info("Audio engine cache reset: in-memory state refreshed")
+    }
+
     func setVolume(for app: AudioApp, to volume: Float) {
         volumeState.setVolume(for: app.id, to: volume, identifier: app.persistenceIdentifier)
         if let deviceUID = appDeviceRouting[app.id] {
