@@ -10,18 +10,6 @@ struct AudioTab: View {
     /// Memoized sorted output devices for the system-sounds picker.
     @State private var sortedOutputDevices: [AudioDevice] = []
 
-    private var unifiedLoudnessToggleBinding: Binding<Bool> {
-        Binding(
-            get: {
-                settings.appSettings.loudnessCompensationEnabled
-                    && settings.appSettings.loudnessEqualizationEnabled
-            },
-            set: { isEnabled in
-                settings.appSettings.setUnifiedLoudnessEnabled(isEnabled)
-            }
-        )
-    }
-
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 24) {
@@ -43,8 +31,14 @@ struct AudioTab: View {
         .onChange(of: settings.appSettings.loudnessCompensationEnabled) { _, newValue in
             audioEngine.setLoudnessCompensationEnabled(newValue)
         }
+        .onChange(of: settings.appSettings.loudnessCompensationIntensity) { _, newValue in
+            audioEngine.setLoudnessCompensationIntensity(newValue)
+        }
         .onChange(of: settings.appSettings.loudnessEqualizationEnabled) { _, newValue in
             audioEngine.setLoudnessEqualizationEnabled(newValue)
+        }
+        .onChange(of: settings.appSettings.loudnessEqualizationIntensity) { _, newValue in
+            audioEngine.setLoudnessEqualizationIntensity(newValue)
         }
     }
 
@@ -64,13 +58,47 @@ struct AudioTab: View {
             }
             SettingsRowDivider()
             SettingsRow(
-                "Loudness Compensation",
-                description: "Boost low frequencies at low volume"
+                "Smart Volume",
+                description: "Normalize volume across apps and content"
             ) {
-                Toggle("", isOn: unifiedLoudnessToggleBinding)
+                Toggle("", isOn: $settings.appSettings.loudnessEqualizationEnabled)
                     .toggleStyle(.switch)
                     .controlSize(.small)
                     .labelsHidden()
+            }
+            if settings.appSettings.loudnessEqualizationEnabled {
+                SettingsRow(
+                    "Drive",
+                    description: "Input gain driving the leveler"
+                ) {
+                    VolumeSlider(
+                        $settings.appSettings.loudnessEqualizationIntensity,
+                        range: 0.0...1.0,
+                        width: 280
+                    )
+                }
+                }
+            SettingsRowDivider()
+            SettingsRow(
+                "Loudness Compensation",
+                description: "Boost low frequencies at low volume"
+            ) {
+                Toggle("", isOn: $settings.appSettings.loudnessCompensationEnabled)
+                    .toggleStyle(.switch)
+                    .controlSize(.small)
+                    .labelsHidden()
+            }
+            if settings.appSettings.loudnessCompensationEnabled {
+                SettingsRow(
+                    "Boost",
+                    description: "Amount of low-frequency compensation"
+                ) {
+                    VolumeSlider(
+                        $settings.appSettings.loudnessCompensationIntensity,
+                        range: 0.0...1.5,
+                        width: 280
+                    )
+                }
             }
         }
     }

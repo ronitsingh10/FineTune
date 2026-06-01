@@ -205,7 +205,12 @@ struct AppSettings: Codable, Equatable {
 
     // Audio Processing
     var loudnessCompensationEnabled: Bool = false  // ISO 226:2023 equal-loudness contour compensation
+    var loudnessCompensationIntensity: Float = 1.0  // 0.0–1.5, 1.0 = full ISO 226 compensation
     var loudnessEqualizationEnabled: Bool = false  // Real-time loudness equalization
+    var loudnessEqualizationIntensity: Float = 1.0  // 0.0–1.0, 1.0 = full AGC normalization
+    
+    // Legacy Migration
+    private var unifiedLoudnessEnabled: Bool? = nil
 
     // Media Keys & HUD
     var hudStyle: HUDStyle = .tahoe                // Visual style of the volume HUD
@@ -225,11 +230,6 @@ struct AppSettings: Codable, Equatable {
 
     init() {}
 
-    mutating func setUnifiedLoudnessEnabled(_ enabled: Bool) {
-        loudnessCompensationEnabled = enabled
-        loudnessEqualizationEnabled = enabled
-    }
-
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         launchAtLogin = try c.decodeIfPresent(Bool.self, forKey: .launchAtLogin) ?? false
@@ -238,13 +238,23 @@ struct AppSettings: Codable, Equatable {
         lockInputDevice = try c.decodeIfPresent(Bool.self, forKey: .lockInputDevice) ?? true
         showDeviceDisconnectAlerts = try c.decodeIfPresent(Bool.self, forKey: .showDeviceDisconnectAlerts) ?? true
         loudnessCompensationEnabled = try c.decodeIfPresent(Bool.self, forKey: .loudnessCompensationEnabled) ?? false
+        loudnessCompensationIntensity = try c.decodeIfPresent(Float.self, forKey: .loudnessCompensationIntensity) ?? 1.0
         loudnessEqualizationEnabled = try c.decodeIfPresent(Bool.self, forKey: .loudnessEqualizationEnabled) ?? false
+        loudnessEqualizationIntensity = try c.decodeIfPresent(Float.self, forKey: .loudnessEqualizationIntensity) ?? 1.0
         hudStyle = try c.decodeIfPresent(HUDStyle.self, forKey: .hudStyle) ?? .tahoe
         mediaKeyControlEnabled = try c.decodeIfPresent(Bool.self, forKey: .mediaKeyControlEnabled) ?? true
         volumeHotkeyStep = try c.decodeIfPresent(VolumeHotkeyStep.self, forKey: .volumeHotkeyStep) ?? .normal
         customShortcuts = try c.decodeIfPresent([String: ShortcutCodable].self, forKey: .customShortcuts) ?? [:]
         appearance = try c.decodeIfPresent(AppearancePreference.self, forKey: .appearance) ?? .system
         popupSize = try c.decodeIfPresent(MenuBarPopupSize.self, forKey: .popupSize) ?? .comfortable
+
+        // Migrate legacy unified loudness
+        if let legacyUnified = try c.decodeIfPresent(Bool.self, forKey: .unifiedLoudnessEnabled) {
+            if legacyUnified {
+                loudnessCompensationEnabled = true
+                loudnessEqualizationEnabled = true
+            }
+        }
     }
 }
 
@@ -938,6 +948,22 @@ final class SettingsManager {
     var appSettings: AppSettings {
         get { settings.appSettings }
         set { updateAppSettings(newValue) }
+    }
+
+    var loudnessCompensationIntensity: Float {
+        get { settings.appSettings.loudnessCompensationIntensity }
+        set {
+            settings.appSettings.loudnessCompensationIntensity = newValue
+            scheduleSave()
+        }
+    }
+
+    var loudnessEqualizationIntensity: Float {
+        get { settings.appSettings.loudnessEqualizationIntensity }
+        set {
+            settings.appSettings.loudnessEqualizationIntensity = newValue
+            scheduleSave()
+        }
     }
 
     func updateAppSettings(_ newSettings: AppSettings) {

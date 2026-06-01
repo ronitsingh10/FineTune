@@ -327,7 +327,8 @@ final class AudioEngine {
                     }
                     tap.updateLoudnessCompensation(
                         volume: self.effectiveLoudnessVolume(for: tap),
-                        enabled: loudnessEnabled
+                        enabled: loudnessEnabled,
+                        intensity: self.settingsManager.appSettings.loudnessCompensationIntensity
                     )
                 }
             }
@@ -647,7 +648,11 @@ final class AudioEngine {
             applyTapOutputState(to: tap, for: tap.app.id, deviceUIDs: tap.currentDeviceUIDs)
             tap.updateEQSettings(.flat)
             tap.updateAutoEQProfile(nil)
-            tap.updateLoudnessCompensation(volume: effectiveLoudnessVolume(for: tap), enabled: false)
+            tap.updateLoudnessCompensation(
+                volume: effectiveLoudnessVolume(for: tap),
+                enabled: false,
+                intensity: settingsManager.appSettings.loudnessCompensationIntensity
+            )
         }
 
         // 6. Re-apply from clean settings (re-establishes routing to system default)
@@ -666,7 +671,8 @@ final class AudioEngine {
             if settingsManager.appSettings.loudnessCompensationEnabled {
                 tap.updateLoudnessCompensation(
                     volume: effectiveLoudnessVolume(for: tap),
-                    enabled: true
+                    enabled: true,
+                    intensity: settingsManager.appSettings.loudnessCompensationIntensity
                 )
             }
         }
@@ -815,8 +821,23 @@ final class AudioEngine {
     }
 
     func setLoudnessCompensationEnabled(_ enabled: Bool) {
+        let intensity = settingsManager.appSettings.loudnessCompensationIntensity
         for tap in taps.values {
-            tap.updateLoudnessCompensation(volume: effectiveLoudnessVolume(for: tap), enabled: enabled)
+            tap.updateLoudnessCompensation(
+                volume: effectiveLoudnessVolume(for: tap),
+                enabled: enabled,
+                intensity: intensity
+            )
+        }
+    }
+
+    func setLoudnessCompensationIntensity(_ intensity: Float) {
+        for tap in taps.values {
+            tap.updateLoudnessCompensation(
+                volume: effectiveLoudnessVolume(for: tap),
+                enabled: settingsManager.appSettings.loudnessCompensationEnabled,
+                intensity: intensity
+            )
         }
     }
 
@@ -825,6 +846,12 @@ final class AudioEngine {
         settings.enabled = enabled
         for tap in taps.values {
             tap.updateLoudnessEqualization(settings)
+        }
+    }
+
+    func setLoudnessEqualizationIntensity(_ intensity: Float) {
+        for tap in taps.values {
+            tap.setLoudnessEqualizationIntensity(intensity)
         }
     }
 
@@ -1071,9 +1098,11 @@ final class AudioEngine {
             var loudnessEqSettings = LoudnessEqualizerSettings()
             loudnessEqSettings.enabled = settingsManager.appSettings.loudnessEqualizationEnabled
             tap.updateLoudnessEqualization(loudnessEqSettings)
+            tap.setLoudnessEqualizationIntensity(settingsManager.appSettings.loudnessEqualizationIntensity)
             tap.updateLoudnessCompensation(
                 volume: effectiveLoudnessVolume(for: tap),
-                enabled: settingsManager.appSettings.loudnessCompensationEnabled
+                enabled: settingsManager.appSettings.loudnessCompensationEnabled,
+                intensity: settingsManager.appSettings.loudnessCompensationIntensity
             )
 
             logger.debug("Created tap for \(app.name) on \(deviceUIDs.count) device(s)")
@@ -1218,9 +1247,11 @@ final class AudioEngine {
             var loudnessEqSettings = LoudnessEqualizerSettings()
             loudnessEqSettings.enabled = settingsManager.appSettings.loudnessEqualizationEnabled
             tap.updateLoudnessEqualization(loudnessEqSettings)
+            tap.setLoudnessEqualizationIntensity(settingsManager.appSettings.loudnessEqualizationIntensity)
             tap.updateLoudnessCompensation(
                 volume: effectiveLoudnessVolume(for: tap),
-                enabled: settingsManager.appSettings.loudnessCompensationEnabled
+                enabled: settingsManager.appSettings.loudnessCompensationEnabled,
+                intensity: settingsManager.appSettings.loudnessCompensationIntensity
             )
 
             logger.debug("Created tap for \(app.name)")

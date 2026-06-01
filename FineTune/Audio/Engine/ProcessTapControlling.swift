@@ -21,8 +21,9 @@ protocol ProcessTapControlling: AnyObject {
     func updateEQSettings(_ settings: EQSettings)
     func updateAutoEQProfile(_ profile: AutoEQProfile?)
     func setAutoEQPreampEnabled(_ enabled: Bool)
-    func updateLoudnessCompensation(volume: Float, enabled: Bool)
+    func updateLoudnessCompensation(volume: Float, enabled: Bool, intensity: Float)
     func updateLoudnessEqualization(_ settings: LoudnessEqualizerSettings)
+    func setLoudnessEqualizationIntensity(_ intensity: Float)
     func switchDevice(to newDeviceUID: String, preferredTapSourceDeviceUID: String?, sourceDeviceDead: Bool) async throws
     func updateDevices(to newDeviceUIDs: [String], preferredTapSourceDeviceUID: String?, sourceDeviceDead: Bool) async throws
     func hasRecentAudioCallback(within seconds: Double) -> Bool
@@ -30,6 +31,7 @@ protocol ProcessTapControlling: AnyObject {
 
     var tapSourceDeviceUID: String? { get }
     func refreshTapSource(_ preferredDeviceUID: String?) async throws
+
 }
 
 extension ProcessTapControlling {
@@ -47,7 +49,16 @@ extension ProcessTapControlling {
         invalidate()
     }
 
+    func updateLoudnessCompensation(volume: Float, enabled: Bool) {
+        updateLoudnessCompensation(volume: volume, enabled: enabled, intensity: 1.0)
+    }
+
+    func setLoudnessEqualizationIntensity(_ intensity: Float) {
+        // Default no-op for mocks
+    }
+
     func refreshTapSource(_ preferredDeviceUID: String?) async throws {
         // Default no-op for mocks that don't override
     }
+
 }

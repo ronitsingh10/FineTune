@@ -89,6 +89,28 @@ enum BiquadMath {
         return [b0 / a0, b1 / a0, b2 / a0, a1 / a0, a2 / a0]
     }
 
+    /// Compute low-pass biquad coefficients (RBJ cookbook, 2nd-order Butterworth)
+    /// Returns [b0, b1, b2, a1, a2] normalized by a0 for vDSP_biquad
+    static func lowPassCoefficients(
+        frequency: Double,
+        q: Double,
+        sampleRate: Double
+    ) -> [Double] {
+        let omega = 2.0 * .pi * frequency / sampleRate
+        let sinW = sin(omega)
+        let cosW = cos(omega)
+        let alpha = sinW / (2.0 * q)
+
+        let b0 =  (1.0 - cosW) / 2.0
+        let b1 =  1.0 - cosW
+        let b2 =  (1.0 - cosW) / 2.0
+        let a0 =  1.0 + alpha
+        let a1 = -2.0 * cosW
+        let a2 =  1.0 - alpha
+
+        return [b0 / a0, b1 / a0, b2 / a0, a1 / a0, a2 / a0]
+    }
+
     /// Compute high-pass biquad coefficients (RBJ cookbook, 2nd-order Butterworth)
     /// Returns [b0, b1, b2, a1, a2] normalized by a0 for vDSP_biquad
     static func highPassCoefficients(
