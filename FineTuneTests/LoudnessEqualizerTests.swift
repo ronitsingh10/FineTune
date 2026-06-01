@@ -1345,6 +1345,51 @@ struct LoudnessEqualizerTests {
         #expect(masterGain < -10.0, "Master band should compress significantly, got \(masterGain) dB")
         #expect(abs(bassGain - (masterGain + 3.0)) < 0.1, "Bass gain should track master gain + 3.0 dB exactly, got \(bassGain) dB vs master \(masterGain) dB")
     }
+
+    @Test("Bass band gain is clamped to master band gain minus 3.0 dB under bass-heavy input")
+    func bassBandClampedToMasterBassHeavy() {
+        let sampleRate: Float = 48000
+        let channelCount = 2
+
+        var settings = LoudnessEqualizerSettings()
+        settings.enabled = true
+        settings.driveDb = 24.0
+        settings.targetLevelDb = -12.0
+        settings.agcWindowSizeDb = 0.0
+        settings.attackSpeedDbPerSecPer6Db = 10.0
+        settings.releaseSpeedDbPerSecPer6Db = 10.0
+        settings.suddenJumpProtectionEnabled = false
+
+        let eq = LoudnessEqualizer(settings: settings, sampleRate: sampleRate)
+
+        // Generate a 50 Hz sine wave (bass-heavy signal, completely below 150 Hz crossover)
+        // at high amplitude to drive the bass band into heavy compression.
+        let testFrames = 4800 // 0.1 seconds
+        var input = [Float](repeating: 0.0, count: testFrames * channelCount)
+        for frame in 0..<testFrames {
+            let phase = Float(2.0 * Double.pi * 50.0 * Double(frame) / Double(sampleRate))
+            let sample = Float(0.8 * sin(phase))
+            input[frame * 2] = sample
+            input[frame * 2 + 1] = sample
+        }
+
+        var output = [Float](repeating: 0.0, count: testFrames * channelCount)
+        input.withUnsafeBufferPointer { inPtr in
+            output.withUnsafeMutableBufferPointer { outPtr in
+                eq.process(input: inPtr.baseAddress!, output: outPtr.baseAddress!, frameCount: testFrames, channelCount: channelCount)
+            }
+        }
+
+        // Under bass-heavy input:
+        // - Bass band should want to compress heavily (e.g., gain < -10 dB)
+        // - Master band has no signal, so it would want to be at 0 dB (or recover)
+        // - But due to the coupling clamp, bass gain should be capped from below to master gain - 3 dB.
+        let masterGain = eq.masterGainDb
+        let bassGain = eq.bassGainDb
+
+        #expect(bassGain < -5.0, "Bass band should compress, got \(bassGain) dB")
+        #expect(abs(bassGain - (masterGain - 3.0)) < 0.1, "Bass gain should track master gain - 3.0 dB, got \(bassGain) dB vs master \(masterGain) dB")
+    }
 }
 
 @Suite("LinkwitzRileyCrossover2Tests")

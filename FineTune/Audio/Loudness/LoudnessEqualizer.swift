@@ -275,7 +275,9 @@ final class LoudnessEqualizer: @unchecked Sendable {
                 )
 
                 // 6. Apply Bass-to-Master coupling clamp
-                bassBand.currentGainDb = min(bassBand.currentGainDb, masterBand.currentGainDb + 3.0)
+                let maxBassGain = masterBand.currentGainDb + 3.0
+                let minBassGain = masterBand.currentGainDb - 3.0
+                bassBand.currentGainDb = max(min(bassBand.currentGainDb, maxBassGain), minBassGain)
                 if bassBand.currentGainDb > 0 { bassBand.currentGainDb = 0 }
                 bassBand.currentGainLinear = LoudnessEqualizerMath.dbToLinear(bassBand.currentGainDb)
 
@@ -364,7 +366,9 @@ final class LoudnessEqualizer: @unchecked Sendable {
                 )
 
                 // 6. Apply Bass-to-Master coupling clamp
-                bassBand.currentGainDb = min(bassBand.currentGainDb, masterBand.currentGainDb + 3.0)
+                let maxBassGain = masterBand.currentGainDb + 3.0
+                let minBassGain = masterBand.currentGainDb - 3.0
+                bassBand.currentGainDb = max(min(bassBand.currentGainDb, maxBassGain), minBassGain)
                 if bassBand.currentGainDb > 0 { bassBand.currentGainDb = 0 }
                 bassBand.currentGainLinear = LoudnessEqualizerMath.dbToLinear(bassBand.currentGainDb)
 
