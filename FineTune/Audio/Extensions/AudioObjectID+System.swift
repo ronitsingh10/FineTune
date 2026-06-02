@@ -81,6 +81,24 @@ extension AudioDeviceID {
     }
 }
 
+// MARK: - Built-In Output Device
+
+extension AudioDeviceID {
+    /// Returns the UID of the first built-in output device, or nil if none exists.
+    /// Built-in devices use a crystal-locked clock and are used as a stable clock source
+    /// for aggregate devices when the primary output is Bluetooth (ghost clock technique).
+    static func readBuiltInOutputDeviceUID() -> String? {
+        guard let deviceIDs = try? AudioObjectID.readDeviceList() else { return nil }
+        for id in deviceIDs {
+            guard id.readTransportType() == .builtIn else { continue }
+            guard !id.isHidden() else { continue }
+            guard let uid = try? id.readDeviceUID() else { continue }
+            return uid
+        }
+        return nil
+    }
+}
+
 // MARK: - Default Input Device
 
 extension AudioDeviceID {

@@ -360,6 +360,11 @@ final class AudioEngine {
             realMonitor.inputPriorityOrder = { [weak self] in
                 self?.settingsManager.inputDevicePriorityOrder ?? []
             }
+            realMonitor.onBTDeviceSampleRateChanged = { [weak self] uid, newRate in
+                Task { @MainActor [weak self] in
+                    await self?.handleBTDeviceSampleRateChanged(uid: uid, newRate: newRate)
+                }
+            }
         }
 
         deviceMonitor.onDeviceDisconnected = { [weak self] deviceUID, deviceName in
@@ -1877,10 +1882,29 @@ final class AudioEngine {
                 try? await Task.sleep(for: .seconds(2))
                 guard !Task.isCancelled, let self else { return }
 
-                // Skip entirely when no taps exist — avoids unnecessary work at idle (#176)
-                guard !self.taps.isEmpty else { continue }
-
                 let now = Date()
+                let activeApps = self.processMonitor.activeApps
+                let activePIDs = Set(activeApps.map { $0.id })
+
+                // Sweep for active apps that have no tap (e.g. tap creation failed during
+                // a previous recreateTap call). Runs even when taps dict is empty so all-tap
+                // failure is recovered without waiting for an external process-list change.
+                var needsRetry = false
+                for app in activeApps {
+                    let pid = app.id
+                    guard self.taps[pid] == nil else { continue }
+                    guard !self.appliedPIDs.contains(pid) else { continue }
+                    if let cooldownEnd = self.tapRecoveryCooldownUntil[pid], now < cooldownEnd {
+                        continue
+                    }
+                    self.logger.warning("[HEALTH] PID \(pid) (\(app.name)) active but tapless — retrying")
+                    self.tapRecoveryCooldownUntil[pid] = now.addingTimeInterval(20)
+                    needsRetry = true
+                }
+                if needsRetry { self.applyPersistedSettings() }
+
+                // Skip tap health-check when no taps exist — avoids unnecessary work at idle (#176)
+                guard !self.taps.isEmpty else { continue }
 
                 for (pid, tap) in self.taps {
                     // Skip muted apps — no callbacks while muted isn't a health signal
@@ -1895,8 +1919,7 @@ final class AudioEngine {
 
                     // Only health-check apps that are actively streaming (isRunning=true).
                     // Paused apps have no callbacks, which is normal — not a health signal.
-                    let isActivelyStreaming = self.processMonitor.activeApps.contains { $0.id == pid }
-                    guard isActivelyStreaming else {
+                    guard activePIDs.contains(pid) else {
                         consecutiveMisses[pid] = 0
                         continue
                     }
@@ -1915,9 +1938,14 @@ final class AudioEngine {
                     }
                 }
 
-                // Prune entries for PIDs no longer tracked
+                // Prune miss counters for taps that no longer exist
                 consecutiveMisses = consecutiveMisses.filter { self.taps[$0.key] != nil }
-                self.tapRecoveryCooldownUntil = self.tapRecoveryCooldownUntil.filter { self.taps[$0.key] != nil }
+
+                // Prune cooldown entries — but keep them for active apps whose tap creation
+                // failed (tapRecoveryCooldownUntil gates the retry above for those PIDs).
+                self.tapRecoveryCooldownUntil = self.tapRecoveryCooldownUntil.filter {
+                    self.taps[$0.key] != nil || activePIDs.contains($0.key)
+                }
             }
         }
     }
@@ -1925,6 +1953,26 @@ final class AudioEngine {
     private func stopHealthMonitor() {
         healthMonitorTask?.cancel()
         healthMonitorTask = nil
+    }
+
+    /// Recreates taps after a BT device switches between A2DP and call mode. The ghost-clock
+    /// strategy is rate-dependent — a 48 kHz ghost on a 24 kHz SCO device causes crackling.
+    private func handleBTDeviceSampleRateChanged(uid: String, newRate: Double) async {
+        logger.info("[RATE] BT output \(uid, privacy: .public) → \(newRate, format: .fixed(precision: 0)) Hz — recreating affected taps")
+
+        let affectedPIDs = taps.compactMap { (pid, tap) -> pid_t? in
+            tap.currentDeviceUIDs.contains(uid) ? pid : nil
+        }
+
+        guard !affectedPIDs.isEmpty else {
+            logger.debug("[RATE] No active taps on device \(uid, privacy: .public)")
+            return
+        }
+
+        for pid in affectedPIDs {
+            logger.info("[RATE] Recreating tap for PID \(pid)")
+            await recreateTap(for: pid)
+        }
     }
 
     /// Tears down and recreates a tap for a given PID, preserving routing and settings.

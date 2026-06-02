@@ -274,7 +274,15 @@ final class ProcessTapController: ProcessTapControlling {
 
     /// Builds aggregate device description for synchronized multi-device output.
     /// First device is clock source (no drift compensation), others sync to it via drift compensation.
-    private func buildAggregateDescription(outputUIDs: [String], tapUUID: UUID, name: String) -> [String: Any] {
+    ///
+    /// - Parameter ghostClockUID: When set, drives aggregate I/O timing from this device's crystal clock
+    ///   without routing audio to it (ghost clock technique). When nil, `outputUIDs[0]` is clock master.
+    private func buildAggregateDescription(
+        outputUIDs: [String],
+        tapUUID: UUID,
+        name: String,
+        ghostClockUID: String? = nil
+    ) -> [String: Any] {
         precondition(!outputUIDs.isEmpty, "Must have at least one output device")
 
         // Build sub-device list - first device is clock source
@@ -288,12 +296,23 @@ final class ProcessTapController: ProcessTapControlling {
             ])
         }
 
-        let clockDeviceUID = outputUIDs[0]  // Primary = clock source
+        // Ghost clock: kAudioAggregateDeviceMainSubDeviceKey must always be a sub-device.
+        let clockDeviceUID = ghostClockUID ?? outputUIDs[0]
+
+        // Drift comp must be off when tap source and clock master share a domain: BT output
+        // (both follow the BT clock — enabling fires on the 50ppm BT-vs-crystal offset every
+        // ~0.7 s), ghost clock (both sides are BT-domain), and virtual sources (burst delivery
+        // looks like drift). On for wired/USB where the crystal domains actually differ.
+        // Defaults to off when the device is unresolvable — less wrong on an unknown BT device.
+        let isPrimaryBTOutput = audioDeviceID(for: outputUIDs[0])?.isBluetoothDevice() ?? true
+        let tapDriftCompensation = ghostClockUID == nil && !isTapSourceVirtual() && !isPrimaryBTOutput
+
+        logger.info("[AGG] \(name, privacy: .public) clock=\(ghostClockUID == nil ? "BT-self" : "ghost", privacy: .public) driftComp=\(tapDriftCompensation)")
 
         return [
             kAudioAggregateDeviceNameKey: name,
             kAudioAggregateDeviceUIDKey: UUID().uuidString,
-            kAudioAggregateDeviceMainSubDeviceKey: clockDeviceUID,
+            kAudioAggregateDeviceMainSubDeviceKey: outputUIDs[0],
             kAudioAggregateDeviceClockDeviceKey: clockDeviceUID,
             kAudioAggregateDeviceIsPrivateKey: true,
             kAudioAggregateDeviceIsStackedKey: true,  // Required for multi-device mirroring — HAL feeds same audio to all sub-devices
@@ -301,11 +320,107 @@ final class ProcessTapController: ProcessTapControlling {
             kAudioAggregateDeviceSubDeviceListKey: subDevices,
             kAudioAggregateDeviceTapListKey: [
                 [
-                    kAudioSubTapDriftCompensationKey: true,
+                    kAudioSubTapDriftCompensationKey: tapDriftCompensation,
                     kAudioSubTapUIDKey: tapUUID.uuidString
                 ]
             ]
         ]
+    }
+
+    private func isTapSourceVirtual() -> Bool {
+        guard let uid = preferredTapSourceDeviceUID,
+              let deviceID = audioDeviceID(for: uid) else { return false }
+        return deviceID.isVirtualDevice()
+    }
+
+    /// Returns a built-in device UID to use as ghost clock when primary output is Bluetooth A2DP,
+    /// anchoring aggregate I/O to a crystal clock rather than the BT device's jittery clock.
+    /// Nil for non-BT devices or when no built-in exists (headless Mac Pro).
+    ///
+    /// Excluded for call/voice modes (< 44.1 kHz): 8 kHz CVSD, 16 kHz mSBC, 24 kHz SCO.
+    /// A 48 kHz ghost clock on a 24 kHz SCO sub-device causes I/O period mismatches and crackling.
+    /// In call mode the BT clock is stable enough; tap and output share the same domain so drift
+    /// comp never fires anyway.
+    private func builtInGhostClockUID(forPrimaryUID uid: String) -> String? {
+        guard let deviceID = audioDeviceID(for: uid) else {
+            logger.debug("[CLOCK] ghost skip — device not found: \(uid, privacy: .public)")
+            return nil
+        }
+        guard deviceID.isBluetoothDevice() else {
+            logger.debug("[CLOCK] ghost skip — not BT: \(uid, privacy: .public)")
+            return nil
+        }
+        // Call/voice modes: 8 kHz (CVSD), 16 kHz (mSBC), 24 kHz (SCO). A2DP is 44.1/48 kHz.
+        // rate=0 means the HAL hasn't settled — skip the ghost clock. Applying 48 kHz ghost
+        // to a device that will settle at 24 kHz (SCO) causes crackling. The rate-change
+        // listener recreates the tap once the rate settles.
+        if let rate = try? deviceID.readNominalSampleRate(), rate < 44_100 {
+            logger.info("[CLOCK] ghost skip — BT device at \(rate, format: .fixed(precision: 0)) Hz (call-mode or initialising): \(uid, privacy: .public)")
+            return nil
+        }
+        let ghostUID = deviceMonitor?.outputDevices.first { $0.id.readTransportType() == .builtIn }?.uid
+            ?? AudioDeviceID.readBuiltInOutputDeviceUID()
+        logger.info("[CLOCK] ghost clock for \(uid, privacy: .public) → \(ghostUID ?? "nil (no built-in)", privacy: .public)")
+        return ghostUID
+    }
+
+    /// Destroys the current aggregate, creates a replacement from `desc`, and waits up to `timeout` seconds.
+    /// On success writes the new ID into `aggregateDeviceID`. On failure leaves it `.unknown`.
+    @discardableResult
+    private func replaceAggregate(
+        _ aggregateDeviceID: inout AudioObjectID,
+        desc: [String: Any],
+        timeout: TimeInterval
+    ) -> Bool {
+        let oldID = aggregateDeviceID
+        aggregateDeviceID = .unknown
+        CrashGuard.untrackDevice(oldID)
+        AudioHardwareDestroyAggregateDevice(oldID)
+        var newID: AudioObjectID = .unknown
+        guard AudioHardwareCreateAggregateDevice(desc as CFDictionary, &newID) == noErr else { return false }
+        CrashGuard.trackDevice(newID)
+        guard newID.waitUntilReady(timeout: timeout) else {
+            CrashGuard.untrackDevice(newID)
+            AudioHardwareDestroyAggregateDevice(newID)
+            return false
+        }
+        aggregateDeviceID = newID
+        return true
+    }
+
+    /// Waits for an aggregate to become ready, with BT-aware retry on timeout.
+    /// On failure `aggregateDeviceID` is left `.unknown` (destroyed and zeroed).
+    @discardableResult
+    private func ensureAggregateReady(
+        aggregateDeviceID: inout AudioObjectID,
+        ghostUID: String?,
+        outputUIDs: [String],
+        tapUUID: UUID,
+        name: String
+    ) -> Bool {
+        let isPrimaryBT = audioDeviceID(for: outputUIDs[0])?.isBluetoothDevice() ?? false
+        // BT call-mode (no ghost clock, BT output) needs up to 4 s for SCO firmware negotiation.
+        // A2DP with ghost clock and wired/USB devices are ready within 2 s.
+        let timeout: TimeInterval = (ghostUID == nil && isPrimaryBT) ? 4.0 : 2.0
+        if aggregateDeviceID.waitUntilReady(timeout: timeout) { return true }
+
+        if ghostUID != nil {
+            // Ghost-clock aggregate failed — retry with BT device as clock master.
+            logger.warning("[CLOCK] Ghost-clock aggregate not ready; retrying with BT as clock master")
+            let desc = buildAggregateDescription(outputUIDs: outputUIDs, tapUUID: tapUUID, name: name)
+            return replaceAggregate(&aggregateDeviceID, desc: desc, timeout: 2.0)
+        } else if isPrimaryBT, let fallbackGhost = AudioDeviceID.readBuiltInOutputDeviceUID() {
+            // BT call-mode aggregate failed — try ghost clock as last resort.
+            // SCO needs longer to initialize; 4 s covers the BT firmware handshake that 2 s misses.
+            logger.warning("[CLOCK] BT-only aggregate not ready; retrying with built-in ghost clock")
+            let desc = buildAggregateDescription(outputUIDs: outputUIDs, tapUUID: tapUUID, name: name, ghostClockUID: fallbackGhost)
+            guard replaceAggregate(&aggregateDeviceID, desc: desc, timeout: 4.0) else {
+                logger.error("[CLOCK] Ghost-clock fallback aggregate also not ready after 4 s")
+                return false
+            }
+            return true
+        }
+        return false
     }
 
     private func preferredStereoChannels(for deviceUID: String?) -> (left: Int, right: Int) {
@@ -418,11 +533,12 @@ final class ProcessTapController: ProcessTapControlling {
         logger.debug("Created process tap #\(tapID)")
 
         // Build multi-device aggregate description
-        // First device is clock source, others have drift compensation for sync
+        let ghostUID = builtInGhostClockUID(forPrimaryUID: targetDeviceUIDs[0])
         let description = buildAggregateDescription(
             outputUIDs: targetDeviceUIDs,
             tapUUID: tapDesc.uuid,
-            name: "FineTune-\(app.id)"
+            name: "FineTune-\(app.id)",
+            ghostClockUID: ghostUID
         )
 
         var err: OSStatus
@@ -435,7 +551,13 @@ final class ProcessTapController: ProcessTapControlling {
         primaryResources.aggregateDeviceID = aggID
         CrashGuard.trackDevice(aggID)
 
-        guard primaryResources.aggregateDeviceID.waitUntilReady(timeout: 2.0) else {
+        guard ensureAggregateReady(
+            aggregateDeviceID: &primaryResources.aggregateDeviceID,
+            ghostUID: ghostUID,
+            outputUIDs: targetDeviceUIDs,
+            tapUUID: tapDesc.uuid,
+            name: "FineTune-\(app.id)"
+        ) else {
             cleanupPartialActivation()
             throw NSError(domain: "ProcessTapController", code: -1, userInfo: [NSLocalizedDescriptionKey: "Aggregate device not ready within timeout"])
         }
@@ -770,10 +892,12 @@ final class ProcessTapController: ProcessTapControlling {
         logger.debug("[CROSSFADE] Created secondary tap #\(tapID)")
 
         // Build multi-device aggregate description using helper
+        let ghostUID = builtInGhostClockUID(forPrimaryUID: outputUIDs[0])
         let description = buildAggregateDescription(
             outputUIDs: outputUIDs,
             tapUUID: tapDesc.uuid,
-            name: "FineTune-\(app.id)-secondary"
+            name: "FineTune-\(app.id)-secondary",
+            ghostClockUID: ghostUID
         )
 
         var err: OSStatus
@@ -787,7 +911,13 @@ final class ProcessTapController: ProcessTapControlling {
         secondaryResources.aggregateDeviceID = aggID
         CrashGuard.trackDevice(aggID)
 
-        guard secondaryResources.aggregateDeviceID.waitUntilReady(timeout: 2.0) else {
+        guard ensureAggregateReady(
+            aggregateDeviceID: &secondaryResources.aggregateDeviceID,
+            ghostUID: ghostUID,
+            outputUIDs: outputUIDs,
+            tapUUID: tapDesc.uuid,
+            name: "FineTune-\(app.id)-secondary"
+        ) else {
             secondaryResources.destroy()
             throw CrossfadeError.deviceNotReady
         }
@@ -982,10 +1112,12 @@ final class ProcessTapController: ProcessTapControlling {
         newResources.tapID = tapID
 
         // Build multi-device aggregate description using helper
+        let ghostUID = builtInGhostClockUID(forPrimaryUID: outputUIDs[0])
         let description = buildAggregateDescription(
             outputUIDs: outputUIDs,
             tapUUID: newTapDesc.uuid,
-            name: "FineTune-\(app.id)"
+            name: "FineTune-\(app.id)",
+            ghostClockUID: ghostUID
         )
 
         var err: OSStatus
@@ -998,7 +1130,13 @@ final class ProcessTapController: ProcessTapControlling {
         newResources.aggregateDeviceID = aggID
         CrashGuard.trackDevice(aggID)
 
-        guard newResources.aggregateDeviceID.waitUntilReady(timeout: 2.0) else {
+        guard ensureAggregateReady(
+            aggregateDeviceID: &newResources.aggregateDeviceID,
+            ghostUID: ghostUID,
+            outputUIDs: outputUIDs,
+            tapUUID: newTapDesc.uuid,
+            name: "FineTune-\(app.id)"
+        ) else {
             newResources.destroy()
             throw CrossfadeError.deviceNotReady
         }
