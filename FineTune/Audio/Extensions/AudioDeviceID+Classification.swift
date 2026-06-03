@@ -22,6 +22,36 @@ extension AudioDeviceID {
         readTransportType() == .virtual
     }
 
+    /// Returns the UIDs of an aggregate device's constituent hardware sub-devices,
+    /// in the aggregate's channel order, or `nil` if this is not an aggregate.
+    ///
+    /// Used to *flatten* a user-created aggregate before wrapping it in FineTune's own
+    /// private aggregate: CoreAudio does not allow an aggregate device to contain another
+    /// aggregate as a sub-device (the wrapping aggregate ends up reporting 0 output
+    /// channels), so the sub-devices must be expanded into FineTune's aggregate directly.
+    func aggregateSubDeviceUIDs() -> [String]? {
+        guard isAggregateDevice() else { return nil }
+
+        var address = AudioObjectPropertyAddress(
+            mSelector: kAudioAggregateDevicePropertyFullSubDeviceList,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        guard AudioObjectHasProperty(self, &address) else { return nil }
+
+        var size: UInt32 = 0
+        guard AudioObjectGetPropertyDataSize(self, &address, 0, nil, &size) == noErr else { return nil }
+
+        // kAudioAggregateDevicePropertyFullSubDeviceList returns a +1-retained CFArray of
+        // CFString UIDs; takeRetainedValue transfers ownership to ARC.
+        var unmanaged: Unmanaged<CFArray>?
+        let err = AudioObjectGetPropertyData(self, &address, 0, nil, &size, &unmanaged)
+        guard err == noErr, let uids = unmanaged?.takeRetainedValue() as? [String], !uids.isEmpty else {
+            return nil
+        }
+        return uids
+    }
+
     func isHidden() -> Bool {
         (try? readBool(kAudioDevicePropertyIsHidden)) ?? false
     }

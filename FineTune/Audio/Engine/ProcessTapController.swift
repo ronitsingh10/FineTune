@@ -272,14 +272,81 @@ final class ProcessTapController: ProcessTapControlling {
 
     // MARK: - Multi-Device Aggregate Configuration
 
+    /// Resolved plan for FineTune's private wrapping aggregate: which hardware sub-devices
+    /// to include, whether to stack them, and which one is the clock/main device.
+    struct AggregatePlan: Equatable {
+        var subDeviceUIDs: [String]
+        var isStacked: Bool
+        var clockDeviceUID: String
+    }
+
+    /// Pure planning step for `buildAggregateDescription` — extracted so it can be unit-tested
+    /// without CoreAudio.
+    ///
+    /// Two CoreAudio constraints drive this:
+    ///   1. An aggregate device cannot be nested as a sub-device of another aggregate (the
+    ///      wrapping aggregate would report 0 output channels). User-created aggregates are
+    ///      therefore *flattened* into their hardware sub-devices via `expand`.
+    ///   2. A *stacked* aggregate collapses a multichannel sub-device's output to a single
+    ///      stereo pair, which discards the device's preferred (e.g. 3/4) stereo channel
+    ///      assignment. So a flattened single output is kept *non-stacked*, exposing every
+    ///      channel so the IO callback can place audio on the preferred channels.
+    ///
+    /// Stacking is preserved for the cases that need it: multi-device mirroring (the user
+    /// selected several outputs) and a single plain (non-aggregate) device, which keeps the
+    /// previous behaviour and avoids regressing the stereo-only EQ path.
+    ///
+    /// - Parameters:
+    ///   - outputUIDs: The user-selected output device UIDs (1 = single, >1 = mirroring).
+    ///   - expand: Returns an aggregate's hardware sub-device UIDs, or `nil` for non-aggregates.
+    static func planAggregate(outputUIDs: [String], expand: (String) -> [String]?) -> AggregatePlan {
+        precondition(!outputUIDs.isEmpty, "Must have at least one output device")
+
+        var flatUIDs: [String] = []
+        var didFlatten = false
+        for uid in outputUIDs {
+            if let subDevices = expand(uid), !subDevices.isEmpty {
+                flatUIDs.append(contentsOf: subDevices)
+                didFlatten = true
+            } else {
+                flatUIDs.append(uid)
+            }
+        }
+
+        // De-duplicate while preserving order (a device could appear in more than one aggregate).
+        var seen = Set<String>()
+        flatUIDs = flatUIDs.filter { seen.insert($0).inserted }
+
+        let isMirroring = outputUIDs.count > 1
+        // Stack everything EXCEPT a single flattened aggregate, which must stay non-stacked
+        // so its full channel set is exposed for preferred-channel placement.
+        let isStacked = !(didFlatten && !isMirroring)
+
+        return AggregatePlan(
+            subDeviceUIDs: flatUIDs,
+            isStacked: isStacked,
+            clockDeviceUID: flatUIDs[0]
+        )
+    }
+
     /// Builds aggregate device description for synchronized multi-device output.
     /// First device is clock source (no drift compensation), others sync to it via drift compensation.
     private func buildAggregateDescription(outputUIDs: [String], tapUUID: UUID, name: String) -> [String: Any] {
         precondition(!outputUIDs.isEmpty, "Must have at least one output device")
 
+        let plan = Self.planAggregate(outputUIDs: outputUIDs) { uid in
+            // If this output is a user aggregate, return its hardware sub-devices so they can
+            // be flattened into FineTune's aggregate (nested aggregates aren't supported).
+            audioDeviceID(for: uid)?.aggregateSubDeviceUIDs()
+        }
+
+        if plan.subDeviceUIDs != outputUIDs {
+            logger.info("Flattened output \(outputUIDs, privacy: .public) → sub-devices \(plan.subDeviceUIDs, privacy: .public) (stacked=\(plan.isStacked))")
+        }
+
         // Build sub-device list - first device is clock source
         var subDevices: [[String: Any]] = []
-        for (index, deviceUID) in outputUIDs.enumerated() {
+        for (index, deviceUID) in plan.subDeviceUIDs.enumerated() {
             subDevices.append([
                 kAudioSubDeviceUIDKey: deviceUID,
                 // First device (index 0) is clock source - no drift compensation needed
@@ -288,15 +355,15 @@ final class ProcessTapController: ProcessTapControlling {
             ])
         }
 
-        let clockDeviceUID = outputUIDs[0]  // Primary = clock source
-
         return [
             kAudioAggregateDeviceNameKey: name,
             kAudioAggregateDeviceUIDKey: UUID().uuidString,
-            kAudioAggregateDeviceMainSubDeviceKey: clockDeviceUID,
-            kAudioAggregateDeviceClockDeviceKey: clockDeviceUID,
+            kAudioAggregateDeviceMainSubDeviceKey: plan.clockDeviceUID,
+            kAudioAggregateDeviceClockDeviceKey: plan.clockDeviceUID,
             kAudioAggregateDeviceIsPrivateKey: true,
-            kAudioAggregateDeviceIsStackedKey: true,  // Required for multi-device mirroring — HAL feeds same audio to all sub-devices
+            // Stacked mirrors the same audio to every sub-device (needed for multi-device output);
+            // a single flattened aggregate stays non-stacked so all its channels stay addressable.
+            kAudioAggregateDeviceIsStackedKey: plan.isStacked,
             kAudioAggregateDeviceTapAutoStartKey: true,
             kAudioAggregateDeviceSubDeviceListKey: subDevices,
             kAudioAggregateDeviceTapListKey: [
