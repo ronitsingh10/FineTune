@@ -382,6 +382,69 @@ final class ProcessTapController: ProcessTapControlling {
         return deviceID.preferredStereoChannelIndices()
     }
 
+    /// Tells the HAL that this IO proc does not use the wrapped device's *hardware input*
+    /// streams, so they are never powered on — which otherwise makes macOS request microphone
+    /// permission for what is purely an output path.
+    ///
+    /// A non-stacked aggregate built around a duplex interface (one with both inputs and
+    /// outputs, e.g. a USB audio interface) exposes that device's hardware input streams in
+    /// addition to the process tap. The audio callback already ignores everything except the
+    /// trailing tap stream(s) — it reads the last `outputStreamCount` input buffers — so we
+    /// publish the same usage map via `kAudioDevicePropertyIOProcStreamUsage`: only the
+    /// trailing input streams (the tap) are marked used. This cannot change the audio the
+    /// callback produces; it only stops the hardware mic/line inputs from being acquired.
+    ///
+    /// No-op when there are no extra input streams to disable (e.g. plain output devices or
+    /// the stacked path). Failures are non-fatal — audio still works, the prompt may appear.
+    /// Computes the per-input-stream "is used" flags for `kAudioDevicePropertyIOProcStreamUsage`,
+    /// or `nil` when there is nothing extra to disable. Only the trailing `outputCount` input
+    /// streams (the process tap, which the audio callback actually reads) are marked used; the
+    /// leading hardware-input streams are marked unused. Extracted for unit testing.
+    static func inputStreamUsageFlags(inputCount: Int, outputCount: Int) -> [UInt32]? {
+        guard inputCount > 0 else { return nil }
+        let usedInputStreams = min(max(outputCount, 0), inputCount)
+        guard inputCount > usedInputStreams else { return nil }  // nothing extra to disable
+        return (0..<inputCount).map { $0 >= inputCount - usedInputStreams ? 1 : 0 }
+    }
+
+    private func disableHardwareInputStreams(aggregateID: AudioObjectID, procID: AudioDeviceIOProcID?) {
+        guard let procID else { return }
+
+        let inputCount = aggregateID.streamCount(scope: kAudioObjectPropertyScopeInput)
+        let outputCount = aggregateID.streamCount(scope: kAudioObjectPropertyScopeOutput)
+        guard let flagsArray = Self.inputStreamUsageFlags(inputCount: inputCount, outputCount: outputCount) else { return }
+        let usedInputStreams = flagsArray.reduce(0) { $0 + Int($1) }
+
+        // AudioHardwareIOProcStreamUsage is a variable-length C struct:
+        //   { void* mIOProc; UInt32 mNumberStreams; UInt32 mStreamIsOn[mNumberStreams]; }
+        let headerSize = MemoryLayout<UnsafeMutableRawPointer>.size + MemoryLayout<UInt32>.size
+        let totalSize = headerSize + inputCount * MemoryLayout<UInt32>.size
+        let raw = UnsafeMutableRawPointer.allocate(
+            byteCount: totalSize,
+            alignment: MemoryLayout<UnsafeMutableRawPointer>.alignment
+        )
+        defer { raw.deallocate() }
+
+        raw.storeBytes(of: unsafeBitCast(procID, to: UnsafeMutableRawPointer.self), as: UnsafeMutableRawPointer.self)
+        raw.storeBytes(of: UInt32(inputCount), toByteOffset: MemoryLayout<UnsafeMutableRawPointer>.size, as: UInt32.self)
+        let flags = raw.advanced(by: headerSize)
+        for (i, isUsed) in flagsArray.enumerated() {
+            flags.advanced(by: i * MemoryLayout<UInt32>.size).storeBytes(of: isUsed, as: UInt32.self)
+        }
+
+        var address = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyIOProcStreamUsage,
+            mScope: kAudioObjectPropertyScopeInput,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        let err = AudioObjectSetPropertyData(aggregateID, &address, 0, nil, UInt32(totalSize), raw)
+        if err == noErr {
+            logger.info("Disabled \(inputCount - usedInputStreams) hardware input stream(s); kept \(usedInputStreams) tap stream(s)")
+        } else {
+            logger.warning("Could not disable hardware input streams (\(err)); microphone permission may be requested")
+        }
+    }
+
     private func outputStreamIndex(for deviceUID: String?) -> UInt? {
         guard let deviceUID, let deviceID = audioDeviceID(for: deviceUID) else {
             return nil
@@ -549,6 +612,8 @@ final class ProcessTapController: ProcessTapControlling {
             cleanupPartialActivation()
             throw NSError(domain: NSOSStatusErrorDomain, code: Int(err), userInfo: [NSLocalizedDescriptionKey: "Failed to create IO proc: \(err)"])
         }
+
+        disableHardwareInputStreams(aggregateID: primaryResources.aggregateDeviceID, procID: primaryResources.deviceProcID)
 
         err = AudioDeviceStart(primaryResources.aggregateDeviceID, primaryResources.deviceProcID)
         guard err == noErr else {
@@ -916,6 +981,8 @@ final class ProcessTapController: ProcessTapControlling {
             throw CrossfadeError.tapCreationFailed(err)
         }
 
+        disableHardwareInputStreams(aggregateID: secondaryResources.aggregateDeviceID, procID: secondaryResources.deviceProcID)
+
         err = AudioDeviceStart(secondaryResources.aggregateDeviceID, secondaryResources.deviceProcID)
         guard err == noErr else {
             secondaryResources.destroy()
@@ -1088,6 +1155,8 @@ final class ProcessTapController: ProcessTapControlling {
             newResources.destroy()
             throw CrossfadeError.tapCreationFailed(err)
         }
+
+        disableHardwareInputStreams(aggregateID: newResources.aggregateDeviceID, procID: newResources.deviceProcID)
 
         err = AudioDeviceStart(newResources.aggregateDeviceID, newResources.deviceProcID)
         guard err == noErr else {

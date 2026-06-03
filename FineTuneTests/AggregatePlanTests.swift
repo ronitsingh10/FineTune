@@ -89,3 +89,39 @@ struct AggregatePlanTests {
         #expect(plan.isStacked == true)
     }
 }
+
+@Suite("ProcessTapController — IO Proc input stream usage")
+struct InputStreamUsageTests {
+
+    @Test("Duplex device (mic + tap): hardware mic stream disabled, tap kept")
+    func duplexDisablesMicKeepsTap() {
+        // Scarlett-style: input streams = [hardware mic, tap], output streams = [speaker].
+        // Only the trailing tap stream should be marked used.
+        let flags = ProcessTapController.inputStreamUsageFlags(inputCount: 2, outputCount: 1)
+        #expect(flags == [0, 1])
+    }
+
+    @Test("Output-only device (tap only): nothing to disable")
+    func outputOnlyNoChange() {
+        // input streams = [tap], output streams = [speaker] — the tap must stay on, so there is
+        // nothing to disable and we return nil (no property write).
+        #expect(ProcessTapController.inputStreamUsageFlags(inputCount: 1, outputCount: 1) == nil)
+    }
+
+    @Test("Multiple hardware inputs before the tap are all disabled")
+    func multipleHardwareInputsDisabled() {
+        let flags = ProcessTapController.inputStreamUsageFlags(inputCount: 4, outputCount: 1)
+        #expect(flags == [0, 0, 0, 1])
+    }
+
+    @Test("Keeps the trailing outputCount input streams when several outputs exist")
+    func keepsTrailingByOutputCount() {
+        let flags = ProcessTapController.inputStreamUsageFlags(inputCount: 3, outputCount: 2)
+        #expect(flags == [0, 1, 1])
+    }
+
+    @Test("No input streams: nil")
+    func noInputs() {
+        #expect(ProcessTapController.inputStreamUsageFlags(inputCount: 0, outputCount: 1) == nil)
+    }
+}
