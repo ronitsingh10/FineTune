@@ -308,24 +308,21 @@ final class AudioDeviceMonitor: AudioDeviceProviding {
         }
     }
 
+    /// Returns true when the rate change warrants tap recreation. newRate == 0 (HAL
+    /// transient) always suppresses. oldRate == 0 (cold-connect) fires only when the
+    /// device settles at A2DP (≥ 44.1 kHz). Otherwise fires on A2DP ↔ SCO boundary crossings.
+    nonisolated static func isCallModeTransition(oldRate: Double, newRate: Double) -> Bool {
+        guard newRate > 0 else { return false }
+        if oldRate == 0 { return newRate >= 44_100 }
+        return (oldRate < 44_100) != (newRate < 44_100)
+    }
+
     private func checkSampleRateThreshold(forDeviceID deviceID: AudioDeviceID, uid: String) {
         let newRate = (try? deviceID.readNominalSampleRate()) ?? 0
         let oldRate = lastKnownSampleRates[deviceID] ?? 0
         lastKnownSampleRates[deviceID] = newRate
 
-        // Skip transient HAL failures (newRate == 0).
-        guard newRate > 0 else { return }
-
-        if oldRate == 0 {
-            // No valid baseline yet — only act if device settled at A2DP (≥ 44.1 kHz).
-            // The tap was created without ghost clock (rate was 0, indistinguishable from SCO);
-            // rebuilding it now lets builtInGhostClockUID pick the correct strategy.
-            guard newRate >= 44_100 else { return }
-        } else {
-            let wasCallMode = oldRate < 44_100
-            let isCallMode = newRate < 44_100
-            guard wasCallMode != isCallMode else { return }
-        }
+        guard AudioDeviceMonitor.isCallModeTransition(oldRate: oldRate, newRate: newRate) else { return }
 
         logger.info("[RATE] BT device \(uid, privacy: .public) \(oldRate, format: .fixed(precision: 0)) → \(newRate, format: .fixed(precision: 0)) Hz (call mode: \(newRate < 44_100))")
         onBTDeviceSampleRateChanged?(uid, newRate)

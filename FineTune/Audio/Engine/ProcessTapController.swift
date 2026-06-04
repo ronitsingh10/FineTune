@@ -272,6 +272,17 @@ final class ProcessTapController: ProcessTapControlling {
 
     // MARK: - Multi-Device Aggregate Configuration
 
+    /// Returns whether the tap's drift compensation should be enabled in the aggregate.
+    /// Disabled when source and output share the same clock domain (BT clock master,
+    /// ghost clock, or virtual source). Defaults to off when the output is unresolvable.
+    static func aggregateDriftCompEnabled(
+        ghostClockUID: String?,
+        isTapSourceVirtual: Bool,
+        isPrimaryBTOutput: Bool
+    ) -> Bool {
+        ghostClockUID == nil && !isTapSourceVirtual && !isPrimaryBTOutput
+    }
+
     /// Builds aggregate device description for synchronized multi-device output.
     /// First device is clock source (no drift compensation), others sync to it via drift compensation.
     ///
@@ -305,7 +316,11 @@ final class ProcessTapController: ProcessTapControlling {
         // looks like drift). On for wired/USB where the crystal domains actually differ.
         // Defaults to off when the device is unresolvable — less wrong on an unknown BT device.
         let isPrimaryBTOutput = audioDeviceID(for: outputUIDs[0])?.isBluetoothDevice() ?? true
-        let tapDriftCompensation = ghostClockUID == nil && !isTapSourceVirtual() && !isPrimaryBTOutput
+        let tapDriftCompensation = ProcessTapController.aggregateDriftCompEnabled(
+            ghostClockUID: ghostClockUID,
+            isTapSourceVirtual: isTapSourceVirtual(),
+            isPrimaryBTOutput: isPrimaryBTOutput
+        )
 
         logger.info("[AGG] \(name, privacy: .public) clock=\(ghostClockUID == nil ? "BT-self" : "ghost", privacy: .public) driftComp=\(tapDriftCompensation)")
 
