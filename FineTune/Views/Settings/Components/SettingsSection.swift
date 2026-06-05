@@ -14,7 +14,7 @@ struct SettingsSection<Content: View>: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             if let title {
-                Text(title)
+                Text(L10n.string(title))
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(DesignTokens.Colors.textPrimary)
                     .padding(.horizontal, 4)

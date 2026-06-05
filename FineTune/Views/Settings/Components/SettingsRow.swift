@@ -20,11 +20,11 @@ struct SettingsRow<Trailing: View>: View {
     var body: some View {
         HStack(alignment: .center, spacing: 16) {
             VStack(alignment: .leading, spacing: 2) {
-                Text(title)
+                Text(L10n.string(title))
                     .font(.system(size: 13, weight: .medium))
                     .foregroundStyle(DesignTokens.Colors.textPrimary)
                 if let description {
-                    Text(description)
+                    Text(L10n.string(description))
                         .font(.system(size: 11))
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
