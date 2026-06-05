@@ -12,6 +12,10 @@ enum MenuBarIconStyle: String, Codable, CaseIterable, Identifiable {
 
     var id: String { rawValue }
 
+    var displayName: String {
+        L10n.string(rawValue)
+    }
+
     /// The icon name - either asset catalog name or SF Symbol
     var iconName: String {
         switch self {
@@ -38,6 +42,13 @@ enum HUDStyle: String, Codable, CaseIterable, Identifiable {
     case classic
 
     var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .tahoe: return L10n.string("Tahoe")
+        case .classic: return L10n.string("Classic")
+        }
+    }
 }
 
 // MARK: - Appearance Preference
@@ -53,9 +64,9 @@ enum AppearancePreference: String, Codable, CaseIterable, Identifiable, CustomSt
 
     var description: String {
         switch self {
-        case .system: return "System"
-        case .light: return "Light"
-        case .dark: return "Dark"
+        case .system: return L10n.string("System")
+        case .light: return L10n.string("Light")
+        case .dark: return L10n.string("Dark")
         }
     }
 }
@@ -85,9 +96,9 @@ enum MenuBarPopupSize: String, Codable, CaseIterable, Identifiable, CustomString
 
     var description: String {
         switch self {
-        case .compact: return "Compact"
-        case .comfortable: return "Comfortable"
-        case .spacious: return "Spacious"
+        case .compact: return L10n.string("Compact")
+        case .comfortable: return L10n.string("Comfortable")
+        case .spacious: return L10n.string("Spacious")
         }
     }
 }
@@ -147,10 +158,10 @@ enum VolumeHotkeyStep: String, Codable, CaseIterable, Identifiable, CustomString
 
     var description: String {
         switch self {
-        case .coarse:    return "Coarse (12.5%)"
-        case .normal:    return "Normal (6.25%)"
-        case .fine:      return "Fine (3.13%)"
-        case .extraFine: return "Extra-Fine (1.56%)"
+        case .coarse:    return L10n.string("Coarse (12.5%)")
+        case .normal:    return L10n.string("Normal (6.25%)")
+        case .fine:      return L10n.string("Fine (3.13%)")
+        case .extraFine: return L10n.string("Extra-Fine (1.56%)")
         }
     }
 }
