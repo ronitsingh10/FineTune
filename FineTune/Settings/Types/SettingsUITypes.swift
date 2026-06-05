@@ -4,6 +4,39 @@ import AppKit
 
 // MARK: - App-Wide Settings Enums
 
+enum AppLanguagePreference: String, Codable, CaseIterable, Identifiable, CustomStringConvertible {
+    case system
+    case english
+    case simplifiedChinese
+
+    var id: String { rawValue }
+
+    var description: String {
+        switch self {
+        case .system: return L10n.string("System")
+        case .english: return L10n.string("English")
+        case .simplifiedChinese: return L10n.string("Simplified Chinese")
+        }
+    }
+
+    private var appleLanguages: [String]? {
+        switch self {
+        case .system: return nil
+        case .english: return ["en"]
+        case .simplifiedChinese: return ["zh-Hans"]
+        }
+    }
+
+    func apply(to defaults: UserDefaults = .standard) {
+        if let appleLanguages {
+            defaults.set(appleLanguages, forKey: "AppleLanguages")
+        } else {
+            defaults.removeObject(forKey: "AppleLanguages")
+        }
+        defaults.synchronize()
+    }
+}
+
 enum MenuBarIconStyle: String, Codable, CaseIterable, Identifiable {
     case `default` = "Default"
     case speaker = "Speaker"
