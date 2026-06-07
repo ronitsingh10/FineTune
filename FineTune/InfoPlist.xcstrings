@@ -1,0 +1,1222 @@
+{
+  "sourceLanguage": "en",
+  "strings": {
+    "CFBundleName": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FineTune"
+          }
+        },
+        "ar-SA": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FineTune"
+          }
+        },
+        "bn-BD": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FineTune"
+          }
+        },
+        "ca": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FineTune"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FineTune"
+          }
+        },
+        "hr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FineTune"
+          }
+        },
+        "cs": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FineTune"
+          }
+        },
+        "da": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FineTune"
+          }
+        },
+        "nl-NL": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FineTune"
+          }
+        },
+        "en-AU": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FineTune"
+          }
+        },
+        "en-CA": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FineTune"
+          }
+        },
+        "en-GB": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FineTune"
+          }
+        },
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FineTune"
+          }
+        },
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FineTune"
+          }
+        },
+        "fr-FR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FineTune"
+          }
+        },
+        "fr-CA": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FineTune"
+          }
+        },
+        "de-DE": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FineTune"
+          }
+        },
+        "el": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FineTune"
+          }
+        },
+        "gu-IN": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FineTune"
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FineTune"
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FineTune"
+          }
+        },
+        "hu": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FineTune"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FineTune"
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FineTune"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FineTune"
+          }
+        },
+        "kn-IN": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FineTune"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FineTune"
+          }
+        },
+        "ms": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FineTune"
+          }
+        },
+        "ml-IN": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FineTune"
+          }
+        },
+        "mr-IN": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FineTune"
+          }
+        },
+        "nb": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FineTune"
+          }
+        },
+        "or-IN": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FineTune"
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FineTune"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FineTune"
+          }
+        },
+        "pt-PT": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FineTune"
+          }
+        },
+        "pa-IN": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FineTune"
+          }
+        },
+        "ro": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FineTune"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FineTune"
+          }
+        },
+        "sk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FineTune"
+          }
+        },
+        "sl-SI": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FineTune"
+          }
+        },
+        "es-MX": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FineTune"
+          }
+        },
+        "es-ES": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FineTune"
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FineTune"
+          }
+        },
+        "ta-IN": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FineTune"
+          }
+        },
+        "te-IN": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FineTune"
+          }
+        },
+        "th": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FineTune"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FineTune"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FineTune"
+          }
+        },
+        "ur-PK": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FineTune"
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FineTune"
+          }
+        }
+      }
+    },
+    "NSAudioCaptureUsageDescription": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FineTune 需要访问权限，才能控制各个应用的音量。"
+          }
+        },
+        "ar-SA": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "يحتاج FineTune إلى الوصول للتحكم في مستويات الصوت للتطبيقات الفردية."
+          }
+        },
+        "bn-BD": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FineTune-এর পৃথক অ্যাপ্লিকেশনের জন্য ভলিউম স্তর নিয়ন্ত্রণ করতে অ্যাক্সেস প্রয়োজন।"
+          }
+        },
+        "ca": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FineTune necessita accés per controlar els nivells de volum per a aplicacions individuals."
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FineTune 需要存取權限來控制各個應用程式的音量等級。"
+          }
+        },
+        "hr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FineTune treba pristup za kontrolu razina glasnoće za pojedinačne aplikacije."
+          }
+        },
+        "cs": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FineTune potřebuje přístup k ovládání úrovní hlasitosti pro jednotlivé aplikace."
+          }
+        },
+        "da": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FineTune har brug for adgang til at kontrollere lydstyrkeniveauer for individuelle applikationer."
+          }
+        },
+        "nl-NL": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FineTune heeft toegang nodig om de volumeniveaus voor individuele toepassingen te regelen."
+          }
+        },
+        "en-AU": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FineTune needs access to control volume levels for individual applications."
+          }
+        },
+        "en-CA": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FineTune needs access to control volume levels for individual applications."
+          }
+        },
+        "en-GB": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FineTune needs access to control volume levels for individual applications."
+          }
+        },
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FineTune needs access to control volume levels for individual applications."
+          }
+        },
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FineTune tarvitsee pääsyn yksittäisten sovellusten äänenvoimakkuuden hallintaan."
+          }
+        },
+        "fr-FR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FineTune a besoin d’accéder aux niveaux de volume de contrôle pour les applications individuelles."
+          }
+        },
+        "fr-CA": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FineTune a besoin d’accéder aux niveaux de volume de contrôle pour les applications individuelles."
+          }
+        },
+        "de-DE": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FineTune benötigt Zugriff, um die Lautstärke einzelner Anwendungen zu steuern."
+          }
+        },
+        "el": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Το FineTune χρειάζεται πρόσβαση σε επίπεδα ελέγχου έντασης για μεμονωμένες εφαρμογές."
+          }
+        },
+        "gu-IN": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FineTune ને વ્યક્તિગત એપ્લિકેશનો માટે વોલ્યુમ સ્તરોને નિયંત્રિત કરવા માટે ઍક્સેસની જરૂર છે."
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FineTune זקוק לגישה לשליטה ברמות עוצמת הקול עבור יישומים בודדים."
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FineTune को व्यक्तिगत अनुप्रयोगों के लिए वॉल्यूम स्तर को नियंत्रित करने के लिए पहुंच की आवश्यकता है।"
+          }
+        },
+        "hu": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "A FineTune-nek hozzáférésre van szüksége az egyes alkalmazások hangerejének szabályozásához."
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FineTune memerlukan akses untuk mengontrol level volume untuk masing-masing aplikasi."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FineTune necessita dell'accesso per controllare i livelli del volume per le singole applicazioni."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FineTune は、個々のアプリケーションのボリューム レベルを制御するためのアクセスを必要とします。"
+          }
+        },
+        "kn-IN": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ವೈಯಕ್ತಿಕ ಅಪ್ಲಿಕೇಶನ್‌ಗಳಿಗಾಗಿ ವಾಲ್ಯೂಮ್ ಮಟ್ಟವನ್ನು ನಿಯಂತ್ರಿಸಲು FineTune ಗೆ ಪ್ರವೇಶದ ಅಗತ್ಯವಿದೆ."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FineTune은 개별 애플리케이션의 볼륨 레벨을 제어하려면 액세스 권한이 필요합니다."
+          }
+        },
+        "ms": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FineTune memerlukan akses untuk mengawal tahap kelantangan untuk aplikasi individu."
+          }
+        },
+        "ml-IN": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "വ്യക്തിഗത ആപ്ലിക്കേഷനുകൾക്കായി വോളിയം ലെവലുകൾ നിയന്ത്രിക്കാൻ FineTune-ന് ആക്സസ് ആവശ്യമാണ്."
+          }
+        },
+        "mr-IN": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FineTune ला वैयक्तिक अनुप्रयोगांसाठी आवाज पातळी नियंत्रित करण्यासाठी प्रवेश आवश्यक आहे."
+          }
+        },
+        "nb": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FineTune trenger tilgang til å kontrollere volumnivåer for individuelle applikasjoner."
+          }
+        },
+        "or-IN": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ବ୍ୟକ୍ତିଗତ ପ୍ରୟୋଗଗୁଡ଼ିକ ପାଇଁ ଭଲ୍ୟୁମ୍ ସ୍ତରକୁ ନିୟନ୍ତ୍ରଣ କରିବାକୁ FineTune ପ୍ରବେଶ ଆବଶ୍ୟକ କରେ |"
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FineTune potrzebuje dostępu do kontroli poziomów głośności dla poszczególnych aplikacji."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FineTune precisa de acesso para controlar os níveis de volume para aplicações individuais."
+          }
+        },
+        "pt-PT": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FineTune precisa de acesso para controlar os níveis de volume para aplicações individuais."
+          }
+        },
+        "pa-IN": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FineTune ਨੂੰ ਵਿਅਕਤੀਗਤ ਐਪਲੀਕੇਸ਼ਨਾਂ ਲਈ ਵਾਲੀਅਮ ਪੱਧਰਾਂ ਨੂੰ ਨਿਯੰਤਰਿਤ ਕਰਨ ਲਈ ਪਹੁੰਚ ਦੀ ਲੋੜ ਹੈ।"
+          }
+        },
+        "ro": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FineTune are nevoie de acces pentru a controla nivelurile de volum pentru aplicații individuale."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FineTune необходим доступ к управлению уровнями громкости для отдельных приложений."
+          }
+        },
+        "sk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FineTune potrebuje prístup na ovládanie úrovní hlasitosti pre jednotlivé aplikácie."
+          }
+        },
+        "sl-SI": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FineTune potrebuje dostop za nadzor ravni glasnosti za posamezne aplikacije."
+          }
+        },
+        "es-MX": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FineTune necesita acceso para controlar los niveles de volumen para aplicaciones individuales."
+          }
+        },
+        "es-ES": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FineTune necesita acceso para controlar los niveles de volumen para aplicaciones individuales."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FineTune behöver tillgång för att kontrollera volymnivåer för individuella applikationer."
+          }
+        },
+        "ta-IN": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "தனிப்பட்ட பயன்பாடுகளுக்கான வால்யூம் அளவைக் கட்டுப்படுத்த FineTune க்கு அணுகல் தேவை."
+          }
+        },
+        "te-IN": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "వ్యక్తిగత అనువర్తనాల కోసం వాల్యూమ్ స్థాయిలను నియంత్రించడానికి FineTuneకి యాక్సెస్ అవసరం."
+          }
+        },
+        "th": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FineTune ต้องการเข้าถึงเพื่อควบคุมระดับเสียงสำหรับแต่ละแอปพลิเคชัน"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FineTune'in bireysel uygulamalar için ses seviyelerini kontrol etmek için erişime ihtiyacı var."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FineTune потрібен доступ до керування рівнями гучності для окремих програм."
+          }
+        },
+        "ur-PK": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FineTune کو انفرادی ایپلی کیشنز کے لیے حجم کی سطح کو کنٹرول کرنے تک رسائی کی ضرورت ہے۔"
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FineTune cần quyền truy cập để kiểm soát mức âm lượng cho từng ứng dụng."
+          }
+        }
+      }
+    },
+    "NSBluetoothAlwaysUsageDescription": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FineTune 使用蓝牙，以便从菜单栏连接已配对的音频设备。"
+          }
+        },
+        "ar-SA": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "يستخدم FineTune تقنية Bluetooth لتوصيل أجهزة الصوت المقترنة من شريط القائمة."
+          }
+        },
+        "bn-BD": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FineTune মেনু বার থেকে জোড়া অডিও ডিভাইস সংযোগ করতে ব্লুটুথ ব্যবহার করে।"
+          }
+        },
+        "ca": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FineTune utilitza Bluetooth per connectar dispositius d'àudio emparellats des de la barra de menús."
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FineTune 使用藍牙從功能表列連接配對的音訊裝置。"
+          }
+        },
+        "hr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FineTune koristi Bluetooth za povezivanje uparenih audio uređaja s trake izbornika."
+          }
+        },
+        "cs": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FineTune používá Bluetooth k připojení spárovaných zvukových zařízení z panelu nabídek."
+          }
+        },
+        "da": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FineTune bruger Bluetooth til at forbinde parrede lydenheder fra menulinjen."
+          }
+        },
+        "nl-NL": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FineTune gebruikt Bluetooth om gekoppelde audioapparaten via de menubalk te verbinden."
+          }
+        },
+        "en-AU": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FineTune uses Bluetooth to connect paired audio devices from the menu bar."
+          }
+        },
+        "en-CA": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FineTune uses Bluetooth to connect paired audio devices from the menu bar."
+          }
+        },
+        "en-GB": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FineTune uses Bluetooth to connect paired audio devices from the menu bar."
+          }
+        },
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FineTune uses Bluetooth to connect paired audio devices from the menu bar."
+          }
+        },
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FineTune yhdistää Bluetoothin avulla pariksi liitetyt äänilaitteet valikkoriviltä."
+          }
+        },
+        "fr-FR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FineTune utilise Bluetooth pour connecter des appareils audio couplés à partir de la barre de menus."
+          }
+        },
+        "fr-CA": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FineTune utilise Bluetooth pour connecter des appareils audio couplés à partir de la barre de menus."
+          }
+        },
+        "de-DE": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FineTune nutzt Bluetooth, um gekoppelte Audiogeräte über die Menüleiste zu verbinden."
+          }
+        },
+        "el": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Το FineTune χρησιμοποιεί Bluetooth για να συνδέσει ζευγαρωμένες συσκευές ήχου από τη γραμμή μενού."
+          }
+        },
+        "gu-IN": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FineTune મેનુ બારમાંથી જોડી ઓડિયો ઉપકરણોને કનેક્ટ કરવા માટે બ્લૂટૂથનો ઉપયોગ કરે છે."
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FineTune משתמש ב-Bluetooth כדי לחבר התקני שמע מותאמים מסרגל התפריטים."
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FineTune मेनू बार से युग्मित ऑडियो डिवाइस को कनेक्ट करने के लिए ब्लूटूथ का उपयोग करता है।"
+          }
+        },
+        "hu": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "A FineTune Bluetooth segítségével csatlakoztatja a párosított audioeszközöket a menüsorból."
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FineTune menggunakan Bluetooth untuk menghubungkan perangkat audio berpasangan dari bilah menu."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FineTune utilizza il Bluetooth per connettere i dispositivi audio associati dalla barra dei menu."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FineTune は Bluetooth を使用して、メニュー バーからペアリングされたオーディオ デバイスを接続します。"
+          }
+        },
+        "kn-IN": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ಮೆನು ಬಾರ್‌ನಿಂದ ಜೋಡಿಸಲಾದ ಆಡಿಯೊ ಸಾಧನಗಳನ್ನು ಸಂಪರ್ಕಿಸಲು FineTune ಬ್ಲೂಟೂತ್ ಅನ್ನು ಬಳಸುತ್ತದೆ."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FineTune은 Bluetooth를 사용하여 메뉴 표시줄에서 페어링된 오디오 장치를 연결합니다."
+          }
+        },
+        "ms": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FineTune menggunakan Bluetooth untuk menyambungkan peranti audio berpasangan daripada bar menu."
+          }
+        },
+        "ml-IN": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "മെനു ബാറിൽ നിന്ന് ജോടിയാക്കിയ ഓഡിയോ ഉപകരണങ്ങളെ ബന്ധിപ്പിക്കുന്നതിന് FineTune ബ്ലൂടൂത്ത് ഉപയോഗിക്കുന്നു."
+          }
+        },
+        "mr-IN": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FineTune मेन्यू बारमधून जोडलेले ऑडिओ डिव्हाइस कनेक्ट करण्यासाठी ब्लूटूथ वापरते."
+          }
+        },
+        "nb": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FineTune bruker Bluetooth for å koble til sammenkoblede lydenheter fra menylinjen."
+          }
+        },
+        "or-IN": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ମେନୁ ବାର୍ ରୁ ଯୋଡି ହୋଇଥିବା ଅଡିଓ ଉପକରଣଗୁଡ଼ିକୁ ସଂଯୋଗ କରିବା ପାଇଁ FineTune ବ୍ଲୁଟୁଥ୍ ବ୍ୟବହାର କରେ |"
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FineTune wykorzystuje Bluetooth do łączenia sparowanych urządzeń audio z paska menu."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FineTune usa Bluetooth para conectar dispositivos de áudio emparelhados na barra de menu."
+          }
+        },
+        "pt-PT": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FineTune usa Bluetooth para conectar dispositivos de áudio emparelhados na barra de menu."
+          }
+        },
+        "pa-IN": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FineTune ਮੀਨੂ ਬਾਰ ਤੋਂ ਪੇਅਰ ਕੀਤੇ ਆਡੀਓ ਡਿਵਾਈਸਾਂ ਨੂੰ ਕਨੈਕਟ ਕਰਨ ਲਈ ਬਲੂਟੁੱਥ ਦੀ ਵਰਤੋਂ ਕਰਦਾ ਹੈ।"
+          }
+        },
+        "ro": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FineTune folosește Bluetooth pentru a conecta dispozitive audio asociate din bara de meniu."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FineTune использует Bluetooth для подключения сопряженных аудиоустройств из строки меню."
+          }
+        },
+        "sk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FineTune používa Bluetooth na pripojenie spárovaných zvukových zariadení z panela s ponukami."
+          }
+        },
+        "sl-SI": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FineTune uporablja Bluetooth za povezavo seznanjenih zvočnih naprav iz menijske vrstice."
+          }
+        },
+        "es-MX": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FineTune usa Bluetooth para conectar dispositivos de audio emparejados desde la barra de menú."
+          }
+        },
+        "es-ES": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FineTune usa Bluetooth para conectar dispositivos de audio emparejados desde la barra de menú."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FineTune använder Bluetooth för att ansluta ihopparade ljudenheter från menyraden."
+          }
+        },
+        "ta-IN": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FineTune ஆனது மெனு பட்டியில் இருந்து இணைக்கப்பட்ட ஆடியோ சாதனங்களை இணைக்க புளூடூத்தைப் பயன்படுத்துகிறது."
+          }
+        },
+        "te-IN": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "మెను బార్ నుండి జత చేసిన ఆడియో పరికరాలను కనెక్ట్ చేయడానికి FineTune బ్లూటూత్‌ని ఉపయోగిస్తుంది."
+          }
+        },
+        "th": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FineTune ใช้ Bluetooth เพื่อเชื่อมต่ออุปกรณ์เสียงที่จับคู่จากแถบเมนู"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FineTune, eşleştirilmiş ses cihazlarını menü çubuğundan bağlamak için Bluetooth'u kullanır."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FineTune використовує Bluetooth для підключення парних аудіопристроїв із панелі меню."
+          }
+        },
+        "ur-PK": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FineTune مینو بار سے جوڑے ہوئے آڈیو آلات کو جوڑنے کے لیے بلوٹوتھ کا استعمال کرتا ہے۔"
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FineTune sử dụng Bluetooth để kết nối các thiết bị âm thanh được ghép nối từ thanh menu."
+          }
+        }
+      }
+    },
+    "NSMicrophoneUsageDescription": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FineTune 需要麦克风访问权限，才能捕获使用输入设备的 App 音频。"
+          }
+        },
+        "ar-SA": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "يحتاج FineTune إلى الوصول إلى الميكروفون لالتقاط الصوت من التطبيقات باستخدام الأجهزة التي تدعم الإدخال."
+          }
+        },
+        "bn-BD": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ইনপুট-সক্ষম ডিভাইসগুলি ব্যবহার করে অ্যাপ্লিকেশানগুলি থেকে অডিও ক্যাপচার করতে FineTune-এর মাইক্রোফোন অ্যাক্সেস প্রয়োজন৷"
+          }
+        },
+        "ca": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FineTune necessita accés al micròfon per capturar àudio d'aplicacions mitjançant dispositius amb capacitat d'entrada."
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FineTune 需要麥克風存取權限才能使用支援輸入的裝置從應用程式擷取音訊。"
+          }
+        },
+        "hr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FineTune treba pristup mikrofonu za snimanje zvuka iz aplikacija pomoću uređaja s mogućnošću unosa."
+          }
+        },
+        "cs": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FineTune potřebuje přístup k mikrofonu, aby mohl zachytit zvuk z aplikací pomocí zařízení se vstupem."
+          }
+        },
+        "da": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FineTune har brug for mikrofonadgang for at optage lyd fra apps ved hjælp af input-kompatible enheder."
+          }
+        },
+        "nl-NL": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FineTune heeft microfoontoegang nodig om audio van apps vast te leggen met behulp van apparaten met invoermogelijkheden."
+          }
+        },
+        "en-AU": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FineTune needs microphone access to capture audio from apps using input-capable devices."
+          }
+        },
+        "en-CA": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FineTune needs microphone access to capture audio from apps using input-capable devices."
+          }
+        },
+        "en-GB": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FineTune needs microphone access to capture audio from apps using input-capable devices."
+          }
+        },
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FineTune needs microphone access to capture audio from apps using input-capable devices."
+          }
+        },
+        "fi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FineTune tarvitsee mikrofonin käyttöoikeuden siepatakseen ääntä sovelluksista syöttöä tukevilla laitteilla."
+          }
+        },
+        "fr-FR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FineTune a besoin d'un accès au microphone pour capturer l'audio des applications à l'aide de périphériques compatibles avec l'entrée."
+          }
+        },
+        "fr-CA": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FineTune a besoin d'un accès au microphone pour capturer l'audio des applications à l'aide de périphériques compatibles avec l'entrée."
+          }
+        },
+        "de-DE": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FineTune benötigt Mikrofonzugriff, um Audio von Apps mit eingabefähigen Geräten aufzunehmen."
+          }
+        },
+        "el": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Το FineTune χρειάζεται πρόσβαση στο μικρόφωνο για τη λήψη ήχου από εφαρμογές που χρησιμοποιούν συσκευές με δυνατότητα εισαγωγής."
+          }
+        },
+        "gu-IN": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FineTune ને ઇનપુટ-સક્ષમ ઉપકરણોનો ઉપયોગ કરીને એપ્લિકેશન્સમાંથી ઑડિઓ કૅપ્ચર કરવા માટે માઇક્રોફોન ઍક્સેસની જરૂર છે."
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FineTune זקוק לגישה למיקרופון כדי ללכוד אודיו מאפליקציות באמצעות התקנים בעלי קלט."
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "इनपुट-सक्षम उपकरणों का उपयोग करके ऐप्स से ऑडियो कैप्चर करने के लिए FineTune को माइक्रोफ़ोन एक्सेस की आवश्यकता होती है।"
+          }
+        },
+        "hu": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "A FineTune-nek mikrofon-hozzáférésre van szüksége, hogy hangot rögzítsen az alkalmazásokból bevitelre alkalmas eszközök használatával."
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FineTune memerlukan akses mikrofon untuk menangkap audio dari aplikasi menggunakan perangkat berkemampuan input."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FineTune necessita dell'accesso al microfono per acquisire l'audio dalle app utilizzando dispositivi con capacità di input."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FineTune は、入力対応デバイスを使用してアプリから音声をキャプチャするためにマイクへのアクセスを必要とします。"
+          }
+        },
+        "kn-IN": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ಇನ್‌ಪುಟ್ ಸಾಮರ್ಥ್ಯದ ಸಾಧನಗಳನ್ನು ಬಳಸಿಕೊಂಡು ಅಪ್ಲಿಕೇಶನ್‌ಗಳಿಂದ ಆಡಿಯೊವನ್ನು ಸೆರೆಹಿಡಿಯಲು FineTune ಗೆ ಮೈಕ್ರೊಫೋನ್ ಪ್ರವೇಶದ ಅಗತ್ಯವಿದೆ."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FineTune은 입력 가능 장치를 사용하여 앱에서 오디오를 캡처하려면 마이크 액세스가 필요합니다."
+          }
+        },
+        "ms": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FineTune memerlukan akses mikrofon untuk menangkap audio daripada apl menggunakan peranti berkemampuan input."
+          }
+        },
+        "ml-IN": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ഇൻപുട്ട് ശേഷിയുള്ള ഉപകരണങ്ങൾ ഉപയോഗിച്ച് ആപ്പുകളിൽ നിന്ന് ഓഡിയോ ക്യാപ്‌ചർ ചെയ്യാൻ FineTune-ന് മൈക്രോഫോൺ ആക്‌സസ് ആവശ്യമാണ്."
+          }
+        },
+        "mr-IN": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "इनपुट-सक्षम डिव्हाइसेस वापरून ॲप्समधून ऑडिओ कॅप्चर करण्यासाठी FineTune ला मायक्रोफोन प्रवेश आवश्यक आहे."
+          }
+        },
+        "nb": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FineTune trenger mikrofontilgang for å fange opp lyd fra apper ved å bruke enheter med inngang."
+          }
+        },
+        "or-IN": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ଇନପୁଟ୍-ସକ୍ଷମ ଡିଭାଇସ୍ ବ୍ୟବହାର କରି ଆପରୁ ଅଡିଓ କ୍ୟାପଚର କରିବାକୁ FineTune ମାଇକ୍ରୋଫୋନ୍ ଆକ୍ସେସ୍ ଆବଶ୍ୟକ କରେ |"
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FineTune potrzebuje dostępu do mikrofonu, aby przechwytywać dźwięk z aplikacji korzystających z urządzeń obsługujących wejście."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FineTune precisa de acesso ao microfone para capturar áudio de aplicativos usando dispositivos com capacidade de entrada."
+          }
+        },
+        "pt-PT": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FineTune precisa de acesso ao microfone para capturar áudio de aplicativos usando dispositivos com capacidade de entrada."
+          }
+        },
+        "pa-IN": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FineTune ਨੂੰ ਇਨਪੁਟ-ਸਮਰੱਥ ਡਿਵਾਈਸਾਂ ਦੀ ਵਰਤੋਂ ਕਰਦੇ ਹੋਏ ਐਪਸ ਤੋਂ ਆਡੀਓ ਕੈਪਚਰ ਕਰਨ ਲਈ ਮਾਈਕ੍ਰੋਫੋਨ ਪਹੁੰਚ ਦੀ ਲੋੜ ਹੈ।"
+          }
+        },
+        "ro": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FineTune are nevoie de acces la microfon pentru a capta sunetul din aplicații folosind dispozitive capabile de intrare."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FineTune необходим доступ к микрофону для захвата звука из приложений с помощью устройств с возможностью ввода."
+          }
+        },
+        "sk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FineTune potrebuje prístup k mikrofónu na zachytávanie zvuku z aplikácií pomocou zariadení so vstupom."
+          }
+        },
+        "sl-SI": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FineTune potrebuje dostop do mikrofona za zajem zvoka iz aplikacij z napravami, ki podpirajo vnos."
+          }
+        },
+        "es-MX": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FineTune necesita acceso al micrófono para capturar audio de aplicaciones que utilizan dispositivos con capacidad de entrada."
+          }
+        },
+        "es-ES": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FineTune necesita acceso al micrófono para capturar audio de aplicaciones que utilizan dispositivos con capacidad de entrada."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FineTune behöver mikrofonåtkomst för att fånga ljud från appar med ingångskompatibla enheter."
+          }
+        },
+        "ta-IN": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "உள்ளீடு திறன் கொண்ட சாதனங்களைப் பயன்படுத்தி ஆப்ஸிலிருந்து ஆடியோவைப் பிடிக்க FineTune க்கு மைக்ரோஃபோன் அணுகல் தேவை."
+          }
+        },
+        "te-IN": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ఇన్‌పుట్ సామర్థ్యం గల పరికరాలను ఉపయోగించి యాప్‌ల నుండి ఆడియోను క్యాప్చర్ చేయడానికి FineTuneకి మైక్రోఫోన్ యాక్సెస్ అవసరం."
+          }
+        },
+        "th": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FineTune ต้องการการเข้าถึงไมโครโฟนเพื่อบันทึกเสียงจากแอปโดยใช้อุปกรณ์ที่รองรับอินพุต"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FineTune'in giriş özellikli cihazlar kullanan uygulamalardan ses yakalamak için mikrofon erişimine ihtiyacı var."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FineTune потрібен доступ до мікрофона, щоб записувати аудіо з програм за допомогою пристроїв із підтримкою введення."
+          }
+        },
+        "ur-PK": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FineTune کو ان پٹ کے قابل آلات کا استعمال کرتے ہوئے ایپس سے آڈیو کیپچر کرنے کے لیے مائکروفون تک رسائی کی ضرورت ہے۔"
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FineTune cần quyền truy cập micrô để ghi lại âm thanh từ các ứng dụng sử dụng thiết bị có khả năng nhập liệu."
+          }
+        }
+      }
+    }
+  },
+  "version": "1.0"
+}

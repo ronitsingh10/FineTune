@@ -61,7 +61,7 @@ final class DeviceInspectorViewModel {
             refresh()
         } catch {
             Self.logger.debug("Sample rate write refused: \(String(describing: error))")
-            sampleRateError = "Couldn't change sample rate. The device refused."
+            sampleRateError = L10n.string("Couldn't change sample rate. The device refused.")
             scheduleErrorClear()
         }
     }
@@ -194,14 +194,14 @@ extension TransportType {
     /// lowercased `description` which is used in the existing header row.
     var displayLabel: String {
         switch self {
-        case .builtIn:     return "Built-in"
+        case .builtIn:     return L10n.string("Built-in")
         case .usb:         return "USB"
         case .bluetooth:   return "Bluetooth"
         case .bluetoothLE: return "Bluetooth LE"
         case .airPlay:     return "AirPlay"
         case .hdmi:        return "HDMI"
-        case .virtual:     return "Virtual"
-        default:           return "Other"
+        case .virtual:     return L10n.string("Virtual")
+        default:           return L10n.string("Other")
         }
     }
 }

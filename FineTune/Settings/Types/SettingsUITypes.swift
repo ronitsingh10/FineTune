@@ -4,6 +4,140 @@ import AppKit
 
 // MARK: - App-Wide Settings Enums
 
+enum AppLanguagePreference: String, Codable, CaseIterable, Identifiable, CustomStringConvertible {
+    case system
+    case arabicSaudiArabia = "ar-SA"
+    case bengaliBangladesh = "bn-BD"
+    case catalan = "ca"
+    case simplifiedChinese = "zh-Hans"
+    case traditionalChinese = "zh-Hant"
+    case croatian = "hr"
+    case czech = "cs"
+    case danish = "da"
+    case dutchNetherlands = "nl-NL"
+    case englishAustralia = "en-AU"
+    case englishCanada = "en-CA"
+    case englishUnitedKingdom = "en-GB"
+    case englishUnitedStates = "en-US"
+    case finnish = "fi"
+    case frenchFrance = "fr-FR"
+    case frenchCanada = "fr-CA"
+    case germanGermany = "de-DE"
+    case greek = "el"
+    case gujaratiIndia = "gu-IN"
+    case hebrew = "he"
+    case hindi = "hi"
+    case hungarian = "hu"
+    case indonesian = "id"
+    case italian = "it"
+    case japanese = "ja"
+    case kannadaIndia = "kn-IN"
+    case korean = "ko"
+    case malay = "ms"
+    case malayalamIndia = "ml-IN"
+    case marathiIndia = "mr-IN"
+    case norwegianBokmal = "nb"
+    case odiaIndia = "or-IN"
+    case polish = "pl"
+    case portugueseBrazil = "pt-BR"
+    case portuguesePortugal = "pt-PT"
+    case punjabiIndia = "pa-IN"
+    case romanian = "ro"
+    case russian = "ru"
+    case slovak = "sk"
+    case slovenianSlovenia = "sl-SI"
+    case spanishMexico = "es-MX"
+    case spanishSpain = "es-ES"
+    case swedish = "sv"
+    case tamilIndia = "ta-IN"
+    case teluguIndia = "te-IN"
+    case thai = "th"
+    case turkish = "tr"
+    case ukrainian = "uk"
+    case urduPakistan = "ur-PK"
+    case vietnamese = "vi"
+
+    var id: String { rawValue }
+
+    var description: String {
+        guard let localeIdentifier else { return L10n.string("System") }
+        return Locale.autoupdatingCurrent.localizedString(forIdentifier: localeIdentifier) ?? fallbackDisplayName
+    }
+
+    private var localeIdentifier: String? {
+        self == .system ? nil : rawValue
+    }
+
+    private var appleLanguages: [String]? {
+        localeIdentifier.map { [$0] }
+    }
+
+    private var fallbackDisplayName: String {
+        switch self {
+        case .system: return "System"
+        case .arabicSaudiArabia: return "Arabic (Saudi Arabia)"
+        case .bengaliBangladesh: return "Bengali (Bangladesh)"
+        case .catalan: return "Catalan"
+        case .simplifiedChinese: return "Chinese (Simplified)"
+        case .traditionalChinese: return "Chinese (Traditional)"
+        case .croatian: return "Croatian"
+        case .czech: return "Czech"
+        case .danish: return "Danish"
+        case .dutchNetherlands: return "Dutch (Netherlands)"
+        case .englishAustralia: return "English (Australia)"
+        case .englishCanada: return "English (Canada)"
+        case .englishUnitedKingdom: return "English (U.K.)"
+        case .englishUnitedStates: return "English (U.S.)"
+        case .finnish: return "Finnish"
+        case .frenchFrance: return "French (France)"
+        case .frenchCanada: return "French (Canada)"
+        case .germanGermany: return "German (Germany)"
+        case .greek: return "Greek"
+        case .gujaratiIndia: return "Gujarati (India)"
+        case .hebrew: return "Hebrew"
+        case .hindi: return "Hindi"
+        case .hungarian: return "Hungarian"
+        case .indonesian: return "Indonesian"
+        case .italian: return "Italian"
+        case .japanese: return "Japanese"
+        case .kannadaIndia: return "Kannada (India)"
+        case .korean: return "Korean"
+        case .malay: return "Malay"
+        case .malayalamIndia: return "Malayalam (India)"
+        case .marathiIndia: return "Marathi (India)"
+        case .norwegianBokmal: return "Norwegian Bokmål"
+        case .odiaIndia: return "Odia (India)"
+        case .polish: return "Polish"
+        case .portugueseBrazil: return "Portuguese (Brazil)"
+        case .portuguesePortugal: return "Portuguese (Portugal)"
+        case .punjabiIndia: return "Punjabi (India)"
+        case .romanian: return "Romanian"
+        case .russian: return "Russian"
+        case .slovak: return "Slovak"
+        case .slovenianSlovenia: return "Slovenian (Slovenia)"
+        case .spanishMexico: return "Spanish (Mexico)"
+        case .spanishSpain: return "Spanish (Spain)"
+        case .swedish: return "Swedish"
+        case .tamilIndia: return "Tamil (India)"
+        case .teluguIndia: return "Telugu (India)"
+        case .thai: return "Thai"
+        case .turkish: return "Turkish"
+        case .ukrainian: return "Ukrainian"
+        case .urduPakistan: return "Urdu (Pakistan)"
+        case .vietnamese: return "Vietnamese"
+        }
+    }
+
+    func apply(to defaults: UserDefaults = .standard) {
+        if let appleLanguages {
+            defaults.set(appleLanguages, forKey: "AppleLanguages")
+        } else {
+            defaults.removeObject(forKey: "AppleLanguages")
+        }
+        defaults.synchronize()
+    }
+}
+
 enum MenuBarIconStyle: String, Codable, CaseIterable, Identifiable {
     case `default` = "Default"
     case speaker = "Speaker"
@@ -11,6 +145,10 @@ enum MenuBarIconStyle: String, Codable, CaseIterable, Identifiable {
     case equalizer = "Equalizer"
 
     var id: String { rawValue }
+
+    var displayName: String {
+        L10n.string(rawValue)
+    }
 
     /// The icon name - either asset catalog name or SF Symbol
     var iconName: String {
@@ -38,6 +176,13 @@ enum HUDStyle: String, Codable, CaseIterable, Identifiable {
     case classic
 
     var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .tahoe: return L10n.string("Tahoe")
+        case .classic: return L10n.string("Classic")
+        }
+    }
 }
 
 // MARK: - Appearance Preference
@@ -53,9 +198,9 @@ enum AppearancePreference: String, Codable, CaseIterable, Identifiable, CustomSt
 
     var description: String {
         switch self {
-        case .system: return "System"
-        case .light: return "Light"
-        case .dark: return "Dark"
+        case .system: return L10n.string("System")
+        case .light: return L10n.string("Light")
+        case .dark: return L10n.string("Dark")
         }
     }
 }
@@ -85,9 +230,9 @@ enum MenuBarPopupSize: String, Codable, CaseIterable, Identifiable, CustomString
 
     var description: String {
         switch self {
-        case .compact: return "Compact"
-        case .comfortable: return "Comfortable"
-        case .spacious: return "Spacious"
+        case .compact: return L10n.string("Compact")
+        case .comfortable: return L10n.string("Comfortable")
+        case .spacious: return L10n.string("Spacious")
         }
     }
 }
@@ -147,10 +292,10 @@ enum VolumeHotkeyStep: String, Codable, CaseIterable, Identifiable, CustomString
 
     var description: String {
         switch self {
-        case .coarse:    return "Coarse (12.5%)"
-        case .normal:    return "Normal (6.25%)"
-        case .fine:      return "Fine (3.13%)"
-        case .extraFine: return "Extra-Fine (1.56%)"
+        case .coarse:    return L10n.string("Coarse (12.5%)")
+        case .normal:    return L10n.string("Normal (6.25%)")
+        case .fine:      return L10n.string("Fine (3.13%)")
+        case .extraFine: return L10n.string("Extra-Fine (1.56%)")
         }
     }
 }
