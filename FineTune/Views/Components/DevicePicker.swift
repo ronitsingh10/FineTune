@@ -54,7 +54,7 @@ struct DevicePicker: View {
 
         var name: String {
             switch self {
-            case .systemAudio: return "System Audio"
+            case .systemAudio: return L10n.string("System Audio")
             case .device(let device): return device.name
             }
         }
@@ -91,18 +91,18 @@ struct DevicePicker: View {
             if count == 1 {
                 return validMultiSelections[0].name
             }
-            return "\(count) devices"
+            return L10n.format("%lld devices", count)
         }
     }
 
     /// Text for single-mode display (also used as fallback for empty multi-mode)
     private var singleModeText: String {
         if isFollowingDefault {
-            return "System Audio"
+            return L10n.string("System Audio")
         } else if let device = devices.first(where: { $0.uid == selectedDeviceUID }) {
             return device.name
         }
-        return "Select"
+        return L10n.string("Select")
     }
 
     @ViewBuilder
@@ -502,13 +502,13 @@ private struct DevicePickerRow: View {
         switch item {
         case .systemAudio:
             VStack(alignment: .leading, spacing: 1) {
-                Text("System Audio")
+                Text(L10n.string("System Audio"))
                 if isDisabled {
-                    Text("Not available in multi mode")
+                    Text(L10n.string("Not available in multi mode"))
                         .font(DesignTokens.Typography.caption)
                         .foregroundStyle(DesignTokens.Colors.textQuaternary)
                 } else {
-                    Text("Follows macOS default")
+                    Text(L10n.string("Follows macOS default"))
                         .font(DesignTokens.Typography.caption)
                         .foregroundStyle(DesignTokens.Colors.textTertiary)
                 }
@@ -537,9 +537,9 @@ extension DevicePicker {
         case .multi:
             let valid = devices.filter { selectedDeviceUIDs.contains($0.uid) }
             switch valid.count {
-            case 0:  return "Multi"
-            case 1:  return "Multi · \(valid[0].name)"
-            default: return "Multi · \(valid.count) devices"
+            case 0:  return L10n.string("Multi")
+            case 1:  return L10n.format("Multi · %@", valid[0].name)
+            default: return L10n.format("Multi · %lld devices", valid.count)
             }
         }
     }

@@ -209,7 +209,7 @@ struct AutoEQSearchPanel: View {
         )
         .padding(DesignTokens.Spacing.sm)
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("No correction active. Search or pick a favorite below.")
+        .accessibilityLabel(L10n.string("No correction active. Search or pick a favorite below."))
     }
 
     // MARK: - Loading Placeholder
@@ -280,7 +280,7 @@ struct AutoEQSearchPanel: View {
                     .buttonStyle(.plain)
                     .onHover { starHoveredID = $0 ? id : nil }
                     .animation(DesignTokens.Animation.hover, value: isStarHovered)
-                    .accessibilityLabel(isFavorited ? "Remove from favorites" : "Add to favorites")
+                    .accessibilityLabel(L10n.string(isFavorited ? "Remove from favorites" : "Add to favorites"))
 
                     // Remove button
                     Button {
@@ -298,8 +298,8 @@ struct AutoEQSearchPanel: View {
                     }
                     .buttonStyle(.plain)
                     .whenHovered { hoveredID = $0 ? "_remove" : nil }
-                    .accessibilityLabel("Remove correction profile")
-                    .accessibilityHint("Returns to no correction state")
+                    .accessibilityLabel(L10n.string("Remove correction profile"))
+                    .accessibilityHint(L10n.string("Returns to no correction state"))
                 }
             }
 
@@ -322,7 +322,7 @@ struct AutoEQSearchPanel: View {
         .padding(.vertical, DesignTokens.Spacing.sm)
         .animation(.easeInOut(duration: 0.15), value: isCorrectionEnabled)
         .accessibilityElement(children: .contain)
-        .accessibilityLabel("\(name) correction profile")
+        .accessibilityLabel(L10n.format("%@ correction profile", name))
     }
 
     // MARK: - Mini Toggle
@@ -333,7 +333,7 @@ struct AutoEQSearchPanel: View {
         action: @escaping () -> Void
     ) -> some View {
         HStack(spacing: DesignTokens.Spacing.xs) {
-            Text(label)
+            Text(L10n.string(label))
                 .font(.system(size: 10))
                 .foregroundStyle(DesignTokens.Colors.autoEQToggleLabel)
 
@@ -347,8 +347,8 @@ struct AutoEQSearchPanel: View {
             .labelsHidden()
         }
         .accessibilityElement(children: .combine)
-        .accessibilityLabel(label)
-        .accessibilityValue(isOn ? "On" : "Off")
+        .accessibilityLabel(L10n.string(label))
+        .accessibilityValue(L10n.string(isOn ? "On" : "Off"))
     }
 
     // MARK: - Search Field
@@ -364,7 +364,7 @@ struct AutoEQSearchPanel: View {
                 .font(.system(size: 12))
                 .foregroundStyle(DesignTokens.Colors.textPrimary)
                 .focused($isSearchFocused)
-                .accessibilityLabel("Search headphones")
+                .accessibilityLabel(L10n.string("Search headphones"))
 
             if !searchText.isEmpty {
                 Button("Clear search", systemImage: "xmark.circle.fill") {
@@ -501,8 +501,8 @@ struct AutoEQSearchPanel: View {
         }
         .buttonStyle(.plain)
         .whenHovered { hoveredID = $0 ? "_import" : nil }
-        .accessibilityLabel("Import custom profile")
-        .accessibilityHint("Opens file picker for ParametricEQ.txt files")
+        .accessibilityLabel(L10n.string("Import custom profile"))
+        .accessibilityHint(L10n.string("Opens file picker for ParametricEQ.txt files"))
         .padding(.horizontal, DesignTokens.Spacing.xs)
         .padding(.bottom, DesignTokens.Spacing.xs)
     }
@@ -605,7 +605,7 @@ struct AutoEQSearchPanel: View {
         .accessibilityElement(children: .combine)
         .accessibilityLabel(entry.name)
         .accessibilityAddTraits(isSelected ? .isSelected : [])
-        .accessibilityHint("Apply this correction profile")
+        .accessibilityHint(L10n.string("Apply this correction profile"))
     }
 
     // MARK: - Star Button (browse zone rows)
@@ -634,7 +634,7 @@ struct AutoEQSearchPanel: View {
             .buttonStyle(.plain)
             .onHover { starHoveredID = $0 ? id : nil }
             .animation(DesignTokens.Animation.hover, value: isStarHovered)
-            .accessibilityLabel(isFavorited ? "Remove from favorites" : "Add to favorites")
+            .accessibilityLabel(L10n.string(isFavorited ? "Remove from favorites" : "Add to favorites"))
         }
     }
 
@@ -650,7 +650,7 @@ struct AutoEQSearchPanel: View {
                 onSelect(profile)
                 onDismiss()
             } else {
-                fetchError = "Failed to load \(entry.name)"
+                fetchError = L10n.format("Failed to load %@", entry.name)
                 Task {
                     try? await Task.sleep(for: .seconds(3))
                     if fetchError != nil { fetchError = nil }

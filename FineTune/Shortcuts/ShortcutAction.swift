@@ -14,10 +14,10 @@ enum ShortcutAction: String, CaseIterable, Codable, Sendable {
 
     var displayName: String {
         switch self {
-        case .togglePopup: "Toggle FineTune Popup"
-        case .targetAppVolumeUp: "App Volume Up"
-        case .targetAppVolumeDown: "App Volume Down"
-        case .targetAppMuteToggle: "App Mute"
+        case .togglePopup: L10n.string("Toggle FineTune Popup")
+        case .targetAppVolumeUp: L10n.string("App Volume Up")
+        case .targetAppVolumeDown: L10n.string("App Volume Down")
+        case .targetAppMuteToggle: L10n.string("App Mute")
         }
     }
 

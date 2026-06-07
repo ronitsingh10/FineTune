@@ -52,6 +52,7 @@ nonisolated struct AppSettings: Codable, Equatable {
 
     // Appearance
     var appearance: AppearancePreference = .system  // Follow system appearance, or lock light/dark
+    var languagePreference: AppLanguagePreference = .system  // Follow system language, or override per app
 
     // Popup
     var popupSize: MenuBarPopupSize = .comfortable  // Overall menu bar popup size and density
@@ -77,6 +78,7 @@ nonisolated struct AppSettings: Codable, Equatable {
         volumeHotkeyStep = try c.decodeIfPresent(VolumeHotkeyStep.self, forKey: .volumeHotkeyStep) ?? .normal
         customShortcuts = try c.decodeIfPresent([String: ShortcutCodable].self, forKey: .customShortcuts) ?? [:]
         appearance = try c.decodeIfPresent(AppearancePreference.self, forKey: .appearance) ?? .system
+        languagePreference = try c.decodeIfPresent(AppLanguagePreference.self, forKey: .languagePreference) ?? .system
         popupSize = try c.decodeIfPresent(MenuBarPopupSize.self, forKey: .popupSize) ?? .comfortable
     }
 }
@@ -778,6 +780,9 @@ final class SettingsManager {
         if newSettings.launchAtLogin != settings.appSettings.launchAtLogin {
             setLaunchAtLogin(newSettings.launchAtLogin)
         }
+        if newSettings.languagePreference != settings.appSettings.languagePreference {
+            newSettings.languagePreference.apply()
+        }
         settings.appSettings = newSettings
         scheduleSave()
     }
@@ -814,7 +819,11 @@ final class SettingsManager {
         settings.pinnedAppInfo.removeAll()
         settings.ignoredApps.removeAll()
         settings.ignoredAppInfo.removeAll()
+        let oldLanguagePreference = settings.appSettings.languagePreference
         settings.appSettings = AppSettings()
+        if oldLanguagePreference != .system {
+            settings.appSettings.languagePreference.apply()
+        }
         settings.systemSoundsFollowsDefault = true
         settings.lockedInputDeviceUID = nil
         settings.preferredInputDeviceUID = nil

@@ -28,7 +28,7 @@ struct AccessibilityPromptStrip: View {
                 .frame(width: 28, alignment: .center)
                 .contentTransition(.symbolEffect(.replace))
 
-            Text(message)
+            Text(L10n.string(message))
                 .font(DesignTokens.Typography.rowDescription)
                 .foregroundStyle(DesignTokens.Colors.textSecondary)
                 .lineLimit(2)
@@ -41,7 +41,7 @@ struct AccessibilityPromptStrip: View {
             } else {
                 Button(action: { accessibility.requestAccess() }) {
                     HStack(spacing: 3) {
-                        Text("Grant")
+                        Text(L10n.string("Grant"))
                         Image(systemName: "arrow.up.right.square")
                             .font(.system(size: 9, weight: .medium))
                     }
@@ -49,7 +49,7 @@ struct AccessibilityPromptStrip: View {
                     .foregroundStyle(DesignTokens.Colors.accentPrimary)
                 }
                 .buttonStyle(.plain)
-                .accessibilityHint("Registers FineTune in the Accessibility list and opens System Settings.")
+                .accessibilityHint(L10n.string("Registers FineTune in the Accessibility list and opens System Settings."))
             }
         }
         .padding(.horizontal, DesignTokens.Spacing.md)
@@ -70,7 +70,7 @@ struct AccessibilityPromptStrip: View {
             Circle()
                 .fill(DesignTokens.Colors.vuGreen)
                 .frame(width: 5, height: 5)
-            Text("Granted")
+            Text(L10n.string("Granted"))
                 .font(.system(size: 9, weight: .semibold))
                 .foregroundStyle(DesignTokens.Colors.textSecondary)
         }

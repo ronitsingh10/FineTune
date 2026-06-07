@@ -272,7 +272,7 @@ struct MenuBarPopupView: View {
         )
         .contentShape(Rectangle())
         .animation(.spring(response: 0.3, dampingFraction: 0.75), value: isEditingDevicePriority)
-        .help(isEditingDevicePriority ? "Done reordering" : "Reorder devices")
+        .help(L10n.string(isEditingDevicePriority ? "Done reordering" : "Reorder devices"))
     }
 
     // MARK: - Settings Button
@@ -360,8 +360,8 @@ struct MenuBarPopupView: View {
                         isSupportHovered = hovering
                     }
                 }
-                .accessibilityLabel("Donate to FineTune")
-                .help("Donate to FineTune")
+                .accessibilityLabel(L10n.string("Donate to FineTune"))
+                .help(L10n.string("Donate to FineTune"))
 
                 Spacer()
 
@@ -378,8 +378,8 @@ struct MenuBarPopupView: View {
                 .font(DesignTokens.Typography.caption)
                 .foregroundStyle(DesignTokens.Colors.textSecondary)
                 .glassButtonStyle()
-                .accessibilityLabel("Quit FineTune")
-                .help("Quit FineTune (⌘Q)")
+                .accessibilityLabel(L10n.string("Quit FineTune"))
+                .help(L10n.string("Quit FineTune (⌘Q)"))
             }
         }
     }
@@ -390,7 +390,7 @@ struct MenuBarPopupView: View {
     private var defaultOutputDeviceName: String {
         guard let uid = deviceVolumeMonitor.defaultDeviceUID,
               let device = sortedDevices.first(where: { $0.uid == uid }) else {
-            return "No Output"
+            return L10n.string("No Output")
         }
         return device.name
     }
@@ -399,7 +399,7 @@ struct MenuBarPopupView: View {
     private var defaultInputDeviceName: String {
         guard let uid = deviceVolumeMonitor.defaultInputDeviceUID,
               let device = sortedInputDevices.first(where: { $0.uid == uid }) else {
-            return "No Input"
+            return L10n.string("No Input")
         }
         return device.name
     }
@@ -461,7 +461,7 @@ struct MenuBarPopupView: View {
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .help("Output Devices")
+            .help(L10n.string("Output Devices"))
 
             // Input (mic) button
             Button {
@@ -484,7 +484,7 @@ struct MenuBarPopupView: View {
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .help("Input Devices")
+            .help(L10n.string("Input Devices"))
         }
         .padding(3)
         .background(
@@ -1161,7 +1161,7 @@ struct MenuBarPopupView: View {
         panel.allowedContentTypes = [UTType.plainText]
         panel.allowsMultipleSelection = false
         panel.canChooseDirectories = false
-        panel.message = "Select an AutoEQ ParametricEQ.txt file"
+        panel.message = L10n.string("Select an AutoEQ ParametricEQ.txt file")
         panel.begin { response in
             guard response == .OK, let url = panel.url else { return }
             let name = url.deletingPathExtension().lastPathComponent
@@ -1170,7 +1170,7 @@ struct MenuBarPopupView: View {
                     audioEngine.setAutoEQProfile(for: deviceUID, profileID: profile.id)
                     autoEQImportError = nil
                 } else {
-                    autoEQImportError = "Could not read profile — check file format"
+                    autoEQImportError = L10n.string("Could not read profile — check file format")
                     importErrorClearTask?.cancel()
                     importErrorClearTask = Task {
                         try? await Task.sleep(for: .seconds(3))

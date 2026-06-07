@@ -74,7 +74,7 @@ struct DeviceEditRow<ExpandedContent: View>: View {
                     .help(device.uid)
 
                 if isDefault {
-                    Text("DEFAULT")
+                    Text(L10n.string("DEFAULT"))
                         .font(.system(size: 9, weight: .semibold))
                         .foregroundStyle(DesignTokens.Colors.textSecondary)
                         .padding(.horizontal, 6)
@@ -90,7 +90,7 @@ struct DeviceEditRow<ExpandedContent: View>: View {
             .contentShape(Rectangle())
             .onTapGesture { onToggleExpand() }
             .accessibilityAddTraits(.isButton)
-            .accessibilityLabel(isExpanded ? "Collapse device details" : "Expand device details")
+            .accessibilityLabel(L10n.string(isExpanded ? "Collapse device details" : "Expand device details"))
 
             hideToggleButton
 
@@ -121,11 +121,11 @@ struct DeviceEditRow<ExpandedContent: View>: View {
         }
         .buttonStyle(.plain)
         .disabled(isDefault)
-        .help(isDefault
+        .help(L10n.string(isDefault
             ? "Cannot hide the default device"
             : (isHidden ? "Show in main view" : "Hide from main view")
-        )
-        .accessibilityLabel(isHidden ? "Show in main view" : "Hide from main view")
+        ))
+        .accessibilityLabel(L10n.string(isHidden ? "Show in main view" : "Hide from main view"))
     }
 
     private var infoButton: some View {
@@ -152,8 +152,8 @@ struct DeviceEditRow<ExpandedContent: View>: View {
         }
         .buttonStyle(.plain)
         .onHover { isInfoButtonHovered = $0 }
-        .help(isExpanded ? "Close device inspector" : "Device inspector")
-        .accessibilityLabel(isExpanded ? "Close device inspector" : "Open device inspector")
+        .help(L10n.string(isExpanded ? "Close device inspector" : "Device inspector"))
+        .accessibilityLabel(L10n.string(isExpanded ? "Close device inspector" : "Open device inspector"))
         .animation(.spring(response: 0.3, dampingFraction: 0.75), value: isExpanded)
         .animation(DesignTokens.Animation.hover, value: isInfoButtonHovered)
     }
@@ -228,7 +228,7 @@ private struct EditablePriority: View {
         .contentShape(Rectangle())
         .onTapGesture { if !isEditing { startEditing() } }
         .accessibilityAddTraits(.isButton)
-        .accessibilityLabel("Edit priority position")
+        .accessibilityLabel(L10n.string("Edit priority position"))
         .onHover { hovering in
             isHovered = hovering
             if hovering {
