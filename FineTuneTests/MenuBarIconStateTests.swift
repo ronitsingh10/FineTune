@@ -121,6 +121,11 @@ struct MenuBarIconStateImageTests {
     func deviceFlashImage() {
         #expect(MenuBarIconState.deviceFlash(symbol: "airpodsmax").image == .systemSymbol("airpodsmax"))
     }
+
+    @Test("device wraps an SF Symbol")
+    func deviceImage() {
+        #expect(MenuBarIconState.device(symbol: "airpodspro").image == .systemSymbol("airpodspro"))
+    }
 }
 
 // MARK: - Style-dependent baseline
@@ -187,6 +192,20 @@ struct NonSpeakerBaselineTests {
         #expect(MenuBarIconState.baseline(style: .waveform, volume: 0.5, muted: true) == expected)
     }
 
+    @Test(".device is supplied device symbol regardless of volume")
+    func deviceSymbol() {
+        let expected = MenuBarIconState.device(symbol: "airpodspro")
+        for v in [Float(0.0), 0.5, 1.0] {
+            #expect(MenuBarIconState.baseline(style: .device, volume: v, muted: false, deviceSymbol: "airpodspro") == expected, "volume=\(v)")
+        }
+    }
+
+    @Test(".device ignores mute")
+    func deviceIgnoresMute() {
+        let expected = MenuBarIconState.device(symbol: "homepod")
+        #expect(MenuBarIconState.baseline(style: .device, volume: 0.5, muted: true, deviceSymbol: "homepod") == expected)
+    }
+
     @Test(".equalizer is slider.vertical.3 regardless of volume")
     func equalizerSymbol() {
         let expected = MenuBarIconState.staticBaseline(.systemSymbol("slider.vertical.3"))
@@ -225,5 +244,11 @@ struct StyleIconNameConsistencyTests {
     func equalizerMatches() {
         let baseline = MenuBarIconState.baseline(style: .equalizer, volume: 0.5, muted: false)
         #expect(baseline.image == .systemSymbol(MenuBarIconStyle.equalizer.iconName))
+    }
+
+    @Test(".device baseline defaults to MenuBarIconStyle.device.iconName when no symbol supplied")
+    func deviceMatchesDefaultIconName() {
+        let baseline = MenuBarIconState.baseline(style: .device, volume: 0.5, muted: false)
+        #expect(baseline.image == .systemSymbol(MenuBarIconStyle.device.iconName))
     }
 }
