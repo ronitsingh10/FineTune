@@ -10,7 +10,7 @@ import os
 private nonisolated(unsafe) var gDeviceSlots: UnsafeMutablePointer<AudioObjectID>?
 private nonisolated(unsafe) var gDeviceCount: Int32 = 0
 private nonisolated(unsafe) var gDeviceLock = os_unfair_lock()
-private let gMaxDeviceSlots = 64
+private nonisolated let gMaxDeviceSlots = 64
 
 // MARK: - Crash Signal Handler
 
@@ -20,7 +20,7 @@ private let gMaxDeviceSlots = 64
 /// ASYNC-SIGNAL-SAFETY: AudioHardwareDestroyAggregateDevice is a Mach IPC call
 /// to coreaudiod and doesn't depend on in-process heap state. The fixed-size C
 /// buffer avoids any Swift or libc heap operations.
-private func crashSignalHandler(_ sig: Int32) {
+private nonisolated func crashSignalHandler(_ sig: Int32) {
     // Reset to default FIRST to prevent infinite recursion if cleanup itself crashes
     signal(sig, SIG_DFL)
 
@@ -38,7 +38,7 @@ private func crashSignalHandler(_ sig: Int32) {
     raise(sig)
 }
 
-private let logger = Logger(subsystem: "com.finetuneapp.FineTune", category: "CrashGuard")
+private nonisolated let logger = Logger(subsystem: "com.finetuneapp.FineTune", category: "CrashGuard")
 
 // MARK: - Public API
 
@@ -47,7 +47,7 @@ private let logger = Logger(subsystem: "com.finetuneapp.FineTune", category: "Cr
 ///
 /// Uses a fixed-size C buffer (not Swift collections) so the signal handler
 /// only touches async-signal-safe memory.
-enum CrashGuard {
+nonisolated enum CrashGuard {
     /// Allocates the tracking buffer and installs crash signal handlers.
     /// Call once on app startup, before creating any taps.
     static func install() {

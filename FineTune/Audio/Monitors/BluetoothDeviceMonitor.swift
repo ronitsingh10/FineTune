@@ -36,7 +36,7 @@ final class BluetoothDeviceMonitor {
     /// Dedicated serial queue for all IOBluetooth IPC.
     /// Serializes calls to avoid concurrent Mach port access and provides a stable
     /// thread context (unlike Task.detached which uses the cooperative thread pool).
-    private static let btQueue = DispatchQueue(label: "com.finetuneapp.bluetooth")
+    private nonisolated static let btQueue = DispatchQueue(label: "com.finetuneapp.bluetooth")
 
     /// Pending timeout tasks keyed by MAC address.
     private var timeoutTasks: [String: Task<Void, Never>] = [:]
@@ -51,13 +51,12 @@ final class BluetoothDeviceMonitor {
 
     // MARK: - A2DP / HFP SDP UUIDs
 
-    private static let a2dpSinkUUID = IOBluetoothSDPUUID(uuid16: 0x110B)!
-    private static let hfpUUID = IOBluetoothSDPUUID(uuid16: 0x111E)!
+    private nonisolated(unsafe) static let a2dpSinkUUID = IOBluetoothSDPUUID(uuid16: 0x110B)!
+    private nonisolated(unsafe) static let hfpUUID = IOBluetoothSDPUUID(uuid16: 0x111E)!
 
-    /// Observers for Bluetooth power state change notifications.
-    /// nonisolated(unsafe) so deinit can remove them.
-    private nonisolated(unsafe) var powerOnObserver: NSObjectProtocol?
-    private nonisolated(unsafe) var powerOffObserver: NSObjectProtocol?
+    // Read from the nonisolated deinit to call removeObserver.
+    @ObservationIgnored private nonisolated(unsafe) var powerOnObserver: NSObjectProtocol?
+    @ObservationIgnored private nonisolated(unsafe) var powerOffObserver: NSObjectProtocol?
 
     // MARK: - Lifecycle
 
@@ -72,7 +71,9 @@ final class BluetoothDeviceMonitor {
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            self?.refresh()
+            MainActor.assumeIsolated {
+                self?.refresh()
+            }
         }
 
         powerOffObserver = NotificationCenter.default.addObserver(
@@ -80,7 +81,9 @@ final class BluetoothDeviceMonitor {
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            self?.refresh()
+            MainActor.assumeIsolated {
+                self?.refresh()
+            }
         }
 
         refresh()

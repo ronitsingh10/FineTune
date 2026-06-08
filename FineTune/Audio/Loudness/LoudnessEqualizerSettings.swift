@@ -1,4 +1,4 @@
-struct LoudnessEqualizerSettings: Codable, Equatable, Sendable {
+nonisolated struct LoudnessEqualizerSettings: Codable, Equatable, Sendable {
     /// Static input gain before AGC analysis.
     var driveDb: Float = 24.0
     /// Target output level for average loudness.

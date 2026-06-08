@@ -4,6 +4,7 @@ import Combine
 import Sparkle
 
 /// Manages app updates via Sparkle
+@MainActor
 final class UpdateManager: NSObject, ObservableObject {
     private let updaterController: SPUStandardUpdaterController
 

@@ -9,6 +9,7 @@ import AppKit
 @testable import FineTune
 
 @Suite("AppearancePreference — Resolution helpers")
+@MainActor
 struct AppearancePreferenceMappingTests {
 
     @Test("system resolves to a concrete ColorScheme matching live system appearance")

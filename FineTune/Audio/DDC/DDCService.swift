@@ -19,10 +19,12 @@ enum IOAVServiceLoader {
     typealias ReadI2CFn = @convention(c) (CFTypeRef, UInt32, UInt32, UnsafeMutablePointer<UInt8>, UInt32) -> IOReturn
     typealias WriteI2CFn = @convention(c) (CFTypeRef, UInt32, UInt32, UnsafePointer<UInt8>, UInt32) -> IOReturn
 
-    private static var createFn: CreateWithServiceFn?
-    private static var readFn: ReadI2CFn?
-    private static var writeFn: WriteI2CFn?
-    private static var didLoad = false
+    // Mutated only from ensureLoaded() on the ddcQueue serial dispatch path,
+    // read by the same serialized callers; safe-by-convention single-writer.
+    private nonisolated(unsafe) static var createFn: CreateWithServiceFn?
+    private nonisolated(unsafe) static var readFn: ReadI2CFn?
+    private nonisolated(unsafe) static var writeFn: WriteI2CFn?
+    private nonisolated(unsafe) static var didLoad = false
 
     private static let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "FineTune", category: "DDCService")
 

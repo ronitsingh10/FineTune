@@ -18,7 +18,7 @@ enum CrossfadePhase: Int, Equatable {
 ///
 /// **Memory ordering:** Uses aligned Float/Int reads which are atomic on Apple platforms
 /// (ARM64/x86-64). `OSMemoryBarrier()` ensures cross-core visibility at phase transitions.
-struct CrossfadeState: @unchecked Sendable {
+nonisolated struct CrossfadeState: @unchecked Sendable {
     /// Current crossfade progress (0 = full primary, 1 = full secondary)
     nonisolated(unsafe) var progress: Float = 0
 

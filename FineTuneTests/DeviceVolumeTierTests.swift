@@ -419,3 +419,46 @@ struct SettingsManagerDeviceVolumeTierOverrideRoundTrip {
     }
 }
 
+// MARK: - storedVolume tier-aware silence floor (issue #295)
+
+@Suite("DeviceVolumeMonitor.storedVolume — tier-aware silence floor")
+struct DeviceVolumeStoredVolumeTests {
+    @Test("Hardware/DDC floor sub-1% scalar to true silence")
+    func hardwareDdcFloorBelowOnePercent() {
+        #expect(DeviceVolumeMonitor.storedVolume(0.005, tier: .hardware) == 0)
+        #expect(DeviceVolumeMonitor.storedVolume(0.009, tier: .ddc) == 0)
+        #expect(DeviceVolumeMonitor.storedVolume(0.0039, tier: .hardware) == 0)
+    }
+
+    @Test("Hardware/DDC keep values at or above the 1% floor")
+    func hardwareDdcKeepAboveFloor() {
+        #expect(DeviceVolumeMonitor.storedVolume(0.01, tier: .hardware) == 0.01)
+        #expect(DeviceVolumeMonitor.storedVolume(0.5, tier: .ddc) == 0.5)
+    }
+
+    @Test("Software tier is never floored — preserves sub-1% gain (issue #295)")
+    func softwareNeverFloored() {
+        #expect(DeviceVolumeMonitor.storedVolume(0.0039, tier: .software) == 0.0039)
+        #expect(DeviceVolumeMonitor.storedVolume(0.0001, tier: .software) == 0.0001)
+        #expect(DeviceVolumeMonitor.storedVolume(0.5, tier: .software) == 0.5)
+        #expect(DeviceVolumeMonitor.storedVolume(0.0, tier: .software) == 0.0)
+    }
+
+    /// Issue #295: pre-fix the < 0.01 floor zeroed software gain, so each step re-derived
+    /// a 0 slider and froze. Mirrors `handleCore`'s slider-space step + `storedVolume`.
+    @Test("Software volume steps up out of silence instead of freezing at 0",
+          arguments: [VolumeHotkeyStep.coarse, .normal, .fine, .extraFine])
+    func softwareStepRecoversFromZero(step: VolumeHotkeyStep) {
+        let tier = VolumeControlTier.software
+        let delta = step.sliderDelta
+        var stored: Float = 0
+
+        let currentSlider = VolumeMapping.sliderFraction(forSystemGain: stored, tier: tier)
+        let nextSlider = min(1.0, currentSlider + delta)
+        let newVolume = VolumeMapping.systemGain(forSliderFraction: nextSlider, tier: tier)
+        stored = DeviceVolumeMonitor.storedVolume(newVolume, tier: tier)
+
+        #expect(stored > 0, "\(step) software step-up stuck at silence — issue #295 regression")
+    }
+}
+

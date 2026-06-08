@@ -78,7 +78,7 @@ private final class TestABL {
         return Int(buf.mDataByteSize) / MemoryLayout<Float>.size
     }
 
-    deinit {
+    isolated deinit {
         for p in dataPointers { p.deallocate() }
         pointer.deallocate()
     }
@@ -98,6 +98,7 @@ private func processWithDefaults(
     output: TestABL,
     targetVol: Float = 1.0,
     crossfadeMultiplier: Float = 1.0,
+    outputGateMultiplier: Float = 1.0,
     rampCoefficient: Float = 1.0,
     preferredStereoLeft: Int = 0,
     preferredStereoRight: Int = 1,
@@ -113,6 +114,7 @@ private func processWithDefaults(
         outputBuffers: output.bufferList,
         targetVol: targetVol,
         crossfadeMultiplier: crossfadeMultiplier,
+        outputGateMultiplier: outputGateMultiplier,
         rampCoefficient: rampCoefficient,
         preferredStereoLeft: preferredStereoLeft,
         preferredStereoRight: preferredStereoRight,

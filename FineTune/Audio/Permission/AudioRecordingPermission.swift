@@ -19,7 +19,7 @@ enum AudioCapturePermissionStatus {
 @MainActor
 final class AudioRecordingPermission {
 
-    internal(set) var status: AudioCapturePermissionStatus = .unknown
+    var status: AudioCapturePermissionStatus = .unknown
 
     init() {
         refreshStatus()
@@ -67,7 +67,7 @@ final class AudioRecordingPermission {
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            Task { @MainActor in
+            MainActor.assumeIsolated {
                 self?.refreshStatus()
             }
         }

@@ -51,8 +51,10 @@ final class WindowAppearanceTrackerView: NSView {
         super.viewDidMoveToWindow()
         applyAppearance()
         appearanceObservation = NSApp.observe(\.effectiveAppearance, options: [.new]) { [weak self] _, _ in
-            guard let self, self.desiredAppearance == nil else { return }
-            self.applyAppearance()
+            MainActor.assumeIsolated {
+                guard let self, self.desiredAppearance == nil else { return }
+                self.applyAppearance()
+            }
         }
     }
 }

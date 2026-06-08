@@ -6,7 +6,7 @@ import AudioToolbox
 /// Future additions if needed:
 /// - `playthrough` (kAudioDevicePropertyScopePlayThrough)
 /// - `wildcard` (kAudioObjectPropertyScopeWildcard)
-enum AudioScope: Sendable {
+nonisolated enum AudioScope: Sendable {
     case global
     case input
     case output

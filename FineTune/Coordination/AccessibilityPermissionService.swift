@@ -87,9 +87,10 @@ final class AccessibilityPermissionService: AccessibilityTrustProviding {
     /// as a side effect — the only supported pre-population path.
     @discardableResult
     func promptForTrust() -> Bool {
-        // Get-rule CFString; `.takeRetainedValue()` would over-release a framework singleton.
-        let key = kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String
-        let options = [key: true] as CFDictionary
+        // Literal value of kAXTrustedCheckOptionPrompt; the framework symbol is a
+        // non-concurrency-safe global var in Swift 6 and the constant has been
+        // "AXTrustedCheckOptionPrompt" since macOS 10.9.
+        let options = ["AXTrustedCheckOptionPrompt": true] as CFDictionary
         return AXIsProcessTrustedWithOptions(options)
     }
 

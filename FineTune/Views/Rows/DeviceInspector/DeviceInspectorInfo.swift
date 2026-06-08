@@ -6,7 +6,7 @@ import Foundation
 // MARK: - DeviceInspectorInfo
 
 /// Snapshot of device facts displayed in the inspector pane.
-struct DeviceInspectorInfo: Equatable {
+nonisolated struct DeviceInspectorInfo: Equatable {
     let transportLabel: String
     let sampleRate: Double
     let availableSampleRates: [Double]
@@ -28,7 +28,7 @@ struct DeviceInspectorInfo: Equatable {
 
 // MARK: - Formatters
 
-extension DeviceInspectorInfo {
+nonisolated extension DeviceInspectorInfo {
     /// "48 kHz" for integer kilohertz, "44.1 kHz" otherwise.
     static func formatSampleRate(_ rate: Double) -> String {
         guard rate > 0 else { return "—" }
@@ -63,7 +63,7 @@ extension DeviceInspectorInfo {
 
 /// Pure layout function: given a `DeviceInspectorInfo`, returns the ordered
 /// list of rows to render. Enables structural tests without view introspection.
-struct InfoGridLayout: Equatable {
+nonisolated struct InfoGridLayout: Equatable {
     enum Row: Equatable {
         case transport(String)
         case sampleRate(display: String, isPicker: Bool, options: [Double])

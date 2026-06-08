@@ -4,7 +4,7 @@ import AudioToolbox
 
 // MARK: - Device Classification
 
-extension AudioDeviceID {
+nonisolated extension AudioDeviceID {
     func isAggregateDevice() -> Bool {
         var address = AudioObjectPropertyAddress(
             mSelector: kAudioObjectPropertyClass,
@@ -20,6 +20,11 @@ extension AudioDeviceID {
 
     func isVirtualDevice() -> Bool {
         readTransportType() == .virtual
+    }
+
+    func isBluetoothDevice() -> Bool {
+        let t = readTransportType()
+        return t == .bluetooth || t == .bluetoothLE
     }
 
     func isHidden() -> Bool {
