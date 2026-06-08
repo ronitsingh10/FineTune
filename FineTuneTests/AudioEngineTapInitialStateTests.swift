@@ -20,7 +20,7 @@ final class RecordingProcessTapController: ProcessTapControlling {
         case updateEQSettings(EQSettings)
         case updateAutoEQProfile(profileID: String?)
         case setAutoEQPreampEnabled(Bool)
-        case updateLoudnessCompensation(volume: Float, enabled: Bool)
+        case updateLoudnessCompensation(volume: Float, enabled: Bool, intensity: Float)
         case updateLoudnessEqualization(LoudnessEqualizerSettings)
         case invalidate
     }
@@ -84,8 +84,8 @@ final class RecordingProcessTapController: ProcessTapControlling {
         events.append(.setAutoEQPreampEnabled(enabled))
     }
 
-    func updateLoudnessCompensation(volume: Float, enabled: Bool) {
-        events.append(.updateLoudnessCompensation(volume: volume, enabled: enabled))
+    func updateLoudnessCompensation(volume: Float, enabled: Bool, intensity: Float) {
+        events.append(.updateLoudnessCompensation(volume: volume, enabled: enabled, intensity: intensity))
     }
 
     func updateLoudnessEqualization(_ settings: LoudnessEqualizerSettings) {
@@ -104,6 +104,7 @@ final class RecordingProcessTapController: ProcessTapControlling {
     func isHealthCheckEligible(minActiveSeconds: Double) -> Bool { false }
 
     func refreshTapSource(_ preferredDeviceUID: String?) async throws {}
+    func recreateForOutputRateChange() async throws {}
 }
 
 // MARK: - Process monitor stub
