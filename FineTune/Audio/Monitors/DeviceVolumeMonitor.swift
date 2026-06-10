@@ -342,11 +342,22 @@ final class DeviceVolumeMonitor: DeviceVolumeProviding {
         defaultInputDeviceUID = nil
     }
 
-    /// Threshold clamp: sub-1% scalar → true silence.
-    /// On audio-tapered devices, scalar 0.01 ≈ -99 dB (empirically measured on built-in output).
-    /// On software-volume devices, 0.01 gain = -40 dB (linear). Either way, inaudible.
+    /// Sub-1% floor for hardware/DDC scalar readbacks → true silence (scalar 0.01 ≈ -99 dB,
+    /// empirically measured on built-in output). Software writes use `storedVolume` instead.
     private func clampedVolume(_ volume: Float) -> Float {
         volume < 0.01 ? 0 : volume
+    }
+
+    /// Software gain rides the x² curve (`VolumeMapping`), so sub-1% is the bottom ~10%
+    /// of slider travel; flooring it would trap that range, since the step path re-derives
+    /// the slider from the stored gain. Hardware/DDC scalars are ~linear — safe to floor.
+    nonisolated static func storedVolume(_ volume: Float, tier: VolumeControlTier) -> Float {
+        switch tier {
+        case .software:
+            return volume
+        case .hardware, .ddc:
+            return volume < 0.01 ? 0 : volume
+        }
     }
 
     /// Sets the volume for a specific device
@@ -356,8 +367,9 @@ final class DeviceVolumeMonitor: DeviceVolumeProviding {
             return
         }
 
-        let clamped = clampedVolume(volume)
-        switch outputVolumeBackend(for: deviceID) {
+        let backend = outputVolumeBackend(for: deviceID)
+        let clamped = Self.storedVolume(volume, tier: backend)
+        switch backend {
         case .hardware:
             let success = deviceID.setOutputVolumeScalar(clamped)
             if success {
@@ -953,7 +965,7 @@ final class DeviceVolumeMonitor: DeviceVolumeProviding {
             let muted = settingsManager.getSoftwareDeviceMuteState(for: device.uid)
             let defaultVolume: Float = muted ? 0 : 1.0
             let visibleVolume = settingsManager.getSoftwareDeviceVolume(for: device.uid) ?? defaultVolume
-            volumes[deviceID] = clampedVolume(visibleVolume)
+            volumes[deviceID] = Self.storedVolume(visibleVolume, tier: backend)
             muteStates[deviceID] = muted
             return
         }
@@ -1029,21 +1041,21 @@ final class DeviceVolumeMonitor: DeviceVolumeProviding {
     private func startObservingDeviceList() {
         guard !isObservingDeviceList else { return }
         isObservingDeviceList = true
+        subscribeOutputDeviceListObservation()
+    }
 
-        func observe() {
-            guard isObservingDeviceList else { return }
-            withObservationTracking {
-                _ = self.deviceMonitor.outputDevices
-            } onChange: { [weak self] in
-                Task { @MainActor [weak self] in
-                    guard let self, self.isObservingDeviceList else { return }
-                    self.logger.debug("Device list changed, refreshing volume listeners")
-                    self.refreshDeviceListeners()
-                    observe()
-                }
+    private func subscribeOutputDeviceListObservation() {
+        guard isObservingDeviceList else { return }
+        withObservationTracking {
+            _ = self.deviceMonitor.outputDevices
+        } onChange: { [weak self] in
+            Task { @MainActor [weak self] in
+                guard let self, self.isObservingDeviceList else { return }
+                self.logger.debug("Device list changed, refreshing volume listeners")
+                self.refreshDeviceListeners()
+                self.subscribeOutputDeviceListObservation()
             }
         }
-        observe()
     }
 
     // MARK: - Input Device Private Methods
@@ -1223,21 +1235,21 @@ final class DeviceVolumeMonitor: DeviceVolumeProviding {
     private func startObservingInputDeviceList() {
         guard !isObservingInputDeviceList else { return }
         isObservingInputDeviceList = true
+        subscribeInputDeviceListObservation()
+    }
 
-        func observe() {
-            guard isObservingInputDeviceList else { return }
-            withObservationTracking {
-                _ = self.deviceMonitor.inputDevices
-            } onChange: { [weak self] in
-                Task { @MainActor [weak self] in
-                    guard let self, self.isObservingInputDeviceList else { return }
-                    self.logger.debug("Input device list changed, refreshing input volume listeners")
-                    self.refreshInputDeviceListeners()
-                    observe()
-                }
+    private func subscribeInputDeviceListObservation() {
+        guard isObservingInputDeviceList else { return }
+        withObservationTracking {
+            _ = self.deviceMonitor.inputDevices
+        } onChange: { [weak self] in
+            Task { @MainActor [weak self] in
+                guard let self, self.isObservingInputDeviceList else { return }
+                self.logger.debug("Input device list changed, refreshing input volume listeners")
+                self.refreshInputDeviceListeners()
+                self.subscribeInputDeviceListObservation()
             }
         }
-        observe()
     }
 
     // MARK: - Bluetooth Confirmation Tasks

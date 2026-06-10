@@ -56,8 +56,10 @@ final class WindowTitleTrackerView: NSView {
             window.title = desiredTitle
         }
         observation = window.observe(\.title, options: [.new]) { [weak self] window, _ in
-            guard let self, window.title != self.desiredTitle else { return }
-            window.title = self.desiredTitle
+            MainActor.assumeIsolated {
+                guard let self, window.title != self.desiredTitle else { return }
+                window.title = self.desiredTitle
+            }
         }
     }
 }

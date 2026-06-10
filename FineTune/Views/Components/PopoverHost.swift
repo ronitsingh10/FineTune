@@ -55,6 +55,7 @@ struct PopoverHost<Content: View>: NSViewRepresentable {
         Coordinator(isPresented: $isPresented)
     }
 
+    @MainActor
     class Coordinator: NSObject {
         @Binding var isPresented: Bool
         var panel: NSPanel?
@@ -153,7 +154,9 @@ struct PopoverHost<Content: View>: NSViewRepresentable {
                 object: nil,
                 queue: .main
             ) { [weak self] _ in
-                self?.dismissPanel(reKeyParent: false)
+                MainActor.assumeIsolated {
+                    self?.dismissPanel(reKeyParent: false)
+                }
             }
         }
 
@@ -219,7 +222,7 @@ struct PopoverHost<Content: View>: NSViewRepresentable {
             }
         }
 
-        deinit {
+        isolated deinit {
             if let monitor = localEventMonitor {
                 NSEvent.removeMonitor(monitor)
             }

@@ -24,8 +24,13 @@ __Snapshots__/
 # macOS
 .DS_Store
 *.swp
+# Vendored CoreAudio reference material (Apple SDK headers + mixed-license clones — not redistributable)
+reference/
+
 # Local dev tooling
 .mcp.json
 .xcodebuildmcp/
 launch-team.sh
 *.profraw
+.playwright-mcp/
+scripts/spikes/

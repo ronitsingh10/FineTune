@@ -8,7 +8,7 @@ import KeyboardShortcuts
 /// `KeyboardShortcuts.Shortcut` so `settings.json` does not depend on the
 /// library's internal `Codable` shape — if KeyboardShortcuts ever changes its
 /// own `Codable` representation, our settings file remains compatible.
-struct ShortcutCodable: Codable, Equatable, Hashable, Sendable {
+nonisolated struct ShortcutCodable: Codable, Equatable, Hashable, Sendable {
     var keyCode: Int
     var modifiers: UInt
 

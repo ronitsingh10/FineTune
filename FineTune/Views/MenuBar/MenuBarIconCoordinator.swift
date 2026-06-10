@@ -10,7 +10,7 @@ import Observation
 import os
 
 @MainActor
-final class MenuBarIconCoordinator {
+final class MenuBarIconCoordinator: MediaKeyIconFlashing {
     private let deviceVolumeMonitor: DeviceVolumeMonitor
     private let settings: SettingsManager
     private let logger = Logger(subsystem: "com.finetuneapp.FineTune", category: "MenuBarIconCoordinator")
@@ -129,7 +129,7 @@ final class MenuBarIconCoordinator {
             // pre-change values inside this closure. Re-register synchronously so the
             // next mutation isn't dropped, then defer apply() to a Task so it reads
             // committed (post-setter) values.
-            MainActor.assumeIsolated {
+            MainActor.assumeIsolated { [weak self] in
                 self?.scheduleApplyTracking()
             }
             Task { @MainActor [weak self] in
@@ -145,7 +145,7 @@ final class MenuBarIconCoordinator {
             // See scheduleApplyTracking — deferred read so flashDevice sees the NEW
             // defaultDeviceID, not the pre-change value. Otherwise the flash shows
             // the old device's icon (e.g. AirPods while we just switched to MacBook).
-            MainActor.assumeIsolated {
+            MainActor.assumeIsolated { [weak self] in
                 self?.scheduleDeviceChangeTracking()
             }
             Task { @MainActor [weak self] in

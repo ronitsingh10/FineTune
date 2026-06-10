@@ -4,6 +4,20 @@ import AudioToolbox
 import CoreGraphics
 import os
 
+/// View-layer collaborators MediaKeyMonitor drives. Abstracting them keeps the audio
+/// layer free of concrete view types (HUDWindowController, MenuBarIconCoordinator);
+/// the view layer supplies the conformances.
+@MainActor
+protocol MediaKeyHUDPresenting: AnyObject {
+    func show(sliderFraction: Double, mute: Bool, deviceName: String)
+    func swallowObserved()
+}
+
+@MainActor
+protocol MediaKeyIconFlashing: AnyObject {
+    func flashDevice()
+}
+
 /// Intercepts F10/F11/F12 via a `CGEventTap`, swallows them so the native HUD
 /// does not double-fire, and drives the default output device.
 @MainActor
@@ -14,7 +28,7 @@ final class MediaKeyMonitor {
     private let audioEngine: AudioEngine
     private let settingsManager: SettingsManager
     private let accessibility: any AccessibilityTrustProviding
-    private let hudController: HUDWindowController
+    private let hudController: MediaKeyHUDPresenting
     private let popupVisibility: PopupVisibilityService
     private let mediaKeyStatus: MediaKeyStatus
     private let logger = Logger(subsystem: "com.finetuneapp.FineTune", category: "MediaKeyMonitor")
@@ -40,14 +54,14 @@ final class MediaKeyMonitor {
 
     /// Optional coordinator notified on every volume/mute key event so the menu bar icon
     /// can flash the current device's transport symbol. Wired by FineTuneApp after init.
-    var iconCoordinator: MenuBarIconCoordinator?
+    var iconCoordinator: MediaKeyIconFlashing?
 
     init(
         decoder: any MediaKeyEventDecoding,
         audioEngine: AudioEngine,
         settingsManager: SettingsManager,
         accessibility: any AccessibilityTrustProviding,
-        hudController: HUDWindowController,
+        hudController: MediaKeyHUDPresenting,
         popupVisibility: PopupVisibilityService,
         mediaKeyStatus: MediaKeyStatus
     ) {
@@ -61,7 +75,7 @@ final class MediaKeyMonitor {
         subscribeToWorkspaceLifecycle()
     }
 
-    deinit {
+    isolated deinit {
         // C callback holds an unretained pointer to self; runloop source must not outlive us.
         if let tap = tap {
             CGEvent.tapEnable(tap: tap, enable: false)
@@ -134,7 +148,7 @@ final class MediaKeyMonitor {
     /// Re-enable on wake/session-activate; disable on sleep/deactivate.
     private func subscribeToWorkspaceLifecycle() {
         let nc = NSWorkspace.shared.notificationCenter
-        func add(_ name: Notification.Name, _ handler: @escaping () -> Void) {
+        func add(_ name: Notification.Name, _ handler: @escaping @MainActor () -> Void) {
             let token = nc.addObserver(forName: name, object: nil, queue: .main) { _ in
                 MainActor.assumeIsolated { handler() }
             }
@@ -384,8 +398,13 @@ private let mediaKeyTapCallback: CGEventTapCallBack = { _, type, event, userInfo
         return Unmanaged.passUnretained(event)
     }
 
+    // CGEvent is a CF type without Swift's Sendable conformance, so wrap it for
+    // the synchronous hop into MainActor — assumeIsolated runs inline on the
+    // current (main) thread, no real cross-actor send happens.
+    struct EventBox: @unchecked Sendable { let event: CGEvent }
+    let box = EventBox(event: event)
     let shouldSwallow = MainActor.assumeIsolated {
-        monitor.processSystemDefined(event)
+        monitor.processSystemDefined(box.event)
     }
     return shouldSwallow ? nil : Unmanaged.passUnretained(event)
 }

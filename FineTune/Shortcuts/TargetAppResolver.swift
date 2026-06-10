@@ -43,10 +43,10 @@ final class TargetAppResolver: TargetAppResolving {
             object: nil,
             queue: .main
         ) { [weak self] notification in
+            let app = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication
+            let bundleID = app?.bundleIdentifier
             MainActor.assumeIsolated {
-                guard let self else { return }
-                let app = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication
-                self.handleActivation(bundleID: app?.bundleIdentifier)
+                self?.handleActivation(bundleID: bundleID)
             }
         }
     }

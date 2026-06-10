@@ -5,7 +5,7 @@ import os
 
 /// Owns the on-screen volume HUD panel and its auto-hide timing.
 @MainActor
-final class HUDWindowController {
+final class HUDWindowController: MediaKeyHUDPresenting {
     private let settingsManager: SettingsManager
     private let mediaKeyStatus: MediaKeyStatus
     private let popupVisibility: PopupVisibilityService
@@ -40,13 +40,14 @@ final class HUDWindowController {
         subscribeToSettingsChangedNotification()
     }
 
-    deinit {
+    isolated deinit {
         if let observer = settingsChangedObserver {
             DistributedNotificationCenter.default().removeObserver(observer)
         }
-        // `deinit` is nonisolated; `shutdown()` is preferred for synchronous teardown.
+        // Prefer shutdown() for synchronous teardown during willTerminate; this
+        // deinit safety-net only fires for objects released without that call.
         if let panel {
-            DispatchQueue.main.async { panel.orderOut(nil) }
+            panel.orderOut(nil)
         }
     }
 
@@ -247,7 +248,7 @@ final class HUDWindowController {
             ctx.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
             panel.animator().alphaValue = 0.0
         }, completionHandler: {
-            panel.orderOut(nil)
+            MainActor.assumeIsolated { panel.orderOut(nil) }
         })
     }
 

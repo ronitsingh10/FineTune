@@ -226,7 +226,8 @@ struct DeviceRow: View {
                     get: { Int(round(sliderValue * 100)) },
                     set: { sliderValue = Double($0) / 100.0 }
                 ),
-                range: 0...100
+                range: 0...100,
+                isRowFocused: isFocused
             )
         }
         .frame(height: DesignTokens.Dimensions.rowContentHeight)

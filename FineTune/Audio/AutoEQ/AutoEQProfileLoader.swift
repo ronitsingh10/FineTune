@@ -3,7 +3,7 @@ import Foundation
 import os
 
 /// Handles file I/O for AutoEQ profiles: managing imported profile files on disk.
-final class AutoEQProfileLoader {
+nonisolated final class AutoEQProfileLoader {
     private let logger = Logger(subsystem: "com.finetuneapp.FineTune", category: "AutoEQProfileLoader")
 
     private var importDirectory: URL {

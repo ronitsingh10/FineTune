@@ -3,6 +3,7 @@ import AppKit
 
 /// Manages event monitors for detecting clicks outside a component.
 /// Uses the same pattern as PopoverHost for reliable click-outside detection.
+@MainActor
 final class ClickOutsideCoordinator {
     private var localEventMonitor: Any?
     private var globalEventMonitor: Any?
@@ -12,7 +13,7 @@ final class ClickOutsideCoordinator {
     /// - Parameters:
     ///   - excludingFrame: The frame (in screen coordinates) to exclude from triggering
     ///   - onClickOutside: Callback invoked when a click outside is detected
-    func install(excludingFrame: CGRect, onClickOutside: @escaping () -> Void) {
+    func install(excludingFrame: CGRect, onClickOutside: @escaping @MainActor () -> Void) {
         removeMonitors()
 
         // Local monitor: clicks within our app (outside component)
@@ -23,7 +24,7 @@ final class ClickOutsideCoordinator {
             let mouseLocation = NSEvent.mouseLocation
             if !excludingFrame.contains(mouseLocation) {
                 DispatchQueue.main.async {
-                    onClickOutside()
+                    MainActor.assumeIsolated { onClickOutside() }
                 }
             }
             return event
@@ -35,7 +36,7 @@ final class ClickOutsideCoordinator {
         ) { [weak self] _ in
             guard self != nil else { return }
             DispatchQueue.main.async {
-                onClickOutside()
+                MainActor.assumeIsolated { onClickOutside() }
             }
         }
 
@@ -46,7 +47,7 @@ final class ClickOutsideCoordinator {
             queue: .main
         ) { [weak self] _ in
             guard self != nil else { return }
-            onClickOutside()
+            MainActor.assumeIsolated { onClickOutside() }
         }
     }
 
@@ -66,12 +67,13 @@ final class ClickOutsideCoordinator {
         }
     }
 
-    deinit {
+    isolated deinit {
         removeMonitors()
     }
 }
 
 /// Converts a SwiftUI global frame to screen coordinates for hit testing.
+@MainActor
 func screenFrame(from globalFrame: CGRect) -> CGRect {
     guard let window = NSApp.keyWindow ?? NSApp.windows.first(where: { $0.isVisible }) else {
         return .zero

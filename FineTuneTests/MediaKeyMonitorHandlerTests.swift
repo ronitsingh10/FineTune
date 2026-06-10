@@ -41,6 +41,9 @@ struct MediaKeyMonitorHandlerTests {
         let deviceMonitor = MockAudioDeviceMonitor()
         let mockVolume = MockDeviceVolumeProviding(deviceMonitor: deviceMonitor)
         let engine = AudioEngine(
+            permission: AudioRecordingPermission(),
+            settingsManager: settings,
+            autoEQProfileManager: AutoEQProfileManager(),
             deviceProvider: deviceMonitor,
             deviceVolumeMonitor: mockVolume,
             startMonitorsAutomatically: false

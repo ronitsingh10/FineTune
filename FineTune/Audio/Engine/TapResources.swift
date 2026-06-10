@@ -12,7 +12,7 @@ import os
 /// 4. Destroy process tap (AudioHardwareDestroyProcessTap)
 ///
 /// Violating this order can leak HAL resources or crash on shutdown.
-struct TapResources {
+nonisolated struct TapResources {
     private static let logger = Logger(subsystem: "com.finetuneapp.FineTune", category: "TapResources")
 
     var tapID: AudioObjectID = .unknown
@@ -78,7 +78,7 @@ struct TapResources {
     /// - Parameters:
     ///   - queue: Queue to perform destruction on (default: global utility)
     ///   - completion: Optional callback invoked after all resources are destroyed
-    mutating func destroyAsync(on queue: DispatchQueue = .global(qos: .utility), completion: (() -> Void)? = nil) {
+    mutating func destroyAsync(on queue: DispatchQueue = .global(qos: .utility), completion: (@Sendable () -> Void)? = nil) {
         // Capture values before clearing
         let capturedTapID = tapID
         let capturedAggregateID = aggregateDeviceID

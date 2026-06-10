@@ -3,7 +3,7 @@ import Foundation
 import os
 
 /// Parses EqualizerAPO ParametricEQ.txt files into AutoEQ profiles.
-enum AutoEQParser {
+nonisolated enum AutoEQParser {
     private static let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "FineTune", category: "AutoEQParser")
 
     // MARK: - ParametricEQ.txt Parsing

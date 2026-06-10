@@ -15,6 +15,7 @@ final class AudioEngine {
     let settingsManager: SettingsManager
     let autoEQProfileManager: AutoEQProfileManager
     let permission: AudioRecordingPermission
+    let appListCoordinator: AppListCoordinator
 
     #if !APP_STORE
     let ddcController: DDCController
@@ -171,9 +172,9 @@ final class AudioEngine {
 
 
     init(
-        permission: AudioRecordingPermission? = nil,
-        settingsManager: SettingsManager? = nil,
-        autoEQProfileManager: AutoEQProfileManager? = nil,
+        permission: AudioRecordingPermission,
+        settingsManager: SettingsManager,
+        autoEQProfileManager: AutoEQProfileManager,
         deviceProvider: (any AudioDeviceProviding)? = nil,
         processMonitor: (any AudioProcessMonitoring)? = nil,
         deviceVolumeMonitor: (any DeviceVolumeProviding)? = nil,
@@ -181,10 +182,11 @@ final class AudioEngine {
         isAlive: ((AudioDeviceID) -> Bool)? = nil,
         startMonitorsAutomatically: Bool = true
     ) {
-        self.permission = permission ?? AudioRecordingPermission()
-        let manager = settingsManager ?? SettingsManager()
+        self.permission = permission
+        let manager = settingsManager
         self.settingsManager = manager
-        self.autoEQProfileManager = autoEQProfileManager ?? AutoEQProfileManager()
+        self.appListCoordinator = AppListCoordinator(settingsManager: manager)
+        self.autoEQProfileManager = autoEQProfileManager
         self.volumeState = VolumeState(settingsManager: manager)
         self.isAliveCheck = isAlive ?? { $0.isDeviceAlive() }
 
@@ -288,7 +290,7 @@ final class AudioEngine {
         }
 
         // Start process monitor when permission is granted
-        if startMonitorsAutomatically && permission?.status != .authorized {
+        if startMonitorsAutomatically && permission.status != .authorized {
             observePermissionGranted()
         }
     }
@@ -360,6 +362,11 @@ final class AudioEngine {
             realMonitor.inputPriorityOrder = { [weak self] in
                 self?.settingsManager.inputDevicePriorityOrder ?? []
             }
+            realMonitor.onBTDeviceSampleRateChanged = { [weak self] uid, newRate in
+                Task { @MainActor [weak self] in
+                    await self?.handleBTDeviceSampleRateChanged(uid: uid, newRate: newRate)
+                }
+            }
         }
 
         deviceMonitor.onDeviceDisconnected = { [weak self] deviceUID, deviceName in
@@ -404,16 +411,16 @@ final class AudioEngine {
     /// Pinned apps appear first (sorted alphabetically), then unpinned active apps (sorted alphabetically).
     var displayableApps: [DisplayableApp] {
         let activeApps = apps
-            .filter { !settingsManager.isIgnored($0.persistenceIdentifier) }
+            .filter { !appListCoordinator.isIgnored(identifier: $0.persistenceIdentifier) }
         let activeIdentifiers = Set(activeApps.map { $0.persistenceIdentifier })
 
         // Get pinned apps that are not currently active
-        let pinnedInactiveInfos = settingsManager.getPinnedAppInfo()
+        let pinnedInactiveInfos = appListCoordinator.pinnedAppInfo()
             .filter { !activeIdentifiers.contains($0.persistenceIdentifier) }
 
         // Pinned active apps (sorted alphabetically)
         let pinnedActive = activeApps
-            .filter { settingsManager.isPinned($0.persistenceIdentifier) }
+            .filter { appListCoordinator.isPinned(identifier: $0.persistenceIdentifier) }
             .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
             .map { DisplayableApp.active($0) }
 
@@ -424,7 +431,7 @@ final class AudioEngine {
 
         // Unpinned active apps (sorted alphabetically)
         let unpinnedActive = activeApps
-            .filter { !settingsManager.isPinned($0.persistenceIdentifier) }
+            .filter { !appListCoordinator.isPinned(identifier: $0.persistenceIdentifier) }
             .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
             .map { DisplayableApp.active($0) }
 
@@ -435,41 +442,31 @@ final class AudioEngine {
 
     /// Pin an active app so it remains visible when inactive.
     func pinApp(_ app: AudioApp) {
-        let info = PinnedAppInfo(
-            persistenceIdentifier: app.persistenceIdentifier,
-            displayName: app.name,
-            bundleID: app.bundleID
-        )
-        settingsManager.pinApp(app.persistenceIdentifier, info: info)
+        appListCoordinator.pinApp(app)
     }
 
     /// Unpin an app by its persistence identifier.
     func unpinApp(_ identifier: String) {
-        settingsManager.unpinApp(identifier)
+        appListCoordinator.unpinApp(identifier)
     }
 
     /// Check if an app is pinned.
     func isPinned(_ app: AudioApp) -> Bool {
-        settingsManager.isPinned(app.persistenceIdentifier)
+        appListCoordinator.isPinned(app)
     }
 
     /// Check if an identifier is pinned (for inactive apps).
     func isPinned(identifier: String) -> Bool {
-        settingsManager.isPinned(identifier)
+        appListCoordinator.isPinned(identifier: identifier)
     }
 
     // MARK: - Ignored Apps
 
-    /// Hide an active app so FineTune ignores it entirely.
+    /// Hide an active app so FineTune ignores it entirely. Persists the ignore,
+    /// then tears down the live tap so audio returns to natural volume.
     func ignoreApp(_ app: AudioApp) {
-        let info = IgnoredAppInfo(
-            persistenceIdentifier: app.persistenceIdentifier,
-            displayName: app.name,
-            bundleID: app.bundleID
-        )
-        settingsManager.ignoreApp(app.persistenceIdentifier, info: info)
+        appListCoordinator.recordIgnore(app)
 
-        // Tear down the live tap so audio returns to natural volume
         if let tap = taps.removeValue(forKey: app.id) {
             tap.invalidate()
         }
@@ -481,92 +478,75 @@ final class AudioEngine {
     /// Unhide an app by its persistence identifier.
     /// Immediately creates a tap if the app is currently running.
     func unignoreApp(_ identifier: String) {
-        settingsManager.unignoreApp(identifier)
+        appListCoordinator.clearIgnore(identifier)
         applyPersistedSettings()
     }
 
     /// Check if an identifier is hidden.
     func isIgnored(identifier: String) -> Bool {
-        settingsManager.isIgnored(identifier)
+        appListCoordinator.isIgnored(identifier: identifier)
     }
 
     // MARK: - Inactive App Settings (by persistence identifier)
 
-    /// Get volume for an inactive app by persistence identifier.
     func getVolumeForInactive(identifier: String) -> Float {
-        settingsManager.getVolume(for: identifier) ?? 1.0
+        appListCoordinator.getVolumeForInactive(identifier: identifier)
     }
 
-    /// Set volume for an inactive app by persistence identifier.
     func setVolumeForInactive(identifier: String, to volume: Float) {
-        settingsManager.setVolume(for: identifier, to: volume)
+        appListCoordinator.setVolumeForInactive(identifier: identifier, to: volume)
     }
 
     func getBoostForInactive(identifier: String) -> BoostLevel {
-        settingsManager.getBoost(for: identifier) ?? .x1
+        appListCoordinator.getBoostForInactive(identifier: identifier)
     }
 
     func setBoostForInactive(identifier: String, to boost: BoostLevel) {
-        settingsManager.setBoost(for: identifier, to: boost)
+        appListCoordinator.setBoostForInactive(identifier: identifier, to: boost)
     }
 
-    /// Get mute state for an inactive app by persistence identifier.
     func getMuteForInactive(identifier: String) -> Bool {
-        settingsManager.getMute(for: identifier) ?? false
+        appListCoordinator.getMuteForInactive(identifier: identifier)
     }
 
-    /// Set mute state for an inactive app by persistence identifier.
     func setMuteForInactive(identifier: String, to muted: Bool) {
-        settingsManager.setMute(for: identifier, to: muted)
+        appListCoordinator.setMuteForInactive(identifier: identifier, to: muted)
     }
 
-    /// Get EQ settings for an inactive app by persistence identifier.
     func getEQSettingsForInactive(identifier: String) -> EQSettings {
-        settingsManager.getEQSettings(for: identifier)
+        appListCoordinator.getEQSettingsForInactive(identifier: identifier)
     }
 
-    /// Set EQ settings for an inactive app by persistence identifier.
     func setEQSettingsForInactive(_ settings: EQSettings, identifier: String) {
-        settingsManager.setEQSettings(settings, for: identifier)
+        appListCoordinator.setEQSettingsForInactive(settings, identifier: identifier)
     }
 
-    /// Get device routing for an inactive app by persistence identifier.
     func getDeviceRoutingForInactive(identifier: String) -> String? {
-        settingsManager.getDeviceRouting(for: identifier)
+        appListCoordinator.getDeviceRoutingForInactive(identifier: identifier)
     }
 
-    /// Set device routing for an inactive app by persistence identifier.
     func setDeviceRoutingForInactive(identifier: String, deviceUID: String?) {
-        if let deviceUID = deviceUID {
-            settingsManager.setDeviceRouting(for: identifier, deviceUID: deviceUID)
-        } else {
-            settingsManager.setFollowDefault(for: identifier)
-        }
+        appListCoordinator.setDeviceRoutingForInactive(identifier: identifier, deviceUID: deviceUID)
     }
 
-    /// Check if an inactive app follows system default device.
     func isFollowingDefaultForInactive(identifier: String) -> Bool {
-        settingsManager.isFollowingDefault(for: identifier)
+        appListCoordinator.isFollowingDefaultForInactive(identifier: identifier)
     }
 
-    /// Get device selection mode for an inactive app.
     func getDeviceSelectionModeForInactive(identifier: String) -> DeviceSelectionMode {
-        settingsManager.getDeviceSelectionMode(for: identifier) ?? .single
+        appListCoordinator.getDeviceSelectionModeForInactive(identifier: identifier)
     }
 
-    /// Set device selection mode for an inactive app.
     func setDeviceSelectionModeForInactive(identifier: String, to mode: DeviceSelectionMode) {
-        settingsManager.setDeviceSelectionMode(for: identifier, to: mode)
+        appListCoordinator.setDeviceSelectionModeForInactive(identifier: identifier, to: mode)
     }
 
-    /// Get selected device UIDs for an inactive app (multi-mode).
     func getSelectedDeviceUIDsForInactive(identifier: String) -> Set<String> {
-        settingsManager.getSelectedDeviceUIDs(for: identifier) ?? []
+        appListCoordinator.getSelectedDeviceUIDsForInactive(identifier: identifier)
     }
 
-    /// Set selected device UIDs for an inactive app (multi-mode).
     func setSelectedDeviceUIDsForInactive(identifier: String, to uids: Set<String>) {
-        settingsManager.setSelectedDeviceUIDs(for: identifier, to: uids)
+        appListCoordinator.setSelectedDeviceUIDsForInactive(identifier: identifier, to: uids)
     }
 
     /// Audio levels for all active apps (for VU meter visualization)
@@ -836,7 +816,26 @@ final class AudioEngine {
         }
     }
 
-    /// Apply the correct AutoEQ profile to a single tap based on its current device.
+    /// Synchronous in-memory AutoEQ profile lookup. nil = not yet cached.
+    private func autoEQProfileForActivation(deviceUID: String) -> AutoEQProfile? {
+        guard let device = deviceMonitor.device(for: deviceUID), device.supportsAutoEQ else { return nil }
+        guard let selection = settingsManager.getAutoEQSelection(for: deviceUID), selection.isEnabled else { return nil }
+        return autoEQProfileManager.profile(for: selection.profileID)
+    }
+
+    private func tapInitialState(forApp app: AudioApp, primaryDeviceUID: String, deviceVolume: Float) -> TapInitialState {
+        var loudnessEqSettings = LoudnessEqualizerSettings()
+        loudnessEqSettings.enabled = settingsManager.appSettings.loudnessEqualizationEnabled
+        return TapInitialState(
+            eqSettings: settingsManager.getEQSettings(for: app.persistenceIdentifier),
+            autoEQProfile: autoEQProfileForActivation(deviceUID: primaryDeviceUID),
+            autoEQPreampEnabled: settingsManager.autoEQPreampEnabled,
+            loudnessVolume: deviceVolume * volumeState.getVolume(for: app.id),
+            loudnessCompensationEnabled: settingsManager.appSettings.loudnessCompensationEnabled,
+            loudnessEqualizerSettings: loudnessEqSettings
+        )
+    }
+
     /// Skips AutoEQ entirely for devices that don't support it (speakers, HDMI, etc.).
     /// If the profile isn't loaded yet, triggers an async fetch and applies when ready.
     private func applyAutoEQToTap(_ tap: any ProcessTapControlling) {
@@ -1060,21 +1059,18 @@ final class AudioEngine {
             let tap = try tapFactory(app, deviceUIDs, preferredTapSourceUID)
             applyTapOutputState(to: tap, for: app.id, deviceUIDs: deviceUIDs)
 
-            try tap.activate()
+            let initial = tapInitialState(
+                forApp: app,
+                primaryDeviceUID: deviceUIDs[0],
+                deviceVolume: tap.currentDeviceVolume
+            )
+            try tap.activate(initial: initial)
             taps[app.id] = tap
 
-            // Load and apply persisted EQ settings
-            let eqSettings = settingsManager.getEQSettings(for: app.persistenceIdentifier)
-            tap.updateEQSettings(eqSettings)
-            tap.setAutoEQPreampEnabled(settingsManager.autoEQPreampEnabled)
-            applyAutoEQToTap(tap)
-            var loudnessEqSettings = LoudnessEqualizerSettings()
-            loudnessEqSettings.enabled = settingsManager.appSettings.loudnessEqualizationEnabled
-            tap.updateLoudnessEqualization(loudnessEqSettings)
-            tap.updateLoudnessCompensation(
-                volume: effectiveLoudnessVolume(for: tap),
-                enabled: settingsManager.appSettings.loudnessCompensationEnabled
-            )
+            // Catalog AutoEQ may not have been cached yet — kick off async resolve.
+            if initial.autoEQProfile == nil {
+                applyAutoEQToTap(tap)
+            }
 
             logger.debug("Created tap for \(app.name) on \(deviceUIDs.count) device(s)")
         } catch {
@@ -1084,6 +1080,23 @@ final class AudioEngine {
 
     func applyPersistedSettings() {
         guard permission.status == .authorized else { return }
+
+        // Warm the AutoEQ cache for every (app, device) selection so that subsequent
+        // tap activations can apply correction synchronously inside activate(initial:)
+        // instead of falling back to the async resolve path. Imported profiles are
+        // already loaded by AutoEQProfileManager.init.
+        let selectedProfileIDs: Set<String> = Set(apps.compactMap { app -> String? in
+            let deviceUID = appDeviceRouting[app.id] ?? deviceVolumeMonitor.defaultDeviceUID
+            guard let deviceUID, let selection = settingsManager.getAutoEQSelection(for: deviceUID) else { return nil }
+            return selection.isEnabled ? selection.profileID : nil
+        })
+        let manager = autoEQProfileManager
+        Task { @MainActor in
+            for id in selectedProfileIDs where manager.profile(for: id) == nil {
+                _ = await manager.resolveProfile(for: id)
+            }
+        }
+
         for app in apps {
             guard !appliedPIDs.contains(app.id) else { continue }
             guard !settingsManager.isIgnored(app.persistenceIdentifier) else { continue }
@@ -1207,21 +1220,19 @@ final class AudioEngine {
             let tap = try tapFactory(app, [deviceUID], preferredTapSourceUID)
             applyTapOutputState(to: tap, for: app.id, deviceUIDs: [deviceUID])
 
-            try tap.activate()
+            let initial = tapInitialState(
+                forApp: app,
+                primaryDeviceUID: deviceUID,
+                deviceVolume: tap.currentDeviceVolume
+            )
+            try tap.activate(initial: initial)
             taps[app.id] = tap
 
-            // Load and apply persisted EQ settings
-            let eqSettings = settingsManager.getEQSettings(for: app.persistenceIdentifier)
-            tap.updateEQSettings(eqSettings)
-            tap.setAutoEQPreampEnabled(settingsManager.autoEQPreampEnabled)
-            applyAutoEQToTap(tap)
-            var loudnessEqSettings = LoudnessEqualizerSettings()
-            loudnessEqSettings.enabled = settingsManager.appSettings.loudnessEqualizationEnabled
-            tap.updateLoudnessEqualization(loudnessEqSettings)
-            tap.updateLoudnessCompensation(
-                volume: effectiveLoudnessVolume(for: tap),
-                enabled: settingsManager.appSettings.loudnessCompensationEnabled
-            )
+            // Catalog AutoEQ may not have been cached yet — kick off async resolve.
+            // Imported profiles always hit the synchronous path above.
+            if initial.autoEQProfile == nil {
+                applyAutoEQToTap(tap)
+            }
 
             logger.debug("Created tap for \(app.name)")
         } catch {
@@ -1966,6 +1977,23 @@ final class AudioEngine {
         // Restore mute state
         if let muted = volumeState.loadSavedMute(for: pid, identifier: app.persistenceIdentifier), muted {
             taps[pid]?.isMuted = true
+        }
+    }
+
+    /// Recreates the aggregate at the device's new rate for every tap on a BT output that changed
+    /// sample rate (A2DP↔SCO), so each tap's IOProc re-rates to match. Falls back to a full tap
+    /// recreate if the in-controller recreation throws.
+    private func handleBTDeviceSampleRateChanged(uid: String, newRate: Double) async {
+        logger.info("[RATE] BT output \(uid, privacy: .public) → \(newRate, format: .fixed(precision: 0)) Hz — recreating affected taps (clean dip)")
+        let affected = taps.filter { $0.value.currentDeviceUIDs.contains(uid) }
+        for (pid, tap) in affected {
+            do {
+                logger.info("[RATE] Recreating tap for PID \(pid)")
+                try await tap.recreateForOutputRateChange()
+            } catch {
+                logger.error("[RATE] Recreate failed for PID \(pid): \(error.localizedDescription) — falling back to full recreate")
+                await recreateTap(for: pid)
+            }
         }
     }
 

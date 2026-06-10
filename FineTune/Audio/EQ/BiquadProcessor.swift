@@ -4,6 +4,16 @@ import Accelerate
 import Darwin.C  // OSMemoryBarrier
 import os
 
+// vDSP_biquad_Setup is a C typedef of OpaquePointer; the Sendable conformance
+// doesn't survive the typealias, so this wrapper carries the safety claim that
+// the rt-safety.md "deferred destruction" pattern already documents: the 500ms
+// delay before vDSP_biquad_DestroySetup exceeds worst-case audio buffer
+// duration (4096 frames @ 44.1kHz ≈ 93ms), so the audio thread has moved past
+// the old setup by the time the closure fires.
+private struct BiquadSetupBox: @unchecked Sendable {
+    let setup: vDSP_biquad_Setup
+}
+
 /// Base class for RT-safe biquad filter processors.
 ///
 /// Manages delay buffers, atomic setup swaps, and the core stereo biquad processing loop.
@@ -85,8 +95,9 @@ class BiquadProcessor: @unchecked Sendable, BiquadProcessable {
         let oldSetup = _eqSetup
         _eqSetup = newSetup
         if let old = oldSetup {
+            let box = BiquadSetupBox(setup: old)
             DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 0.5) {
-                vDSP_biquad_DestroySetup(old)
+                vDSP_biquad_DestroySetup(box.setup)
             }
         }
     }
@@ -148,8 +159,9 @@ class BiquadProcessor: @unchecked Sendable, BiquadProcessable {
         OSMemoryBarrier()
 
         if let old = oldSetup {
+            let box = BiquadSetupBox(setup: old)
             DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 0.5) {
-                vDSP_biquad_DestroySetup(old)
+                vDSP_biquad_DestroySetup(box.setup)
             }
         }
 

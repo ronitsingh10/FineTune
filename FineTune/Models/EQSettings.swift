@@ -1,6 +1,6 @@
 import Foundation
 
-struct EQSettings: Codable, Equatable {
+nonisolated struct EQSettings: Codable, Equatable {
     static let bandCount = 10
     static let maxGainDB: Float = 12.0
     static let minGainDB: Float = -12.0

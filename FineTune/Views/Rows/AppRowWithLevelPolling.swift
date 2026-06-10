@@ -159,7 +159,9 @@ struct AppRowWithLevelPolling: View {
             withTimeInterval: DesignTokens.Timing.vuMeterUpdateInterval,
             repeats: true
         ) { _ in
-            displayLevel = getAudioLevel()
+            MainActor.assumeIsolated {
+                displayLevel = getAudioLevel()
+            }
         }
     }
 

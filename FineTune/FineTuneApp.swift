@@ -235,8 +235,8 @@ struct FineTuneApp: App {
                 monitor.stop()
                 accessibilityService.stop()
                 hud.shutdown()
+                settings.flushSync()
             }
-            settings.flushSync()
         }
     }
 }

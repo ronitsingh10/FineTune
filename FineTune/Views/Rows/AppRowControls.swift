@@ -22,6 +22,7 @@ struct AppRowControls: View {
     let onDeviceModeChange: (DeviceSelectionMode) -> Void
     let onSelectFollowDefault: () -> Void
     let onEQToggle: () -> Void
+    var isRowFocused: Bool = false
 
     @State private var dragOverrideValue: Double?
     @State private var isEQButtonHovered = false
@@ -103,7 +104,8 @@ struct AppRowControls: View {
                         onVolumeChange(gain)
                     }
                 ),
-                range: 0...100
+                range: 0...100,
+                isRowFocused: isRowFocused
             )
 
             // Boost chevrons

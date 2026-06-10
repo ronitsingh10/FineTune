@@ -1,7 +1,7 @@
 // FineTune/Models/AutoEQProfile.swift
 
 /// A single biquad filter in an AutoEQ correction profile.
-struct AutoEQFilter: Codable, Equatable {
+nonisolated struct AutoEQFilter: Codable, Equatable {
     enum FilterType: String, Codable {
         case peaking, lowShelf, highShelf
     }
@@ -12,7 +12,7 @@ struct AutoEQFilter: Codable, Equatable {
 }
 
 /// A headphone/speaker correction profile from AutoEQ.
-struct AutoEQProfile: Codable, Equatable, Identifiable {
+nonisolated struct AutoEQProfile: Codable, Equatable, Identifiable {
     let id: String           // Slug for fetched, UUID for imported
     let name: String         // "Sennheiser HD 600"
     let source: AutoEQSource
@@ -74,13 +74,13 @@ extension AutoEQProfile {
 }
 
 /// Where a profile came from.
-enum AutoEQSource: String, Codable {
+nonisolated enum AutoEQSource: String, Codable {
     case bundled, imported, fetched
 }
 
 /// Lightweight catalog entry for the AutoEQ search index (no filter data).
 /// Populated from the AutoEQ GitHub INDEX.md.
-struct AutoEQCatalogEntry: Codable, Identifiable, Equatable {
+nonisolated struct AutoEQCatalogEntry: Codable, Identifiable, Equatable {
     let id: String           // Slugified name
     let name: String         // "AKG K240 Studio"
     let measuredBy: String   // "oratory1990"
@@ -88,7 +88,7 @@ struct AutoEQCatalogEntry: Codable, Identifiable, Equatable {
 }
 
 /// Per-device AutoEQ selection (stored in settings).
-struct AutoEQSelection: Codable, Equatable {
+nonisolated struct AutoEQSelection: Codable, Equatable {
     let profileID: String
     var isEnabled: Bool
 }

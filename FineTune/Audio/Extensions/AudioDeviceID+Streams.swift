@@ -4,7 +4,7 @@ import Foundation
 
 // MARK: - Stream Queries
 
-extension AudioDeviceID {
+nonisolated extension AudioDeviceID {
     private static let outputStreamDirection: UInt32 = 0
 
     func hasOutputStreams() -> Bool {
