@@ -124,4 +124,11 @@ struct InputStreamUsageTests {
     func noInputs() {
         #expect(ProcessTapController.inputStreamUsageFlags(inputCount: 0, outputCount: 1) == nil)
     }
+
+    @Test("Zero output streams (or a failed stream-count read): nil, never an all-unused map")
+    func zeroOutputCountNeverDisablesTap() {
+        // streamCount() returns 0 when the property read fails; an all-zero map would
+        // mark the tap stream itself unused and silence the app permanently.
+        #expect(ProcessTapController.inputStreamUsageFlags(inputCount: 2, outputCount: 0) == nil)
+    }
 }
