@@ -298,26 +298,32 @@ final class ProcessTapController: ProcessTapControlling {
         var clockDeviceUID: String
     }
 
-    /// Pure planning step for `buildAggregateDescription` — extracted so it can be unit-tested
-    /// without CoreAudio.
+    /// Pure planning step for `buildAggregateDescription`.
     ///
-    /// Two CoreAudio constraints drive this:
+    /// Three CoreAudio constraints drive this:
     ///   1. An aggregate device cannot be nested as a sub-device of another aggregate (the
     ///      wrapping aggregate would report 0 output channels). User-created aggregates are
     ///      therefore *flattened* into their hardware sub-devices via `expand`.
     ///   2. A *stacked* aggregate collapses a multichannel sub-device's output to a single
     ///      stereo pair, which discards the device's preferred (e.g. 3/4) stereo channel
-    ///      assignment. So a flattened single output is kept *non-stacked*, exposing every
-    ///      channel so the IO callback can place audio on the preferred channels.
-    ///
-    /// Stacking is preserved for the cases that need it: multi-device mirroring (the user
-    /// selected several outputs) and a single plain (non-aggregate) device, which keeps the
-    /// previous behaviour and avoids regressing the stereo-only EQ path.
+    ///      assignment. A flattened single output is therefore kept *non-stacked*, exposing
+    ///      every channel so the IO callback can place audio on the preferred channels.
+    ///   3. The IO callback can only honour that placement when the wrapper exposes exactly
+    ///      ONE output stream: preferred-channel indices are device-global, and the callback
+    ///      locates the tap as the trailing input buffer(s). A flatten that yields several
+    ///      sub-devices (or one device with several output streams) produces a multi-stream
+    ///      wrapper where neither holds, so those stay stacked — which also makes
+    ///      Multi-Output Device targets mirror correctly instead of playing one sub-device.
     ///
     /// - Parameters:
     ///   - outputUIDs: The user-selected output device UIDs (1 = single, >1 = mirroring).
     ///   - expand: Returns an aggregate's hardware sub-device UIDs, or `nil` for non-aggregates.
-    static func planAggregate(outputUIDs: [String], expand: (String) -> [String]?) -> AggregatePlan {
+    ///   - outputStreamCount: Returns a device's output-stream count (0 if unknown).
+    static func planAggregate(
+        outputUIDs: [String],
+        expand: (String) -> [String]?,
+        outputStreamCount: (String) -> Int
+    ) -> AggregatePlan {
         precondition(!outputUIDs.isEmpty, "Must have at least one output device")
 
         var flatUIDs: [String] = []
@@ -336,9 +342,8 @@ final class ProcessTapController: ProcessTapControlling {
         flatUIDs = flatUIDs.filter { seen.insert($0).inserted }
 
         let isMirroring = outputUIDs.count > 1
-        // Stack everything EXCEPT a single flattened aggregate, which must stay non-stacked
-        // so its full channel set is exposed for preferred-channel placement.
-        let isStacked = !(didFlatten && !isMirroring)
+        let isSingleFlatten = didFlatten && !isMirroring && flatUIDs.count == 1
+        let isStacked = !(isSingleFlatten && outputStreamCount(flatUIDs[0]) == 1)
 
         return AggregatePlan(
             subDeviceUIDs: flatUIDs,
@@ -352,11 +357,17 @@ final class ProcessTapController: ProcessTapControlling {
     private func buildAggregateDescription(outputUIDs: [String], tapUUID: UUID, name: String) -> [String: Any] {
         precondition(!outputUIDs.isEmpty, "Must have at least one output device")
 
-        let plan = Self.planAggregate(outputUIDs: outputUIDs) { uid in
-            // If this output is a user aggregate, return its hardware sub-devices so they can
-            // be flattened into FineTune's aggregate (nested aggregates aren't supported).
-            audioDeviceID(for: uid)?.aggregateSubDeviceUIDs()
-        }
+        let plan = Self.planAggregate(
+            outputUIDs: outputUIDs,
+            expand: { uid in
+                // If this output is a user aggregate, return its hardware sub-devices so they can
+                // be flattened into FineTune's aggregate (nested aggregates aren't supported).
+                audioDeviceID(for: uid)?.aggregateSubDeviceUIDs()
+            },
+            outputStreamCount: { uid in
+                audioDeviceID(for: uid)?.streamCount(scope: kAudioObjectPropertyScopeOutput) ?? 0
+            }
+        )
 
         if plan.subDeviceUIDs != outputUIDs {
             logger.info("Flattened output \(outputUIDs, privacy: .public) → sub-devices \(plan.subDeviceUIDs, privacy: .public) (stacked=\(plan.isStacked))")

@@ -6,11 +6,14 @@
 //
 // Background (the bug these tests guard against): a user-created aggregate device whose
 // stereo speaker is assigned to channels other than 1/2 (e.g. 3/4) was not honoured.
-// Two CoreAudio constraints caused it:
+// Three CoreAudio constraints shape the plan:
 //   1. Aggregates can't be nested — wrapping one yields 0 output channels, so user
 //      aggregates must be flattened into their hardware sub-devices.
 //   2. A stacked aggregate collapses a multichannel sub-device to a single stereo pair,
 //      hiding channels 3+ so the preferred-channel placement could never reach them.
+//   3. The IO callback can only place audio on preferred channels when the wrapper
+//      exposes exactly one output stream, so multi-sub-device and multi-stream
+//      flattens stay stacked.
 
 import Testing
 @testable import FineTune
@@ -18,24 +21,25 @@ import Testing
 @Suite("ProcessTapController — Aggregate Planning")
 struct AggregatePlanTests {
 
-    /// expand() that knows about one user aggregate ("agg") wrapping two hardware devices.
-    private func expand(_ map: [String: [String]]) -> (String) -> [String]? {
-        { uid in map[uid] }
-    }
-
     @Test("Single plain device: unchanged, stays stacked")
     func singlePlainDevice() {
-        let plan = ProcessTapController.planAggregate(outputUIDs: ["builtin"]) { _ in nil }
+        let plan = ProcessTapController.planAggregate(
+            outputUIDs: ["builtin"],
+            expand: { _ in nil },
+            outputStreamCount: { _ in 1 }
+        )
         #expect(plan.subDeviceUIDs == ["builtin"])
         #expect(plan.isStacked == true)
         #expect(plan.clockDeviceUID == "builtin")
     }
 
-    @Test("Single aggregate: flattened to hardware sub-devices and NOT stacked")
+    @Test("Single aggregate around a single-stream device: flattened and NOT stacked")
     func singleAggregateFlattened() {
-        let plan = ProcessTapController.planAggregate(outputUIDs: ["agg"]) {
-            $0 == "agg" ? ["scarlett"] : nil
-        }
+        let plan = ProcessTapController.planAggregate(
+            outputUIDs: ["agg"],
+            expand: { $0 == "agg" ? ["scarlett"] : nil },
+            outputStreamCount: { _ in 1 }
+        )
         #expect(plan.subDeviceUIDs == ["scarlett"])
         // Non-stacked is the crux: it exposes all of the device's channels so the IO
         // callback can place audio on the aggregate's preferred (3/4) channels.
@@ -43,19 +47,41 @@ struct AggregatePlanTests {
         #expect(plan.clockDeviceUID == "scarlett")
     }
 
-    @Test("Single aggregate with multiple sub-devices: all flattened, non-stacked, order preserved")
+    @Test("Single aggregate around a multi-stream device: stays stacked")
+    func singleAggregateMultiStreamDevice() {
+        // A device exposing several output streams (stream-per-pair interfaces) breaks the
+        // callback's single-stream assumptions — the plan must fall back to stacked.
+        let plan = ProcessTapController.planAggregate(
+            outputUIDs: ["agg"],
+            expand: { $0 == "agg" ? ["motu"] : nil },
+            outputStreamCount: { _ in 2 }
+        )
+        #expect(plan.subDeviceUIDs == ["motu"])
+        #expect(plan.isStacked == true)
+    }
+
+    @Test("Single aggregate with multiple sub-devices: flattened, stays stacked, order preserved")
     func singleAggregateMultipleSubDevices() {
-        let plan = ProcessTapController.planAggregate(outputUIDs: ["agg"]) {
-            $0 == "agg" ? ["devA", "devB"] : nil
-        }
+        // Multiple sub-devices ⇒ one output stream per sub-device ⇒ the callback cannot
+        // honour global preferred-channel placement, so the wrapper stays stacked
+        // (mirrors to all sub-devices, which also makes Multi-Output Devices work).
+        let plan = ProcessTapController.planAggregate(
+            outputUIDs: ["agg"],
+            expand: { $0 == "agg" ? ["devA", "devB"] : nil },
+            outputStreamCount: { _ in 1 }
+        )
         #expect(plan.subDeviceUIDs == ["devA", "devB"])
-        #expect(plan.isStacked == false)
+        #expect(plan.isStacked == true)
         #expect(plan.clockDeviceUID == "devA")
     }
 
     @Test("Multi-device mirroring: stays stacked, order preserved")
     func multiDeviceMirroring() {
-        let plan = ProcessTapController.planAggregate(outputUIDs: ["a", "b"]) { _ in nil }
+        let plan = ProcessTapController.planAggregate(
+            outputUIDs: ["a", "b"],
+            expand: { _ in nil },
+            outputStreamCount: { _ in 1 }
+        )
         #expect(plan.subDeviceUIDs == ["a", "b"])
         #expect(plan.isStacked == true)
         #expect(plan.clockDeviceUID == "a")
@@ -63,9 +89,11 @@ struct AggregatePlanTests {
 
     @Test("Mirroring that includes an aggregate: aggregate flattened but stays stacked (mirror)")
     func mirroringWithAggregate() {
-        let plan = ProcessTapController.planAggregate(outputUIDs: ["agg", "speaker"]) {
-            $0 == "agg" ? ["scarlett"] : nil
-        }
+        let plan = ProcessTapController.planAggregate(
+            outputUIDs: ["agg", "speaker"],
+            expand: { $0 == "agg" ? ["scarlett"] : nil },
+            outputStreamCount: { _ in 1 }
+        )
         #expect(plan.subDeviceUIDs == ["scarlett", "speaker"])
         #expect(plan.isStacked == true)
         #expect(plan.clockDeviceUID == "scarlett")
@@ -73,9 +101,11 @@ struct AggregatePlanTests {
 
     @Test("Duplicate hardware devices across flattening are de-duplicated, order preserved")
     func deduplicatesSubDevices() {
-        let plan = ProcessTapController.planAggregate(outputUIDs: ["agg", "scarlett"]) {
-            $0 == "agg" ? ["scarlett", "canton"] : nil
-        }
+        let plan = ProcessTapController.planAggregate(
+            outputUIDs: ["agg", "scarlett"],
+            expand: { $0 == "agg" ? ["scarlett", "canton"] : nil },
+            outputStreamCount: { _ in 1 }
+        )
         #expect(plan.subDeviceUIDs == ["scarlett", "canton"])
         // count > 1 user selection ⇒ mirroring ⇒ stacked
         #expect(plan.isStacked == true)
@@ -84,7 +114,11 @@ struct AggregatePlanTests {
     @Test("Empty aggregate sub-device list is treated as a plain device")
     func emptyAggregateTreatedAsPlain() {
         // expand returning [] means "not flattenable" — keep the original UID.
-        let plan = ProcessTapController.planAggregate(outputUIDs: ["agg"]) { _ in [] }
+        let plan = ProcessTapController.planAggregate(
+            outputUIDs: ["agg"],
+            expand: { _ in [] },
+            outputStreamCount: { _ in 1 }
+        )
         #expect(plan.subDeviceUIDs == ["agg"])
         #expect(plan.isStacked == true)
     }
