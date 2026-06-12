@@ -42,6 +42,22 @@ struct MenuBarDeviceIconResolverTests {
         #expect(resolve(priorityOrder: ["airpods", "speakers"], outputDevices: devices) == "airpodspro")
     }
 
+    @Test("Current default output takes precedence over saved priority")
+    func defaultOutputTakesPrecedence() {
+        let devices = [
+            device(id: 1, uid: "speakers", name: "MacBook Pro Speakers"),
+            device(id: 2, uid: "airpods", name: "AirPods Pro")
+        ]
+
+        #expect(
+            resolve(
+                priorityOrder: ["speakers", "airpods"],
+                outputDevices: devices,
+                defaultDeviceID: 2
+            ) == "airpodspro"
+        )
+    }
+
     @Test("HomePod/AirPlay priority returns HomePod-style symbol")
     func homePodPriority() {
         let devices = [
@@ -76,6 +92,23 @@ struct MenuBarDeviceIconResolverTests {
                 outputDevices: devices,
                 unavailableUIDs: ["airpods"]
             ) == "homepod"
+        )
+    }
+
+    @Test("Unavailable default output falls back to connected priority device")
+    func unavailableDefaultFallsBackToPriority() {
+        let devices = [
+            device(id: 1, uid: "speakers", name: "MacBook Pro Speakers"),
+            device(id: 2, uid: "airpods", name: "AirPods Pro")
+        ]
+
+        #expect(
+            resolve(
+                priorityOrder: ["speakers", "airpods"],
+                outputDevices: devices,
+                defaultDeviceID: 2,
+                unavailableUIDs: ["airpods"]
+            ) == "headphones"
         )
     }
 
