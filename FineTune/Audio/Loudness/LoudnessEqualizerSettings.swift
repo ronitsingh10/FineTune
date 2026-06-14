@@ -6,8 +6,8 @@ struct LoudnessEqualizerSettings: Codable, Equatable, Sendable {
     var compressionRatio: Float = 1.6
     var compressionKneeDb: Float = 8
 
-    var analysisWindowMs: Float = 100
-    var analysisHopMs: Float = 15
+    var analysisWindowMs: Float = 400
+    var analysisHopMs: Float = 100
 
     var detectorAttackMs: Float = 25
     var detectorReleaseMs: Float = 600
