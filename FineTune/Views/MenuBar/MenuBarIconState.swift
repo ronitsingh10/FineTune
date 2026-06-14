@@ -63,7 +63,7 @@ extension MenuBarIconState {
         style: MenuBarIconStyle,
         volume: Float,
         muted: Bool,
-        deviceSymbol: String = "headphones"
+        deviceSymbol: String = MenuBarIconStyle.device.iconName
     ) -> MenuBarIconState {
         switch style {
         case .speaker:

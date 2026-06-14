@@ -3,7 +3,9 @@
 import AudioToolbox
 
 struct MenuBarDeviceIconResolver {
-    static let fallbackSymbol = "hifispeaker"
+    // Neutral "unknown output" glyph, sourced from the transport-type convention
+    // so it stays in sync with the rest of the app rather than a private literal.
+    static let fallbackSymbol = TransportType.unknown.defaultIconSymbol
 
     static func resolveSymbol(
         priorityOrder: [String],

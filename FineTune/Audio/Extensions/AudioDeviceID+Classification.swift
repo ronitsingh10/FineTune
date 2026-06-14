@@ -133,7 +133,12 @@ extension AudioDeviceID {
     func suggestedIconSymbol() -> String {
         let name = (try? readDeviceName()) ?? ""
         let transport = readTransportType()
+        return Self.iconSymbol(forName: name, transport: transport)
+    }
 
+    /// Pure name + transport → SF Symbol mapping, extracted from `suggestedIconSymbol()`
+    /// so the user-visible device-name cascade is unit-testable without a live device.
+    static func iconSymbol(forName name: String, transport: TransportType) -> String {
         // AirPods variants
         if name.contains("AirPods Pro") { return "airpodspro" }
         if name.contains("AirPods Max") { return "airpodsmax" }
