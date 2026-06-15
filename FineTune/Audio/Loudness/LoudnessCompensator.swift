@@ -80,7 +80,7 @@ final class LoudnessCompensator: BiquadProcessor, @unchecked Sendable {
         // (shifts phon toward reference, reducing bass/treble boost).
         // Above 1.0, more compensation (shifts phon away from reference).
         let referencePhon = ISO226Contours.defaultReferencePhon
-        let clampedIntensity = min(max(intensity, 0.0), 1.5)
+        let clampedIntensity = min(max(intensity, 0.0), 2.5)
         let adjustedPhon = referencePhon + (phon - referencePhon) * Double(clampedIntensity)
 
         // Coalesce rapid updates, but never skip a disabled processor because re-enabling

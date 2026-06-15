@@ -801,7 +801,7 @@ final class AudioEngine {
     }
 
     func setLoudnessCompensationEnabled(_ enabled: Bool) {
-        let intensity = settingsManager.appSettings.loudnessCompensationIntensity
+        let intensity = settingsManager.loudnessCompensationIntensity
         for tap in taps.values {
             tap.updateLoudnessCompensation(
                 volume: effectiveLoudnessVolume(for: tap),
