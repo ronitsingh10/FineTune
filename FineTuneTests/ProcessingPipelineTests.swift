@@ -350,6 +350,40 @@ struct BufferMappingTests {
         }
     }
 
+    @Test("Stereo input to 6ch output: signal placed on preferred channels 3/4 (aggregate regression)")
+    func stereoToChannels3and4() {
+        // Regression for: aggregate device with its stereo speaker assigned to channels 3/4.
+        // After flattening + non-stacked wrapping, the output buffer exposes all 6 channels and
+        // the IO callback must place L/R on the preferred (zero-based 2/3 ⇒ channels 3/4) pair.
+        let frames = 64
+        let input = TestABL(buffers: [(channels: 2, frames: frames)])
+        let output = TestABL(buffers: [(channels: 6, frames: frames)])
+
+        let inData = input.data(at: 0)
+        for f in 0..<frames {
+            inData[f * 2] = 0.6      // left
+            inData[f * 2 + 1] = 0.4  // right
+        }
+
+        var vol: Float = 1.0
+        processWithDefaults(
+            input: input, output: output,
+            preferredStereoLeft: 2, preferredStereoRight: 3,
+            currentVol: &vol
+        )
+
+        let outData = output.data(at: 0)
+        for f in 0..<frames {
+            let base = f * 6
+            #expect(outData[base + 2] == 0.6, "Left should be on channel 3 (index 2) at frame \(f)")
+            #expect(outData[base + 3] == 0.4, "Right should be on channel 4 (index 3) at frame \(f)")
+            // Channels 1/2 (and 5/6) must be silent — this is exactly what was broken.
+            for ch in [0, 1, 4, 5] {
+                #expect(outData[base + ch] == 0.0, "Channel \(ch) at frame \(f) should be silent")
+            }
+        }
+    }
+
     @Test("Zero-frame buffer: output zeroed, no crash")
     func zeroFrameBuffer() {
         // frameCount = 0 should hit the guard and memset output to zero.
@@ -1052,7 +1086,7 @@ struct LoudnessIntegrationTests {
 
     @Test("Loudness equalizer modifies output vs nil-processor baseline when enabled")
     func loudnessEqualizerModifiesOutput() {
-        let frames = 4096
+        let frames = 48000  // 1 s: the momentary leveler (400 ms window, 100 ms hop) needs > one hop to produce a gain change
         let sampleRate: Float = 48000
 
         // Create stereo input with moderate amplitude
@@ -1102,7 +1136,7 @@ struct LoudnessIntegrationTests {
 
     @Test("Loudness chain ordering: compensator shapes frequency, equalizer adjusts level")
     func loudnessChainOrdering() {
-        let frames = 4096
+        let frames = 48000  // 1 s: the momentary leveler (400 ms window, 100 ms hop) needs > one hop to produce a gain change
         let sampleRate = 48000.0
 
         // Create a low-frequency stereo signal that compensator will boost

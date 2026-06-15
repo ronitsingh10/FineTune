@@ -12,6 +12,7 @@ import os
 @MainActor
 final class MenuBarIconCoordinator: MediaKeyIconFlashing {
     private let deviceVolumeMonitor: DeviceVolumeMonitor
+    private let deviceProvider: any AudioDeviceProviding
     private let settings: SettingsManager
     private let logger = Logger(subsystem: "com.finetuneapp.FineTune", category: "MenuBarIconCoordinator")
 
@@ -21,8 +22,13 @@ final class MenuBarIconCoordinator: MediaKeyIconFlashing {
     private var lastObservedDeviceID: AudioDeviceID?
     private var started = false
 
-    init(deviceVolumeMonitor: DeviceVolumeMonitor, settings: SettingsManager) {
+    init(
+        deviceVolumeMonitor: DeviceVolumeMonitor,
+        deviceProvider: any AudioDeviceProviding,
+        settings: SettingsManager
+    ) {
         self.deviceVolumeMonitor = deviceVolumeMonitor
+        self.deviceProvider = deviceProvider
         self.settings = settings
     }
 
@@ -78,14 +84,17 @@ final class MenuBarIconCoordinator: MediaKeyIconFlashing {
         return MenuBarIconState.baseline(
             style: settings.appSettings.menuBarIconStyle,
             volume: volume,
-            muted: muted
+            muted: muted,
+            deviceSymbol: currentDeviceSymbol()
         )
     }
 
     private func currentDeviceSymbol() -> String {
-        let id = deviceVolumeMonitor.defaultDeviceID
-        guard id.isValid else { return "hifispeaker" }
-        return id.suggestedIconSymbol()
+        MenuBarDeviceIconResolver.resolveSymbol(
+            priorityOrder: settings.devicePriorityOrder,
+            outputDevices: deviceProvider.outputDevices,
+            defaultDeviceID: deviceVolumeMonitor.defaultDeviceID
+        )
     }
 
     private func flashDuration() -> TimeInterval {
@@ -124,6 +133,8 @@ final class MenuBarIconCoordinator: MediaKeyIconFlashing {
             _ = deviceVolumeMonitor.muteStates[id]
             _ = settings.appSettings.menuBarIconStyle
             _ = settings.appSettings.hudStyle
+            _ = settings.devicePriorityOrder
+            _ = deviceProvider.outputDevices
         } onChange: { [weak self] in
             // onChange fires in willSet — the tracked properties are still at their
             // pre-change values inside this closure. Re-register synchronously so the

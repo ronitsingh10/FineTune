@@ -2,8 +2,7 @@
 // Tests for MediaKeyMonitor.handleCore() — the volume/mute logic decoupled from
 // real CGEventTap, AudioEngine, and DeviceVolumeMonitor.
 //
-// Strategy: call handleCore(event:deviceID:tier:deviceName:currentVolume:currentMute:setVolume:setMute:)
-// directly, injecting closure stubs. No real CoreAudio is touched.
+// Strategy: call handleCore directly, injecting closure stubs. No real CoreAudio is touched.
 
 import Testing
 import Foundation
@@ -502,5 +501,96 @@ struct MediaKeyMonitorHandlerTests {
         let expectedSoftware = Float(pow(sqrt(0.5) + 1.0/16.0, 2))
         #expect(abs(softwareVolume - expectedSoftware) < 1e-5)
         #expect(softwareVolume != hardwareVolume)
+    }
+
+    // MARK: - Volume-feedback hook
+
+    @Test("volumeUp on hardware tier invokes playFeedback with gain 1.0")
+    func feedbackOnVolumeUpHardware() {
+        let (monitor, _, _, _) = makeMonitor()
+        var feedbackGain: Float?
+        monitor.handleCore(
+            event: .volumeUp(isRepeat: false), deviceID: 1, tier: .hardware,
+            deviceName: "Test Device", currentVolume: 0.5, currentMute: false,
+            setVolume: { _, _ in }, setMute: { _, _ in },
+            playFeedback: { feedbackGain = $0 }
+        )
+        #expect(feedbackGain == 1.0)
+    }
+
+    @Test("volumeUp on software tier passes exactly the gain written to the device")
+    func feedbackGainTracksSoftwareTier() {
+        let (monitor, _, _, _) = makeMonitor()
+        var written: Float?
+        var feedbackGain: Float?
+        monitor.handleCore(
+            event: .volumeUp(isRepeat: false), deviceID: 1, tier: .software,
+            deviceName: "Test Device", currentVolume: 0.5, currentMute: false,
+            setVolume: { _, v in written = v }, setMute: { _, _ in },
+            playFeedback: { feedbackGain = $0 }
+        )
+        #expect(feedbackGain != nil)
+        #expect(feedbackGain == written)  // the pop self-scales exactly like the tap gain
+    }
+
+    @Test("volumeDown invokes playFeedback")
+    func feedbackOnVolumeDown() {
+        let (monitor, _, _, _) = makeMonitor()
+        var feedbackCalls = 0
+        monitor.handleCore(
+            event: .volumeDown(isRepeat: false), deviceID: 1, tier: .hardware,
+            deviceName: "Test Device", currentVolume: 0.5, currentMute: false,
+            setVolume: { _, _ in }, setMute: { _, _ in },
+            playFeedback: { _ in feedbackCalls += 1 }
+        )
+        #expect(feedbackCalls == 1)
+    }
+
+    @Test("muteToggle never invokes playFeedback (native parity)")
+    func noFeedbackOnMuteToggle() {
+        let (monitor, _, _, _) = makeMonitor()
+        var feedbackCalls = 0
+        monitor.handleCore(
+            event: .muteToggle, deviceID: 1, tier: .hardware,
+            deviceName: "Test Device", currentVolume: 0.5, currentMute: false,
+            setVolume: { _, _ in }, setMute: { _, _ in },
+            playFeedback: { _ in feedbackCalls += 1 }
+        )
+        #expect(feedbackCalls == 0)
+    }
+
+    @Test("DDC-coalesced repeats skip playFeedback along with setVolume")
+    func feedbackCoalescedWithDDC() {
+        let (monitor, _, _, _) = makeMonitor()
+        var setVolumeCalls = 0
+        var feedbackCalls = 0
+        for _ in 0..<4 {
+            monitor.handleCore(
+                event: .volumeUp(isRepeat: true), deviceID: 1, tier: .ddc,
+                deviceName: "Test Display", currentVolume: 0.5, currentMute: false,
+                setVolume: { _, _ in setVolumeCalls += 1 }, setMute: { _, _ in },
+                playFeedback: { _ in feedbackCalls += 1 }
+            )
+        }
+        #expect(setVolumeCalls == 1)  // 4 synchronous repeats coalesce to one write
+        #expect(feedbackCalls == setVolumeCalls)  // pop count mirrors actual volume writes
+    }
+
+    @Test("volumeDown reaching 0 auto-mutes AND still pops (spec behavior-table row)")
+    func feedbackOnVolumeDownToZero() {
+        let (monitor, _, _, settings) = makeMonitor()
+        var appSettings = settings.appSettings
+        appSettings.volumeHotkeyStep = .normal  // 1/16 step: currentVolume below lands exactly on 0
+        settings.updateAppSettings(appSettings)
+        var writtenMute: Bool?
+        var feedbackCalls = 0
+        monitor.handleCore(
+            event: .volumeDown(isRepeat: false), deviceID: 1, tier: .hardware,
+            deviceName: "Test Device", currentVolume: 1.0 / 16.0, currentMute: false,
+            setVolume: { _, _ in }, setMute: { _, m in writtenMute = m },
+            playFeedback: { _ in feedbackCalls += 1 }
+        )
+        #expect(writtenMute == true)
+        #expect(feedbackCalls == 1)
     }
 }
