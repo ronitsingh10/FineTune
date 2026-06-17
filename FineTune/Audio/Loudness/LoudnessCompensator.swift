@@ -47,6 +47,7 @@ final class LoudnessCompensator: BiquadProcessor, @unchecked Sendable {
 
     /// Phon level used for the last coefficient computation.
     private var _currentPhon: Double = 80.0
+    private var _currentIntensity: Float = 1.0
 
     // MARK: - Init
 
@@ -75,20 +76,17 @@ final class LoudnessCompensator: BiquadProcessor, @unchecked Sendable {
         // matching Dolby Volume Modeler / THX Loudness Plus architecture).
         let phon = ISO226Contours.estimatedPhon(fromSystemVolume: systemVolume)
 
-        // Intensity scales the distance from reference phon.
-        // At intensity=1.0, full ISO compensation. Below 1.0, less compensation
-        // (shifts phon toward reference, reducing bass/treble boost).
-        // Above 1.0, more compensation (shifts phon away from reference).
-        let referencePhon = ISO226Contours.defaultReferencePhon
         let clampedIntensity = min(max(intensity, 0.0), 2.5)
-        let adjustedPhon = referencePhon + (phon - referencePhon) * Double(clampedIntensity)
+        let paramsChanged = clampedIntensity != _currentIntensity
 
         // Coalesce rapid updates, but never skip a disabled processor because re-enabling
         // loudness from the UI must rebuild coefficients immediately even at the same volume.
-        guard !isEnabled || abs(adjustedPhon - _currentPhon) >= 1.0 else { return }
-        _currentPhon = adjustedPhon
+        // Also do not skip if intensity changed.
+        guard !isEnabled || paramsChanged || abs(phon - _currentPhon) >= 1.0 else { return }
+        _currentPhon = phon
+        _currentIntensity = clampedIntensity
 
-        let gains = computeBandGains(phon: adjustedPhon)
+        let gains = computeBandGains(phon: phon, intensity: clampedIntensity)
 
         // Bypass when all gains are negligible (near reference level)
         let allNegligible = gains.allSatisfy { abs($0) < 0.1 }
@@ -113,11 +111,12 @@ final class LoudnessCompensator: BiquadProcessor, @unchecked Sendable {
     /// Post-processes the fitted gains by computing the realized cascade response,
     /// finding its peak (the "headroom" needed), and subtracting that peak from all
     /// band gains so the cascade never clips.
-    private func computeBandGains(phon: Double) -> [Float] {
+    private func computeBandGains(phon: Double, intensity: Float) -> [Float] {
         let gains = Self.fittedSectionGains(forPhon: phon, sampleRate: sampleRate)
-        let realized = Self.realizedResponseDB(sectionGains: gains.map(Double.init), sampleRate: sampleRate)
+        let scaledGains = gains.map { $0 * intensity }
+        let realized = Self.realizedResponseDB(sectionGains: scaledGains.map(Double.init), sampleRate: sampleRate)
         let peakDB = max(realized.max() ?? 0.0, 0.0)
-        return gains.map { $0 - Float(peakDB) }
+        return scaledGains.map { $0 - Float(peakDB) }
     }
 
     /// Fit the fixed four-section loudness topology to the ISO-derived target curve.
@@ -192,7 +191,7 @@ final class LoudnessCompensator: BiquadProcessor, @unchecked Sendable {
 
     override func recomputeCoefficients() -> (coefficients: [Double], sectionCount: Int)? {
         // Called by updateSampleRate() — recompute for current phon at new sample rate
-        let gains = computeBandGains(phon: _currentPhon)
+        let gains = computeBandGains(phon: _currentPhon, intensity: _currentIntensity)
         let allNegligible = gains.allSatisfy { abs($0) < 0.1 }
         guard !allNegligible else { return nil }
         let coefficients = Self.coefficientsForBands(gains: gains, sampleRate: sampleRate)

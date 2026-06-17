@@ -63,7 +63,7 @@ enum ISO226Contours {
     static func estimatedPhon(fromSystemVolume volume: Float) -> Double {
         let v = Double(max(0.0, min(1.0, volume)))
         return estimatedPhonRange.lowerBound
-            + (defaultReferencePhon - estimatedPhonRange.lowerBound) * pow(v, 0.5)
+            + (defaultReferencePhon - estimatedPhonRange.lowerBound) * v
     }
 
     // MARK: - Normative Contour Computation

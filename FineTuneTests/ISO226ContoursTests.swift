@@ -289,14 +289,14 @@ struct EstimatedPhonBoundaryTests {
 
     @Test("Zero volume maps to lower bound of phon range (20 phon)")
     func zeroVolumeMapsToLowerBound() {
-        // volume=0 → sqrt(0)=0 → 20 + 60*0 = 20 phon
+        // volume=0 → 20 + 60*0 = 20 phon
         let phon = ISO226Contours.estimatedPhon(fromSystemVolume: 0.0)
         expectClose(phon, 20.0, tolerance: 0.001)
     }
 
     @Test("Full volume maps to reference phon (80 phon)")
     func fullVolumeMapsToReferencePhon() {
-        // volume=1.0 → sqrt(1.0)=1.0 → 20 + 60*1.0 = 80 phon
+        // volume=1.0 → 20 + 60*1.0 = 80 phon
         let phon = ISO226Contours.estimatedPhon(fromSystemVolume: 1.0)
         expectClose(phon, ISO226Contours.defaultReferencePhon, tolerance: 0.001)
     }
@@ -315,11 +315,11 @@ struct EstimatedPhonBoundaryTests {
         expectClose(phon, 20.0, tolerance: 0.001)
     }
 
-    @Test("Quarter volume maps to midpoint via square-root curve")
+    @Test("Quarter volume maps to 35 phon via linear curve")
     func quarterVolumeMidpoint() {
-        // volume=0.25 → sqrt(0.25)=0.5 → 20 + 60*0.5 = 50 phon
+        // volume=0.25 → 20 + 60*0.25 = 35 phon
         let phon = ISO226Contours.estimatedPhon(fromSystemVolume: 0.25)
-        expectClose(phon, 50.0, tolerance: 0.01)
+        expectClose(phon, 35.0, tolerance: 0.01)
     }
 }
 
