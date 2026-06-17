@@ -46,6 +46,11 @@ struct AudioTab: View {
         .onChange(of: settings.appSettings.loudnessEqualizationEnabled) { _, newValue in
             audioEngine.setLoudnessEqualizationEnabled(newValue)
         }
+        #if !APP_STORE
+        .onChange(of: settings.appSettings.ddcVolumeControlEnabled) { _, newValue in
+            audioEngine.setDDCVolumeControlEnabled(newValue)
+        }
+        #endif
     }
 
     // MARK: - Volume
@@ -88,6 +93,18 @@ struct AudioTab: View {
                     .controlSize(.small)
                     .labelsHidden()
             }
+            #if !APP_STORE
+            SettingsRowDivider()
+            SettingsRow(
+                "Monitor Volume Control (DDC)",
+                description: "Control monitor speaker volume over HDMI/DisplayPort. Disable if an external display goes dark when FineTune launches."
+            ) {
+                Toggle("", isOn: $settings.appSettings.ddcVolumeControlEnabled)
+                    .toggleStyle(.switch)
+                    .controlSize(.small)
+                    .labelsHidden()
+            }
+            #endif
             SettingsRowDivider()
             SettingsRow(
                 "System Sounds",
