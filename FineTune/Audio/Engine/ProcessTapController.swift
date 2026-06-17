@@ -132,6 +132,7 @@ final class ProcessTapController: ProcessTapControlling {
     /// Last effective loudness volume (device × app) passed to updateLoudnessCompensation.
     /// Used by createSecondaryTap to initialize secondary compensator with the correct volume.
     private var _lastLoudnessVolume: Float = 1.0
+    private var _lastLoudnessIntensity: Float = 1.0
     /// Independent EQ processors for secondary tap during crossfade.
     /// Each tap needs its own biquad delay buffers — sharing would corrupt filter state
     /// because both callbacks write concurrently from different HAL I/O threads.
@@ -263,6 +264,7 @@ final class ProcessTapController: ProcessTapControlling {
 
     func updateLoudnessCompensation(volume: Float, enabled: Bool, intensity: Float = 1.0) {
         _lastLoudnessVolume = volume
+        _lastLoudnessIntensity = intensity
         if enabled {
             loudnessCompensator?.updateForVolume(volume, intensity: intensity)
             secondaryLoudnessCompensator?.updateForVolume(volume, intensity: intensity)
@@ -686,9 +688,10 @@ final class ProcessTapController: ProcessTapControlling {
         }
         loudnessCompensator?.setEnabled(initial.loudnessCompensationEnabled)
         if initial.loudnessCompensationEnabled {
-            loudnessCompensator?.updateForVolume(initial.loudnessVolume)
+            loudnessCompensator?.updateForVolume(initial.loudnessVolume, intensity: initial.loudnessCompensationIntensity)
         }
         _lastLoudnessVolume = initial.loudnessVolume
+        _lastLoudnessIntensity = initial.loudnessCompensationIntensity
 
         // Create IO proc with gain processing
         nextCallbackID += 1
@@ -1070,7 +1073,7 @@ final class ProcessTapController: ProcessTapControlling {
         secondaryPostAgcCompressorProcessor = secPostAgcCompressor
 
         let secLoudness = LoudnessCompensator(sampleRate: sampleRate)
-        secLoudness.updateForVolume(_lastLoudnessVolume)
+        secLoudness.updateForVolume(_lastLoudnessVolume, intensity: _lastLoudnessIntensity)
         if !(loudnessCompensator?.isEnabled ?? false) { secLoudness.setEnabled(false) }
         secondaryLoudnessCompensator = secLoudness
 

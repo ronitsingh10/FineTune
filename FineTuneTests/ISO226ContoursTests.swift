@@ -315,11 +315,11 @@ struct EstimatedPhonBoundaryTests {
         expectClose(phon, 20.0, tolerance: 0.001)
     }
 
-    @Test("Quarter volume maps to 35 phon via linear curve")
+    @Test("Quarter volume maps to 36.25 phon via linear curve")
     func quarterVolumeMidpoint() {
-        // volume=0.25 → 20 + 60*0.25 = 35 phon
+        // volume=0.25 → 20 + 65*0.25 = 36.25 phon
         let phon = ISO226Contours.estimatedPhon(fromSystemVolume: 0.25)
-        expectClose(phon, 35.0, tolerance: 0.01)
+        expectClose(phon, 36.25, tolerance: 0.01)
     }
 }
 

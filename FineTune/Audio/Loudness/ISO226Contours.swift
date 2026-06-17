@@ -50,11 +50,11 @@ enum ISO226Contours {
     /// nearly inaudible. Lowering to 80 keeps compensation gains moderate at
     /// typical listening levels while still providing meaningful bass correction
     /// at low volumes.
-    static let defaultReferencePhon: Double = 80.0
+    static let defaultReferencePhon: Double = 85.0
 
     private static let referenceFrequencyIndex = 17
     private static let referenceSoundPressureSquaredPa: Double = 4e-10
-    private static let supportedPhonRange = 20.0...90.0
+    private static let supportedPhonRange = 20.0...120.0
     private static let estimatedPhonRange = 20.0...defaultReferencePhon
 
     // MARK: - Volume → Phon Mapping

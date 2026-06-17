@@ -46,7 +46,7 @@ final class LoudnessCompensator: BiquadProcessor, @unchecked Sendable {
     // MARK: - State
 
     /// Phon level used for the last coefficient computation.
-    private var _currentPhon: Double = 80.0
+    private var _currentPhon: Double = 85.0
     private var _currentIntensity: Float = 1.0
 
     // MARK: - Init
@@ -76,7 +76,7 @@ final class LoudnessCompensator: BiquadProcessor, @unchecked Sendable {
         // matching Dolby Volume Modeler / THX Loudness Plus architecture).
         let phon = ISO226Contours.estimatedPhon(fromSystemVolume: systemVolume)
 
-        let clampedIntensity = min(max(intensity, 0.0), 2.5)
+        let clampedIntensity = min(max(intensity, 0.0), 3.0)
         let paramsChanged = clampedIntensity != _currentIntensity
 
         // Coalesce rapid updates, but never skip a disabled processor because re-enabling

@@ -38,7 +38,7 @@ nonisolated struct AppSettings: Codable, Equatable {
 
     // Audio Processing
     var loudnessCompensationEnabled: Bool = false  // ISO 226:2023 equal-loudness contour compensation
-    var loudnessCompensationIntensity: Float = 1.0  // 0.0–2.5, 1.0 = full ISO 226 compensation
+    var loudnessCompensationIntensity: Float = 1.0  // 0.0–3.0, 1.0 = full ISO 226 compensation
     var loudnessEqualizationEnabled: Bool = false  // Real-time loudness equalization
     var loudnessEqualizationIntensity: Float = 1.0  // 0.0–1.0, 1.0 = full AGC normalization
     

@@ -859,6 +859,7 @@ final class AudioEngine {
             autoEQPreampEnabled: settingsManager.autoEQPreampEnabled,
             loudnessVolume: deviceVolume * volumeState.getVolume(for: app.id),
             loudnessCompensationEnabled: settingsManager.appSettings.loudnessCompensationEnabled,
+            loudnessCompensationIntensity: settingsManager.appSettings.loudnessCompensationIntensity,
             loudnessEqualizerSettings: loudnessEqSettings
         )
     }

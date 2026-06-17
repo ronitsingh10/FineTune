@@ -95,7 +95,7 @@ struct AudioTab: View {
                 ) {
                     VolumeSlider(
                         $settings.appSettings.loudnessCompensationIntensity,
-                        range: 0.0...2.5,
+                        range: 0.0...3.0,
                         width: 280
                     )
                 }
