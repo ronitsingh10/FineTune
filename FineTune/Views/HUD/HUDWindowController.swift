@@ -74,10 +74,6 @@ final class HUDWindowController: MediaKeyHUDPresenting {
         showCallCount += 1
         showDidUpdatePanel = false
 
-        guard !isForegroundAppFullscreen() else {
-            logger.debug("Skipping HUD show: foreground app is fullscreen")
-            return
-        }
         guard !popupVisibility.isVisible else {
             logger.debug("Skipping HUD show: popup is visible")
             return
