@@ -24,77 +24,116 @@ final class PostAgcCompressor: @unchecked Sendable {
     // MARK: - Private state (exclusively RT-thread owned after init)
 
     private let settings: PostAgcCompressorSettings
+    private let sampleRate: Float
 
-    /// Linear threshold (10^(thresholdDb / 20)).
-    private let thresholdLinear: Float
+    private final class CompressorBand: @unchecked Sendable {
+        let thresholdOffsetDb: Float
+        let ratio: Float
+        let attackMs: Float
+        let releaseMs: Float
+        let maxReleaseSpeed: Float
+        
+        // Mutable state (RT thread only)
+        var gainReductionDb: Float = 0
+        
+        // Coefficients
+        private var slope: Float = 0
+        private var kneeHalfDb: Float = 0
+        private var attackCoeff: Float = 0
+        private var releaseCoeff: Float = 0
+        private var maxReleaseCoeff: Float = 0
+        
+        init(thresholdOffsetDb: Float, ratio: Float, attackMs: Float, releaseMs: Float, maxReleaseSpeed: Float, sampleRate: Float) {
+            self.thresholdOffsetDb = thresholdOffsetDb
+            self.ratio = ratio
+            self.attackMs = attackMs
+            self.releaseMs = releaseMs
+            self.maxReleaseSpeed = maxReleaseSpeed
+            updateSampleRate(sampleRate)
+        }
+        
+        func updateSampleRate(_ sampleRate: Float) {
+            self.slope = 1.0 - 1.0 / max(ratio, 1.0)
+            self.kneeHalfDb = 0.1 * 0.5 // Default knee is 0.1 dB
+            let samplePeriodMs: Float = 1000.0 / sampleRate
+            let attackTau = attackMs / 1.966
+            self.attackCoeff = LoudnessEqualizerMath.timeConstantCoefficient(timeMs: attackTau, stepMs: samplePeriodMs)
+            self.releaseCoeff = LoudnessEqualizerMath.timeConstantCoefficient(timeMs: releaseMs, stepMs: samplePeriodMs)
+            let maxReleaseSpeed = max(self.maxReleaseSpeed, 0.001)
+            self.maxReleaseCoeff = LoudnessEqualizerMath.timeConstantCoefficient(timeMs: releaseMs / maxReleaseSpeed, stepMs: samplePeriodMs)
+        }
+        
+        func calculateGainReduction(levelDb: Float, globalThresholdDb: Float) -> Float {
+            let bandThresholdDb = globalThresholdDb + thresholdOffsetDb
+            let desiredGrDb: Float
+            let kneeDb: Float = 0.1
+            if levelDb > bandThresholdDb - kneeHalfDb && levelDb < bandThresholdDb + kneeHalfDb {
+                let x = levelDb - bandThresholdDb + kneeHalfDb
+                let kneeFactor = (x * x) / (2.0 * max(kneeDb, 1e-6))
+                desiredGrDb = -slope * kneeFactor
+            } else if levelDb >= bandThresholdDb + kneeHalfDb {
+                let overshootDb = levelDb - bandThresholdDb
+                desiredGrDb = -slope * overshootDb
+            } else {
+                desiredGrDb = 0
+            }
+            
+            if desiredGrDb < gainReductionDb {
+                gainReductionDb += attackCoeff * (desiredGrDb - gainReductionDb)
+            } else {
+                var adjustedRelease = releaseCoeff
+                // Exponential release: factor is 0.8
+                let expRelease: Float = 0.8
+                let maxReleaseDb: Float = 12.0
+                let normalized = min(abs(gainReductionDb) / maxReleaseDb, 1.0)
+                let expFactor = 1.0 - expRelease * (1.0 - normalized * normalized)
+                adjustedRelease = releaseCoeff * max(expFactor, 0.01)
+                adjustedRelease = min(adjustedRelease, maxReleaseCoeff)
+                gainReductionDb += adjustedRelease * (desiredGrDb - gainReductionDb)
+            }
+            
+            if gainReductionDb > 0 { gainReductionDb = 0 }
+            return LoudnessEqualizerMath.dbToLinear(gainReductionDb)
+        }
+    }
 
-    /// Compression slope: 1 - 1/ratio.
-    private let slope: Float
+    private let band1: CompressorBand
+    private let band2: CompressorBand
+    private let band3: CompressorBand
 
-    /// Attack coefficient per sample (one-pole).
-    private let attackCoeff: Float
-
-    /// Release coefficient per sample (one-pole).
-    private let releaseCoeff: Float
-
-    /// Half the knee width in dB.
-    private let kneeHalfDb: Float
-
-    /// Maximum release coefficient (capped by Max Release Speed).
-    /// Prevents the release coefficient from exceeding this cap,
-    /// which avoids excessively fast recovery at deep gain reduction.
-    private let maxReleaseCoeff: Float
-
-
-    /// Current gain reduction in dB (≤ 0). Initialized to 0 (no reduction).
-    private var gainReductionDb: Float = 0
-
-    /// Sidechain high-pass filters (one per channel) to pre-filter peak detector input.
-    private var sidechainFilters: [BiquadSection]
+    private var crossover200Hz: [LinkwitzRileyCrossover2] = []
+    private var crossover77Hz: [LinkwitzRileyCrossover2] = []
 
     // MARK: - Init
 
     init(settings: PostAgcCompressorSettings, sampleRate: Float) {
         self.settings = settings
-        self.thresholdLinear = LoudnessEqualizerMath.dbToLinear(settings.thresholdDb)
-        self.slope = 1.0 - 1.0 / max(settings.ratio, 1.0)
-        self.kneeHalfDb = settings.kneeDb * 0.5
+        self.sampleRate = sampleRate
 
-        let samplePeriodMs: Float = 1000.0 / sampleRate
-
-        // Attack (time to drop 86%) → one-pole time constant τ.
-        // For a one-pole system: 1 - exp(-attackMs / τ) = 0.86
-        // → τ = attackMs / ln(1 / 0.14) = attackMs / 1.966
-        let attackTau = settings.attackMs / 1.966
-        self.attackCoeff = LoudnessEqualizerMath.timeConstantCoefficient(
-            timeMs: attackTau, stepMs: samplePeriodMs
+        self.band1 = CompressorBand(
+            thresholdOffsetDb: -8.9,
+            ratio: 4.0,
+            attackMs: 67.0,
+            releaseMs: 1080.0,
+            maxReleaseSpeed: settings.maxReleaseSpeed,
+            sampleRate: sampleRate
         )
-
-        // Release (time to rise 10 dB) is already equivalent to
-        // the one-pole time constant (the time needed to rise 10 dB from the
-        // initial rate), so it is used directly as τ.
-        self.releaseCoeff = LoudnessEqualizerMath.timeConstantCoefficient(
-            timeMs: settings.releaseMs, stepMs: samplePeriodMs
+        self.band2 = CompressorBand(
+            thresholdOffsetDb: -6.0,
+            ratio: 4.0,
+            attackMs: 52.0,
+            releaseMs: 599.0,
+            maxReleaseSpeed: settings.maxReleaseSpeed,
+            sampleRate: sampleRate
         )
-
-        // Max Release Speed cap (default: 0.502502918).
-        // Caps the release coefficient to prevent fast recovery at deep GR.
-        // releaseMs / maxReleaseSpeed yields a shorter effective time constant,
-        // which we then convert to a coefficient cap.
-        let maxReleaseSpeed = max(settings.maxReleaseSpeed, 0.001) // avoid division by zero
-        self.maxReleaseCoeff = LoudnessEqualizerMath.timeConstantCoefficient(
-            timeMs: settings.releaseMs / maxReleaseSpeed, stepMs: samplePeriodMs
+        self.band3 = CompressorBand(
+            thresholdOffsetDb: 0.0,
+            ratio: settings.ratio,
+            attackMs: settings.attackMs,
+            releaseMs: settings.releaseMs,
+            maxReleaseSpeed: settings.maxReleaseSpeed,
+            sampleRate: sampleRate
         )
-
-
-        // Configure 200 Hz Butterworth HPF sidechain coefficients
-        let coeffs = BiquadMath.highPassCoefficients(
-            frequency: 200.0,
-            q: 1.0 / sqrt(2.0),
-            sampleRate: Double(sampleRate)
-        )
-        // Default to stereo (2) filters, but support any number of channels dynamically.
-        self.sidechainFilters = []
     }
 
     // MARK: - Public API
@@ -104,6 +143,10 @@ final class PostAgcCompressor: @unchecked Sendable {
 
     /// The current settings snapshot (read from main thread for creating replacement instances).
     var currentSettings: PostAgcCompressorSettings { settings }
+
+    private var band1Samples: [Float] = []
+    private var band2Samples: [Float] = []
+    private var band3Samples: [Float] = []
 
     /// Process audio from an interleaved input buffer to an interleaved output buffer.
     ///
@@ -127,99 +170,56 @@ final class PostAgcCompressor: @unchecked Sendable {
             return
         }
 
-        // Dynamically match filter count to channel count if it doesn't match,
-        // though in practice it is stereo. Since this only mutates self.sidechainFilters
-        // and we allocate once per channelCount change, it is RT-safe once settled.
-        if sidechainFilters.count != channelCount {
-            let coeffs = BiquadMath.highPassCoefficients(
-                frequency: 200.0,
-                q: 1.0 / sqrt(2.0),
-                sampleRate: Double(1000.0 / (1000.0 / (thresholdLinear > 0 ? 48000.0 : 48000.0))) // fallback, actually read below
-            )
-            // Re-initialize filters for new channel layout
-            let sampleRate = Float(1000.0 / (1000.0 / 48000.0)) // default/fallback
-            let actualCoeffs = BiquadMath.highPassCoefficients(
-                frequency: 200.0,
-                q: 1.0 / sqrt(2.0),
-                // We use standard coeffs as they are precomputed in init, but if channelCount changes
-                // dynamically (rare), we reconstitute.
-                sampleRate: Double(48000.0)
-            )
-            sidechainFilters = (0..<channelCount).map { _ in BiquadSection(coefficients: actualCoeffs) }
+        // Dynamically match filter and buffer counts to channel count if it doesn't match,
+        // though in practice it is stereo. Since this only mutates properties on change,
+        // it is RT-safe once settled.
+        if crossover200Hz.count != channelCount {
+            crossover200Hz = (0..<channelCount).map { _ in LinkwitzRileyCrossover2(frequency: 200.0, sampleRate: Double(sampleRate)) }
+            crossover77Hz = (0..<channelCount).map { _ in LinkwitzRileyCrossover2(frequency: 77.0, sampleRate: Double(sampleRate)) }
+            band1Samples = [Float](repeating: 0, count: channelCount)
+            band2Samples = [Float](repeating: 0, count: channelCount)
+            band3Samples = [Float](repeating: 0, count: channelCount)
         }
 
-        let thresholdDb = settings.thresholdDb
-        let slopeVal = slope
-        let attack = attackCoeff
-        let release = releaseCoeff
-        let kneeDb = settings.kneeDb
-        let kneeHalf = kneeHalfDb
-        let expRelease = settings.exponentialRelease
-
-        var grDb = gainReductionDb
+        let globalThresholdDb = settings.thresholdDb
 
         for frame in 0..<frameCount {
             let base = frame * channelCount
 
-            // 1. Peak detection across channels for this frame (using HPF filtered sidechain)
-            var peak: Float = 0
+            var peakBand1: Float = 0
+            var peakBand2: Float = 0
+            var peakBand3: Float = 0
+
             for ch in 0..<channelCount {
                 let sample = input[base + ch]
-                let filtered = sidechainFilters[ch].process(sample)
-                let absVal = abs(filtered)
-                if absVal > peak { peak = absVal }
+                let (low200, high200) = crossover200Hz[ch].process(sample)
+                let (low77, high77) = crossover77Hz[ch].process(low200)
+
+                band1Samples[ch] = low77
+                band2Samples[ch] = high77
+                band3Samples[ch] = high200
+
+                let abs1 = abs(low77)
+                let abs2 = abs(high77)
+                let abs3 = abs(high200)
+
+                if abs1 > peakBand1 { peakBand1 = abs1 }
+                if abs2 > peakBand2 { peakBand2 = abs2 }
+                if abs3 > peakBand3 { peakBand3 = abs3 }
             }
 
-            let levelDb = LoudnessEqualizerMath.linearToDb(peak)
+            let level1Db = LoudnessEqualizerMath.linearToDb(peakBand1)
+            let level2Db = LoudnessEqualizerMath.linearToDb(peakBand2)
+            let level3Db = LoudnessEqualizerMath.linearToDb(peakBand3)
 
-            // 2. Desired gain reduction with optional soft knee
-            let desiredGrDb: Float
-            if levelDb > thresholdDb - kneeHalf && levelDb < thresholdDb + kneeHalf && kneeDb > 0 {
-                // Soft knee region
-                let x = levelDb - thresholdDb + kneeHalf
-                let kneeFactor = (x * x) / (2.0 * max(kneeDb, 1e-6))
-                desiredGrDb = -slopeVal * kneeFactor
-            } else if levelDb >= thresholdDb + kneeHalf {
-                // Above threshold: compress
-                let overshootDb = levelDb - thresholdDb
-                desiredGrDb = -slopeVal * overshootDb
-            } else {
-                // Below threshold: no compression
-                desiredGrDb = 0
-            }
+            let gain1 = band1.calculateGainReduction(levelDb: level1Db, globalThresholdDb: globalThresholdDb)
+            let gain2 = band2.calculateGainReduction(levelDb: level2Db, globalThresholdDb: globalThresholdDb)
+            let gain3 = band3.calculateGainReduction(levelDb: level3Db, globalThresholdDb: globalThresholdDb)
 
-            // 3. Envelope follower (attack/release)
-            if desiredGrDb < grDb {
-                // Attack: gain reduction increases (becomes more negative)
-                grDb += attack * (desiredGrDb - grDb)
-            } else {
-                // Release: gain reduction decreases (moves toward 0)
-
-                var adjustedRelease = release
-                if expRelease > 0 {
-                    // Exponential release: slower as we approach 0 dB gain reduction
-                    let maxReleaseDb: Float = 12.0
-                    let normalized = min(abs(grDb) / maxReleaseDb, 1.0)
-                    let expFactor = 1.0 - expRelease * (1.0 - normalized * normalized)
-                    adjustedRelease = release * max(expFactor, 0.01)
-                }
-                // Cap release speed by Max Release Speed
-                adjustedRelease = min(adjustedRelease, maxReleaseCoeff)
-                grDb += adjustedRelease * (desiredGrDb - grDb)
-            }
-
-            // Clamp to ≤ 0 (downward-only)
-            if grDb > 0 { grDb = 0 }
-
-            // 4. Apply gain reduction to original unfiltered signal
-            let gainLin = LoudnessEqualizerMath.dbToLinear(grDb)
             for ch in 0..<channelCount {
-                output[base + ch] = input[base + ch] * gainLin
+                output[base + ch] = band1Samples[ch] * gain1 + band2Samples[ch] * gain2 + band3Samples[ch] * gain3
             }
         }
-
-        // Persist state for next call
-        gainReductionDb = grDb
     }
 }
 
