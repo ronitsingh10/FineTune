@@ -49,9 +49,7 @@ final class AudioEngine {
     private var staleCleanupTask: Task<Void, Never>?  // Debounced cleanup scheduling
     private var healthMonitorTask: Task<Void, Never>?  // Periodic tap health monitor
     private var tapRecoveryCooldownUntil: [pid_t: Date] = [:]  // Prevents tap recreation thrashing
-    /// Track the applied volume offset (in scalar range 0.0...1.0) per device UID
-    internal var appliedLoudnessOffsets: [String: Float] = [:]
-    private var pendingProgrammaticLoudnessVolumes: [String: Float] = [:]
+
     private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "FineTune", category: "AudioEngine")
 
     // MARK: - Priority State Machine
@@ -323,20 +321,7 @@ final class AudioEngine {
             guard let self else { return }
             guard let deviceUID = self.deviceMonitor.outputDevices.first(where: { $0.id == deviceID })?.uid else { return }
             let loudnessEnabled = self.settingsManager.getLoudnessCompensationEnabled(for: deviceUID)
-            let isProgrammaticLoudnessVolume = self.consumeProgrammaticLoudnessVolume(for: deviceUID, volume: newVolume)
-
-            if loudnessEnabled && !isProgrammaticLoudnessVolume {
-                let referencePhon = self.settingsManager.getLoudnessReferencePhon(for: deviceUID)
-                var originalVolume = newVolume
-                var currentOffset: Float = 0.0
-                for _ in 0..<3 {
-                    originalVolume = max(0.0, min(1.0, newVolume - currentOffset))
-                    let peakDB = self.computeHeadroomOffsetDB(for: deviceUID, systemVolume: originalVolume, referencePhon: referencePhon)
-                    currentOffset = Float(peakDB / 100.0)
-                }
-                self.appliedLoudnessOffsets[deviceUID] = currentOffset
-            }
-
+            
             for (_, tap) in self.taps {
                 if tap.currentDeviceUID == deviceUID {
                     tap.currentDeviceVolume = newVolume
@@ -345,10 +330,9 @@ final class AudioEngine {
                         tap.volume = self.effectiveVolume(for: tap.app.id, deviceUIDs: tap.currentDeviceUIDs)
                     }
                     let referencePhon = self.settingsManager.getLoudnessReferencePhon(for: deviceUID)
-                    let isLoudnessActuallyEnabled = loudnessEnabled && (self.appliedLoudnessOffsets[deviceUID] ?? 0.0) > 1e-4
                     tap.updateLoudnessCompensation(
                         volume: self.effectiveLoudnessVolume(for: tap),
-                        enabled: isLoudnessActuallyEnabled,
+                        enabled: loudnessEnabled,
                         referencePhon: referencePhon,
                         gainScale: loudnessEnabled ? 1.0 : 0.0
                     )
@@ -636,7 +620,6 @@ final class AudioEngine {
         appliedPIDs.removeAll()
         appDeviceRouting.removeAll()
         followsDefault.removeAll()
-        appliedLoudnessOffsets.removeAll()
 
         // 3. Clear cached per-app audio state
         volumeState.resetAll()
@@ -673,10 +656,9 @@ final class AudioEngine {
             let loudnessEnabled = tap.currentDeviceUID.map { settingsManager.getLoudnessCompensationEnabled(for: $0) } ?? false
             if loudnessEnabled, let firstDeviceUID = tap.currentDeviceUID {
                 let referencePhon = settingsManager.getLoudnessReferencePhon(for: firstDeviceUID)
-                let isLoudnessActuallyEnabled = loudnessEnabled && (self.appliedLoudnessOffsets[firstDeviceUID] ?? 0.0) > 1e-4
                 tap.updateLoudnessCompensation(
                     volume: effectiveLoudnessVolume(for: tap),
-                    enabled: isLoudnessActuallyEnabled,
+                    enabled: loudnessEnabled,
                     referencePhon: referencePhon,
                     gainScale: 1.0
                 )
@@ -723,57 +705,16 @@ final class AudioEngine {
         guard let deviceUID = tap.currentDeviceUID else {
             return tap.currentDeviceVolume * volumeState.getVolume(for: tap.app.id)
         }
-        let loudnessEnabled = settingsManager.getLoudnessCompensationEnabled(for: deviceUID)
-        let offset = loudnessEnabled ? (appliedLoudnessOffsets[deviceUID] ?? 0.0) : 0.0
-        let originalDeviceVolume = max(0.0, tap.currentDeviceVolume - offset)
-        return originalDeviceVolume * volumeState.getVolume(for: tap.app.id)
+        return tap.currentDeviceVolume * volumeState.getVolume(for: tap.app.id)
     }
 
-    private func computeHeadroomOffsetDB(for deviceUID: String, systemVolume: Float, referencePhon: Double) -> Double {
-        guard let device = deviceMonitor.device(for: deviceUID) else { return 0.0 }
-        let sampleRate = (try? device.id.readNominalSampleRate()) ?? 48000.0
-        
-        let phon = ISO226Contours.estimatedPhon(fromSystemVolume: systemVolume, referencePhon: referencePhon)
-        let gains = LoudnessCompensator.fittedSectionGains(forPhon: phon, referencePhon: referencePhon, sampleRate: sampleRate)
-        let realized = LoudnessCompensator.realizedResponseDB(sectionGains: gains.map(Double.init), sampleRate: sampleRate)
-        
-        let frequencies = LoudnessCompensator.fitGridFrequencies()
-        var peakDB = 0.0
-        for (index, freq) in frequencies.enumerated() {
-            if freq >= 30.0 {
-                peakDB = max(peakDB, realized[index])
-            }
-        }
-        return peakDB
-    }
-
-    private func ensureLoudnessOffset(for deviceUID: String, systemVolume: Float, referencePhon: Double) -> Float {
-        if let offset = appliedLoudnessOffsets[deviceUID] {
-            return offset
-        }
-        let offset = Float(computeHeadroomOffsetDB(for: deviceUID, systemVolume: systemVolume, referencePhon: referencePhon) / 100.0)
-        appliedLoudnessOffsets[deviceUID] = offset
-        return offset
-    }
-
-    private func expectProgrammaticLoudnessVolume(for deviceUID: String, volume: Float) {
-        pendingProgrammaticLoudnessVolumes[deviceUID] = volume
-    }
-
-    private func consumeProgrammaticLoudnessVolume(for deviceUID: String, volume: Float) -> Bool {
-        guard let expected = pendingProgrammaticLoudnessVolumes.removeValue(forKey: deviceUID) else {
-            return false
-        }
-        return abs(expected - volume) < 0.001
-    }
 
     private func updateTapsLoudness(deviceUID: String, enabled: Bool, referencePhon: Double, gainScale: Float) {
-        let isLoudnessActuallyEnabled = enabled && (appliedLoudnessOffsets[deviceUID] ?? 0.0) > 1e-4
         for tap in taps.values {
             guard tap.currentDeviceUID == deviceUID else { continue }
             tap.updateLoudnessCompensation(
                 volume: effectiveLoudnessVolume(for: tap),
-                enabled: isLoudnessActuallyEnabled,
+                enabled: enabled,
                 referencePhon: referencePhon,
                 gainScale: gainScale
             )
@@ -885,74 +826,13 @@ final class AudioEngine {
     func setLoudnessCompensationEnabled(for deviceUID: String, enabled: Bool) {
         settingsManager.setLoudnessCompensationEnabled(for: deviceUID, to: enabled)
         let referencePhon = settingsManager.getLoudnessReferencePhon(for: deviceUID)
-        
-        if let device = deviceMonitor.device(for: deviceUID) {
-            let b = outputVolumeBackend(for: device.id)
-            let currentVolume = deviceVolumeMonitor.volumes[device.id] ?? 1.0
-            
-            if enabled {
-                let offsetScalar = ensureLoudnessOffset(
-                    for: deviceUID,
-                    systemVolume: currentVolume,
-                    referencePhon: referencePhon
-                )
-                
-                if b == .hardware || b == .ddc {
-                    let endVol = min(1.0, currentVolume + offsetScalar)
-                    expectProgrammaticLoudnessVolume(for: deviceUID, volume: endVol)
-                    deviceVolumeMonitor.setVolume(for: device.id, to: endVol)
-                    for tap in taps.values {
-                        if tap.currentDeviceUID == deviceUID {
-                            tap.currentDeviceVolume = endVol
-                        }
-                    }
-                }
-            } else {
-                let offsetScalar = appliedLoudnessOffsets[deviceUID] ?? 0.0
-                appliedLoudnessOffsets[deviceUID] = nil
-                
-                if b == .hardware || b == .ddc {
-                    let endVol = max(0.0, currentVolume - offsetScalar)
-                    expectProgrammaticLoudnessVolume(for: deviceUID, volume: endVol)
-                    deviceVolumeMonitor.setVolume(for: device.id, to: endVol)
-                    for tap in taps.values {
-                        if tap.currentDeviceUID == deviceUID {
-                            tap.currentDeviceVolume = endVol
-                        }
-                    }
-                }
-            }
-        }
-        
         updateTapsLoudness(deviceUID: deviceUID, enabled: enabled, referencePhon: referencePhon, gainScale: enabled ? 1.0 : 0.0)
     }
 
     func setLoudnessReferencePhon(for deviceUID: String, to referencePhon: Double) {
         settingsManager.setLoudnessReferencePhon(for: deviceUID, to: referencePhon)
         let enabled = settingsManager.getLoudnessCompensationEnabled(for: deviceUID)
-        
-        if enabled, let device = deviceMonitor.device(for: deviceUID) {
-            let currentVolume = deviceVolumeMonitor.volumes[device.id] ?? 1.0
-            var originalVolume = currentVolume
-            var currentOffset: Float = 0.0
-            for _ in 0..<3 {
-                originalVolume = max(0.0, min(1.0, currentVolume - currentOffset))
-                let peakDB = computeHeadroomOffsetDB(for: deviceUID, systemVolume: originalVolume, referencePhon: referencePhon)
-                currentOffset = Float(peakDB / 100.0)
-            }
-            appliedLoudnessOffsets[deviceUID] = currentOffset
-        }
-        
-        let isLoudnessActuallyEnabled = enabled && (appliedLoudnessOffsets[deviceUID] ?? 0.0) > 1e-4
-        for tap in taps.values {
-            guard tap.currentDeviceUID == deviceUID else { continue }
-            tap.updateLoudnessCompensation(
-                volume: effectiveLoudnessVolume(for: tap),
-                enabled: isLoudnessActuallyEnabled,
-                referencePhon: referencePhon,
-                gainScale: enabled ? 1.0 : 0.0
-            )
-        }
+        updateTapsLoudness(deviceUID: deviceUID, enabled: enabled, referencePhon: referencePhon, gainScale: enabled ? 1.0 : 0.0)
     }
 
 
@@ -977,17 +857,12 @@ final class AudioEngine {
         loudnessEqSettings.enabled = false
         let loudnessEnabled = settingsManager.getLoudnessCompensationEnabled(for: primaryDeviceUID)
         let referencePhon = settingsManager.getLoudnessReferencePhon(for: primaryDeviceUID)
-        let offset = loudnessEnabled
-            ? ensureLoudnessOffset(for: primaryDeviceUID, systemVolume: deviceVolume, referencePhon: referencePhon)
-            : 0.0
-        let originalDeviceVolume = max(0.0, deviceVolume - offset)
-        let isLoudnessActuallyEnabled = loudnessEnabled && offset > 1e-4
         return TapInitialState(
             eqSettings: settingsManager.getEQSettings(for: app.persistenceIdentifier),
             autoEQProfile: autoEQProfileForActivation(deviceUID: primaryDeviceUID),
             autoEQPreampEnabled: settingsManager.autoEQPreampEnabled,
-            loudnessVolume: originalDeviceVolume * volumeState.getVolume(for: app.id),
-            loudnessCompensationEnabled: isLoudnessActuallyEnabled,
+            loudnessVolume: deviceVolume * volumeState.getVolume(for: app.id),
+            loudnessCompensationEnabled: loudnessEnabled,
             loudnessReferencePhon: referencePhon,
             loudnessEqualizerSettings: loudnessEqSettings
         )
@@ -1039,13 +914,9 @@ final class AudioEngine {
         guard let deviceUID = tap.currentDeviceUID else { return }
         let enabled = settingsManager.getLoudnessCompensationEnabled(for: deviceUID)
         let referencePhon = settingsManager.getLoudnessReferencePhon(for: deviceUID)
-        if enabled {
-            _ = ensureLoudnessOffset(for: deviceUID, systemVolume: tap.currentDeviceVolume, referencePhon: referencePhon)
-        }
-        let isLoudnessActuallyEnabled = enabled && (appliedLoudnessOffsets[deviceUID] ?? 0.0) > 1e-4
         tap.updateLoudnessCompensation(
             volume: effectiveLoudnessVolume(for: tap),
-            enabled: isLoudnessActuallyEnabled,
+            enabled: enabled,
             referencePhon: referencePhon,
             gainScale: enabled ? 1.0 : 0.0
         )
