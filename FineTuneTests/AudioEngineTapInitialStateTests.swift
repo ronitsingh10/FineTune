@@ -64,6 +64,10 @@ final class RecordingProcessTapController: ProcessTapControlling {
         self.currentDeviceUIDs = deviceUIDs
     }
 
+    func clearEvents() {
+        events.removeAll()
+    }
+
     func activate(initial: TapInitialState) throws {
         events.append(.activate(TapInitialStateSnapshot(initial)))
     }
@@ -104,6 +108,7 @@ final class RecordingProcessTapController: ProcessTapControlling {
     func isHealthCheckEligible(minActiveSeconds: Double) -> Bool { false }
 
     func refreshTapSource(_ preferredDeviceUID: String?) async throws {}
+    func recreateForOutputRateChange() async throws {}
 }
 
 // MARK: - Process monitor stub
@@ -235,27 +240,13 @@ struct AudioEngineTapInitialStateTests {
         #expect(snap.autoEQPreampEnabled == value)
     }
 
-    @Test("loudnessCompensationEnabled mirrors appSettings.loudnessCompensationEnabled",
-          arguments: [true, false])
-    func loudnessCompensationFlagMirrored(value: Bool) throws {
-        let fix = makeFixture()
-        var s = fix.settings.appSettings
-        s.loudnessCompensationEnabled = value
-        fix.settings.updateAppSettings(s)
 
-        fix.engine.setDevice(for: fix.app, deviceUID: fix.device.uid)
 
-        let snap = try #require(capturedInitial(fix))
-        #expect(snap.loudnessCompensationEnabled == value)
-    }
-
-    @Test("loudnessEqualizerSettings.enabled mirrors appSettings.loudnessEqualizationEnabled",
+    @Test("loudnessEqualizerSettings.enabled mirrors per-device settings",
           arguments: [true, false])
     func loudnessEqualizerFlagMirrored(value: Bool) throws {
         let fix = makeFixture()
-        var s = fix.settings.appSettings
-        s.loudnessEqualizationEnabled = value
-        fix.settings.updateAppSettings(s)
+        fix.settings.setLoudnessEqualizationEnabled(for: fix.device.uid, to: value)
 
         fix.engine.setDevice(for: fix.app, deviceUID: fix.device.uid)
 
@@ -372,10 +363,7 @@ struct AudioEngineTapInitialStateTests {
         )
         let custom = EQSettings(bandGains: [1, 1, 1, 1, 1, 1, 1, 1, 1, 1], isEnabled: true)
         fix.settings.setEQSettings(custom, for: fix.app.persistenceIdentifier)
-        var s = fix.settings.appSettings
-        s.loudnessCompensationEnabled = true
-        s.loudnessEqualizationEnabled = true
-        fix.settings.updateAppSettings(s)
+        fix.settings.setLoudnessEqualizationEnabled(for: fix.device.uid, to: true)
 
         fix.engine.setDevice(for: fix.app, deviceUID: fix.device.uid)
 
@@ -425,6 +413,40 @@ struct AudioEngineTapInitialStateTests {
             return nil
         }
         #expect(postActivateAutoEQ.contains(where: { $0 == nil }))
+    }
+
+    @Test("Smart Volume settings are re-applied to tap after device switches")
+    func smartVolumeReappliedOnSwitch() async throws {
+        let fix = makeFixture()
+        let secondDevice = AudioDevice(
+            id: AudioDeviceID(100),
+            uid: "uid-second",
+            name: "Second Output",
+            icon: nil,
+            supportsAutoEQ: true
+        )
+        fix.deviceMonitor.addOutputDevice(secondDevice)
+        
+        // 1. Initial routing (device is "uid-test", loudness equalization default is false)
+        fix.engine.setDevice(for: fix.app, deviceUID: fix.device.uid)
+        let tap = try #require(fix.lastTap())
+        tap.clearEvents()
+        
+        // 2. Enable loudness equalization for the second device
+        fix.settings.setLoudnessEqualizationEnabled(for: secondDevice.uid, to: true)
+        
+        // 3. Switch device to the second device
+        fix.engine.setDevice(for: fix.app, deviceUID: secondDevice.uid)
+        
+        // Allow tasks to run
+        try await Task.sleep(nanoseconds: 50_000_000)
+        
+        // 4. Verify that .updateLoudnessEqualization(enabled: true) was called on the tap
+        let loudnessEvents = tap.events.compactMap { event -> LoudnessEqualizerSettings? in
+            if case let .updateLoudnessEqualization(settings) = event { return settings }
+            return nil
+        }
+        #expect(loudnessEvents.contains(where: { $0.enabled == true }))
     }
 }
 

@@ -240,18 +240,6 @@ struct AppSettingsDefaultTests {
         #expect(decoded.loudnessEqualizationEnabled == true)
     }
 
-    @Test("Unified loudness toggle updates compensation and equalization together")
-    func unifiedLoudnessToggleSetsBothFlags() {
-        var settings = AppSettings()
-
-        settings.setUnifiedLoudnessEnabled(true)
-        #expect(settings.loudnessCompensationEnabled == true)
-        #expect(settings.loudnessEqualizationEnabled == true)
-
-        settings.setUnifiedLoudnessEnabled(false)
-        #expect(settings.loudnessCompensationEnabled == false)
-        #expect(settings.loudnessEqualizationEnabled == false)
-    }
 
     @Test("loudnessEqualizationEnabled persists via SettingsManager")
     @MainActor

@@ -319,7 +319,7 @@ final class AudioEngine {
         deviceVolumeMonitor.onVolumeChanged = { [weak self] deviceID, newVolume in
             guard let self else { return }
             guard let deviceUID = self.deviceMonitor.outputDevices.first(where: { $0.id == deviceID })?.uid else { return }
-            let loudnessEnabled = self.settingsManager.appSettings.loudnessCompensationEnabled
+            let loudnessEnabled = false
             for (_, tap) in self.taps {
                 if tap.currentDeviceUID == deviceUID {
                     tap.currentDeviceVolume = newVolume
@@ -634,23 +634,17 @@ final class AudioEngine {
         applyPersistedSettings()
 
         logger.info("Settings reset: engine state synchronized")
-    }
+     }
 
-    func setVolume(for app: AudioApp, to volume: Float) {
-        volumeState.setVolume(for: app.id, to: volume, identifier: app.persistenceIdentifier)
-        if let deviceUID = appDeviceRouting[app.id] {
-            ensureTapExists(for: app, deviceUID: deviceUID)
-        }
-        if let tap = taps[app.id] {
-            tap.volume = effectiveVolume(for: app.id, deviceUIDs: tap.currentDeviceUIDs)
-            if settingsManager.appSettings.loudnessCompensationEnabled {
-                tap.updateLoudnessCompensation(
-                    volume: effectiveLoudnessVolume(for: tap),
-                    enabled: true
-                )
-            }
-        }
-    }
+     func setVolume(for app: AudioApp, to volume: Float) {
+         volumeState.setVolume(for: app.id, to: volume, identifier: app.persistenceIdentifier)
+         if let deviceUID = appDeviceRouting[app.id] {
+             ensureTapExists(for: app, deviceUID: deviceUID)
+         }
+         if let tap = taps[app.id] {
+             tap.volume = effectiveVolume(for: app.id, deviceUIDs: tap.currentDeviceUIDs)
+         }
+     }
 
     func getVolume(for app: AudioApp) -> Float {
         volumeState.getVolume(for: app.id)
@@ -693,6 +687,9 @@ final class AudioEngine {
     private func effectiveLoudnessVolume(for tap: any ProcessTapControlling) -> Float {
         tap.currentDeviceVolume * volumeState.getVolume(for: tap.app.id)
     }
+
+
+
 
     private func applyTapOutputState(to tap: any ProcessTapControlling, for pid: pid_t, deviceUIDs: [String]? = nil) {
         let resolvedUIDs = deviceUIDs ?? tap.currentDeviceUIDs
@@ -800,10 +797,14 @@ final class AudioEngine {
         }
     }
 
-    func setLoudnessEqualizationEnabled(_ enabled: Bool) {
+
+
+    func setLoudnessEqualizationEnabled(for deviceUID: String, enabled: Bool) {
+        settingsManager.setLoudnessEqualizationEnabled(for: deviceUID, to: enabled)
         var settings = LoudnessEqualizerSettings()
         settings.enabled = enabled
         for tap in taps.values {
+            guard tap.currentDeviceUID == deviceUID else { continue }
             tap.updateLoudnessEqualization(settings)
         }
     }
@@ -824,14 +825,16 @@ final class AudioEngine {
     }
 
     private func tapInitialState(forApp app: AudioApp, primaryDeviceUID: String, deviceVolume: Float) -> TapInitialState {
+        // Build initial LoudnessEqualizerSettings (Smart Volume).
+        // Note: Populate other settings here if they become customizable per-device.
         var loudnessEqSettings = LoudnessEqualizerSettings()
-        loudnessEqSettings.enabled = settingsManager.appSettings.loudnessEqualizationEnabled
+        loudnessEqSettings.enabled = settingsManager.getLoudnessEqualizationEnabled(for: primaryDeviceUID)
         return TapInitialState(
             eqSettings: settingsManager.getEQSettings(for: app.persistenceIdentifier),
             autoEQProfile: autoEQProfileForActivation(deviceUID: primaryDeviceUID),
             autoEQPreampEnabled: settingsManager.autoEQPreampEnabled,
             loudnessVolume: deviceVolume * volumeState.getVolume(for: app.id),
-            loudnessCompensationEnabled: settingsManager.appSettings.loudnessCompensationEnabled,
+            loudnessCompensationEnabled: false,
             loudnessEqualizerSettings: loudnessEqSettings
         )
     }
@@ -876,6 +879,17 @@ final class AudioEngine {
                   latestSelection.isEnabled else { return }
             tap.updateAutoEQProfile(profile)
         }
+    }
+
+    /// Applies loudness equalization (Smart Volume) settings to the tap.
+    /// - Note: Currently, only the `enabled` field is loaded from the settings manager
+    ///   as other `LoudnessEqualizerSettings` fields are not customizable per-device.
+    ///   If per-device tuning fields are introduced in the future, populate them here.
+    private func applyLoudnessEqualizationToTap(_ tap: any ProcessTapControlling) {
+        guard let deviceUID = tap.currentDeviceUID else { return }
+        var settings = LoudnessEqualizerSettings()
+        settings.enabled = settingsManager.getLoudnessEqualizationEnabled(for: deviceUID)
+        tap.updateLoudnessEqualization(settings)
     }
 
     /// Sets the system default output device, routes followsDefault apps, and registers
@@ -945,9 +959,12 @@ final class AudioEngine {
                     try await tap.switchDevice(to: targetUID, preferredTapSourceDeviceUID: preferredTapSourceUID)
                     self.applyTapOutputState(to: tap, for: app.id, deviceUIDs: [targetUID])
                     self.applyAutoEQToTap(tap)
+                    self.applyLoudnessEqualizationToTap(tap)
                     self.logger.debug("Switched \(app.name) to device: \(targetUID)")
                 } catch {
                     self.logger.error("Failed to switch device for \(app.name): \(error.localizedDescription)")
+                    self.logger.info("Falling back to recreateTap for \(app.name)")
+                    await self.recreateTap(for: app.id)
                 }
             }
         } else {
@@ -1037,6 +1054,8 @@ final class AudioEngine {
                     let preferredTapSourceUID = preferredTapSourceDeviceUID(forOutputUIDs: deviceUIDs, isFollowsDefault: followsDefault.contains(app.id))
                     try await tap.updateDevices(to: deviceUIDs, preferredTapSourceDeviceUID: preferredTapSourceUID)
                     applyTapOutputState(to: tap, for: app.id, deviceUIDs: deviceUIDs)
+                    applyAutoEQToTap(tap)
+                    applyLoudnessEqualizationToTap(tap)
                     logger.debug("Updated \(app.name) to \(deviceUIDs.count) device(s)")
                 } catch {
                     logger.error("Failed to update devices for \(app.name): \(error.localizedDescription)")
@@ -1067,7 +1086,6 @@ final class AudioEngine {
             try tap.activate(initial: initial)
             taps[app.id] = tap
 
-            // Catalog AutoEQ may not have been cached yet — kick off async resolve.
             if initial.autoEQProfile == nil {
                 applyAutoEQToTap(tap)
             }
@@ -1181,8 +1199,11 @@ final class AudioEngine {
                         try await existingTap.switchDevice(to: deviceUID, preferredTapSourceDeviceUID: preferredSource)
                         self.applyTapOutputState(to: existingTap, for: app.id, deviceUIDs: [deviceUID])
                         self.applyAutoEQToTap(existingTap)
+                        self.applyLoudnessEqualizationToTap(existingTap)
                     } catch {
                         self.logger.error("Failed to re-route \(app.name) to \(deviceUID): \(error.localizedDescription)")
+                        self.logger.info("Falling back to recreateTap for \(app.name)")
+                        await self.recreateTap(for: app.id)
                     }
                 }
                 appliedPIDs.insert(app.id)
@@ -1228,8 +1249,6 @@ final class AudioEngine {
             try tap.activate(initial: initial)
             taps[app.id] = tap
 
-            // Catalog AutoEQ may not have been cached yet — kick off async resolve.
-            // Imported profiles always hit the synchronous path above.
             if initial.autoEQProfile == nil {
                 applyAutoEQToTap(tap)
             }
@@ -1326,8 +1345,11 @@ final class AudioEngine {
                     try await tap.switchDevice(to: targetUID, preferredTapSourceDeviceUID: preferredTapSourceUID)
                     self.applyTapOutputState(to: tap, for: app.id, deviceUIDs: [targetUID])
                     self.applyAutoEQToTap(tap)
+                    self.applyLoudnessEqualizationToTap(tap)
                 } catch {
                     self.logger.error("Failed to switch \(app.name) to \(targetUID): \(error.localizedDescription)")
+                    self.logger.info("Falling back to recreateTap for \(app.name)")
+                    await self.recreateTap(for: app.id)
                 }
             }
         }
@@ -1406,8 +1428,11 @@ final class AudioEngine {
                         try await tap.switchDevice(to: fallbackUID, preferredTapSourceDeviceUID: preferredTapSourceUID, sourceDeviceDead: true)
                         self.applyTapOutputState(to: tap, for: tap.app.id, deviceUIDs: [fallbackUID])
                         self.applyAutoEQToTap(tap)
+                        self.applyLoudnessEqualizationToTap(tap)
                     } catch {
                         self.logger.error("Failed to switch \(tap.app.name) to fallback: \(error.localizedDescription)")
+                        self.logger.info("Falling back to recreateTap for \(tap.app.name)")
+                        await self.recreateTap(for: tap.app.id)
                     }
                 }
 
@@ -1418,9 +1443,13 @@ final class AudioEngine {
                         let preferredTapSourceUID = self.preferredTapSourceDeviceUID(forOutputUIDs: remainingUIDs, isFollowsDefault: self.followsDefault.contains(tap.app.id))
                         try await tap.updateDevices(to: remainingUIDs, preferredTapSourceDeviceUID: preferredTapSourceUID, sourceDeviceDead: true)
                         self.applyTapOutputState(to: tap, for: tap.app.id, deviceUIDs: remainingUIDs)
+                        self.applyAutoEQToTap(tap)
+                        self.applyLoudnessEqualizationToTap(tap)
                         self.logger.debug("Removed \(deviceName) from \(tap.app.name) multi-device output")
                     } catch {
                         self.logger.error("Failed to update \(tap.app.name) devices: \(error.localizedDescription)")
+                        self.logger.info("Falling back to recreateTap for \(tap.app.name) (multi-mode)")
+                        await self.recreateTap(for: tap.app.id, overridingDeviceUIDs: remainingUIDs)
                     }
                 }
             }
@@ -1478,8 +1507,11 @@ final class AudioEngine {
                         try await tap.switchDevice(to: deviceUID, preferredTapSourceDeviceUID: preferredTapSourceUID)
                         self.applyTapOutputState(to: tap, for: tap.app.id, deviceUIDs: [deviceUID])
                         self.applyAutoEQToTap(tap)
+                        self.applyLoudnessEqualizationToTap(tap)
                     } catch {
                         self.logger.error("Failed to switch \(tap.app.name) back to \(deviceName): \(error.localizedDescription)")
+                        self.logger.info("Falling back to recreateTap for \(tap.app.name)")
+                        await self.recreateTap(for: tap.app.id)
                     }
                 }
             }
@@ -1543,6 +1575,10 @@ final class AudioEngine {
             // macOS already auto-switched to the lower-priority device — restore
             // what the user was on (not highest priority — they may have chosen a mid-priority device)
             restoreConfirmedDefault()
+        } else if currentDefault == deviceUID {
+            // The reconnected device is the current default (e.g. macOS auto-switched to a higher-priority device)
+            // Route follows-default apps to it in case we deferred it earlier.
+            routeFollowsDefaultApps(to: deviceUID)
         }
 
         // Cancel any existing PENDING_AUTOSWITCH before entering a new one.
@@ -1941,9 +1977,9 @@ final class AudioEngine {
     /// Tears down and recreates a tap for a given PID, preserving routing and settings.
     /// Async: awaits full CoreAudio resource teardown before creating the replacement tap
     /// to prevent orphaned IO procs from accumulating (issue #176).
-    private func recreateTap(for pid: pid_t) async {
+    private func recreateTap(for pid: pid_t, overridingDeviceUIDs: [String]? = nil) async {
         guard let oldTap = taps.removeValue(forKey: pid) else { return }
-        let deviceUIDs = oldTap.currentDeviceUIDs
+        let deviceUIDs = overridingDeviceUIDs ?? oldTap.currentDeviceUIDs
         await oldTap.invalidateAsync()
 
         // Set cooldown to prevent thrashing

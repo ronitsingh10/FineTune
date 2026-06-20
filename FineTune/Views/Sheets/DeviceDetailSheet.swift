@@ -9,6 +9,8 @@ struct DeviceDetailSheet: View {
     let autoDetectedTier: VolumeControlTier
     let currentOverride: VolumeControlTier?
     let onOverrideChange: (VolumeControlTier?) -> Void
+    let isLoudnessEqualizationEnabled: Bool
+    let onLoudnessEqualizationToggle: (Bool) -> Void
     let onDismiss: () -> Void
 
     @State private var viewModel: DeviceInspectorViewModel
@@ -21,6 +23,8 @@ struct DeviceDetailSheet: View {
         autoDetectedTier: VolumeControlTier,
         currentOverride: VolumeControlTier?,
         onOverrideChange: @escaping (VolumeControlTier?) -> Void,
+        isLoudnessEqualizationEnabled: Bool,
+        onLoudnessEqualizationToggle: @escaping (Bool) -> Void,
         onDismiss: @escaping () -> Void
     ) {
         self.device = device
@@ -28,6 +32,8 @@ struct DeviceDetailSheet: View {
         self.autoDetectedTier = autoDetectedTier
         self.currentOverride = currentOverride
         self.onOverrideChange = onOverrideChange
+        self.isLoudnessEqualizationEnabled = isLoudnessEqualizationEnabled
+        self.onLoudnessEqualizationToggle = onLoudnessEqualizationToggle
         self.onDismiss = onDismiss
         self._viewModel = State(
             initialValue: DeviceInspectorViewModel(
@@ -64,6 +70,9 @@ struct DeviceDetailSheet: View {
                 softwareToggle
                 calloutText
             }
+
+            separator
+            smartVolumeToggle
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
@@ -171,6 +180,33 @@ struct DeviceDetailSheet: View {
             .font(DesignTokens.Typography.caption)
             .foregroundStyle(DesignTokens.Colors.textTertiary)
             .fixedSize(horizontal: false, vertical: true)
+    }
+
+    // MARK: - Smart Volume Toggle
+
+    @ViewBuilder
+    private var smartVolumeToggle: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            HStack(spacing: DesignTokens.Spacing.xs) {
+                Text("Smart Volume")
+                    .font(DesignTokens.Typography.pickerText)
+                    .foregroundStyle(DesignTokens.Colors.textPrimary)
+
+                Spacer(minLength: DesignTokens.Spacing.sm)
+
+                Toggle("", isOn: Binding(
+                    get: { isLoudnessEqualizationEnabled },
+                    set: { onLoudnessEqualizationToggle($0) }
+                ))
+                .toggleStyle(.switch)
+                .scaleEffect(0.8)
+                .labelsHidden()
+            }
+            Text("Keep volume levels consistent across all apps and media.")
+                .font(DesignTokens.Typography.caption)
+                .foregroundStyle(DesignTokens.Colors.textTertiary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
     }
 
     // MARK: - Helpers

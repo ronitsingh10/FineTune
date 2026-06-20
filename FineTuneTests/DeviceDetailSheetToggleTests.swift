@@ -40,6 +40,8 @@ struct DeviceDetailSheetToggleTests {
             autoDetectedTier: autoDetectedTier,
             currentOverride: currentOverride,
             onOverrideChange: onOverrideChange,
+            isLoudnessEqualizationEnabled: false,
+            onLoudnessEqualizationToggle: { _ in },
             onDismiss: {}
         )
     }
@@ -105,6 +107,8 @@ struct DeviceDetailSheetToggleTests {
         // First-level optional wrapping: captured[0] is VolumeControlTier? where the value is `nil`.
         #expect(captured.first == .some(nil))
     }
+
+
 
 }
 

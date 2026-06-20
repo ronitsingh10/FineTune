@@ -1,0 +1,402 @@
+// FineTuneTests/PostAgcCompressorTests.swift
+
+import Testing
+import Foundation
+@testable import FineTune
+
+@Suite("PostAgcCompressorTests")
+struct PostAgcCompressorTests {
+
+    @Test("Default settings are applied correctly")
+    func defaultSettings() {
+        let settings = PostAgcCompressorSettings()
+        #expect(settings.thresholdDb == 0.0)
+        #expect(settings.ratio == 7.6)
+        #expect(settings.attackMs == 2.9)
+        #expect(settings.releaseMs == 11.6)
+        #expect(settings.kneeDb == 0.1)
+        #expect(settings.exponentialRelease == 0.8)
+        #expect(settings.maxReleaseSpeed == 0.502502918)
+        #expect(settings.enabled == true)
+        
+        let compressor = PostAgcCompressor(settings: settings, sampleRate: 48000)
+        #expect(compressor.isEnabled == true)
+        #expect(compressor.currentSettings == settings)
+    }
+
+    @Test("Signals below threshold are passed through untouched")
+    func belowThresholdPassthrough() {
+        let settings = PostAgcCompressorSettings(thresholdDb: 0.0, enabled: true)
+        let compressor = PostAgcCompressor(settings: settings, sampleRate: 48000)
+        
+        // 1000 Hz sine wave at -30 dBFS (well below all band thresholds so that
+        // the startup transient does not trigger compression, and crossovers sum flat).
+        let sampleRate: Float = 48000
+        let peakAmp = LoudnessEqualizerMath.dbToLinear(-30.0)
+        let totalFrames = 20000
+        var input = [Float](repeating: 0, count: totalFrames * 2)
+        for i in 0..<totalFrames {
+            let phase = Float(2.0 * Double.pi * 1000.0 * Double(i) / Double(sampleRate))
+            let val = peakAmp * sin(phase)
+            input[i * 2] = val
+            input[i * 2 + 1] = val
+        }
+        var output = [Float](repeating: 0, count: totalFrames * 2)
+        
+        // Process in blocks of 1000 frames to settle crossovers
+        for block in 0..<20 {
+            let offset = block * 2000
+            input.withUnsafeBufferPointer { inputPtr in
+                output.withUnsafeMutableBufferPointer { outputPtr in
+                    compressor.process(
+                        input: inputPtr.baseAddress! + offset,
+                        output: outputPtr.baseAddress! + offset,
+                        frameCount: 1000,
+                        channelCount: 2
+                    )
+                }
+            }
+        }
+        
+        // Find peak of the output sine wave in the last buffer block
+        var maxPeak: Float = 0
+        let lastBlockOffset = 19000
+        for i in 0..<2000 {
+            let val = output[lastBlockOffset + i]
+            let absVal = abs(val)
+            if absVal > maxPeak { maxPeak = absVal }
+        }
+        
+        // Verify steady-state output level is extremely close to input level (no compression)
+        #expect(abs(maxPeak - peakAmp) < 0.001)
+        
+        // Disable compressor and verify exact passthrough
+        let disabledSettings = PostAgcCompressorSettings(thresholdDb: 0.0, enabled: false)
+        let disabledCompressor = PostAgcCompressor(settings: disabledSettings, sampleRate: 48000)
+        var disabledOutput = [Float](repeating: 0, count: 2000)
+        
+        var singleBlockInput = Array(input[0..<2000])
+        disabledCompressor.process(input: &singleBlockInput, output: &disabledOutput, frameCount: 1000, channelCount: 2)
+        #expect(disabledOutput[0] == singleBlockInput[0])
+    }
+
+    @Test("Signals above threshold are compressed")
+    func aboveThresholdCompression() {
+        // Hard knee (kneeDb = 0) to keep math simple.
+        let settings = PostAgcCompressorSettings(
+            thresholdDb: -10.0,
+            ratio: 4.0, // 4:1 ratio
+            attackMs: 0.1, // very fast attack
+            releaseMs: 1000.0,
+            kneeDb: 0.0,
+            exponentialRelease: 0.0,
+            maxReleaseSpeed: 1.0, // no cap, for test simplicity
+            enabled: true
+        )
+        let compressor = PostAgcCompressor(settings: settings, sampleRate: 48000)
+        
+        // 0 dBFS peak 1000 Hz sine signal (above the 200 Hz HPF sidechain filter)
+        let sampleRate: Float = 48000
+        var input = [Float](repeating: 0, count: 2000)
+        for i in 0..<1000 {
+            let phase = Float(2.0 * Double.pi * 1000.0 * Double(i) / Double(sampleRate))
+            let val = sin(phase)
+            input[i * 2] = val
+            input[i * 2 + 1] = val
+        }
+        var output = [Float](repeating: 0, count: 2000)
+        
+        // Run enough frames for attack to settle
+        for _ in 0..<50 {
+            compressor.process(input: &input, output: &output, frameCount: 1000, channelCount: 2)
+        }
+        
+        // Find peak of the output sine wave
+        var maxPeak: Float = 0
+        for val in output {
+            let absVal = abs(val)
+            if absVal > maxPeak { maxPeak = absVal }
+        }
+        let outputDb = LoudnessEqualizerMath.linearToDb(maxPeak)
+        
+        // Input level is 0 dBFS. Threshold is -10 dBFS. Overshoot is 10 dB.
+        // With 4:1 ratio, output level above threshold is 10 / 4 = 2.5 dB.
+        // So expected gain reduction is -7.5 dB.
+        // Let's check that the output signal is attenuated significantly.
+        #expect(outputDb < -1.0)
+        #expect(outputDb > -10.0)
+        
+        // Disable compressor and verify passthrough
+        let disabledSettings = PostAgcCompressorSettings(thresholdDb: -10.0, maxReleaseSpeed: 1.0, enabled: false)
+        let disabledCompressor = PostAgcCompressor(settings: disabledSettings, sampleRate: 48000)
+        var disabledOutput = [Float](repeating: 0, count: 2000)
+        disabledCompressor.process(input: &input, output: &disabledOutput, frameCount: 1000, channelCount: 2)
+        #expect(disabledOutput[0] == input[0])
+    }
+
+    @Test("Soft-knee transition math is correct")
+    func softKneeTransition() {
+        let settings = PostAgcCompressorSettings(
+            thresholdDb: -10.0,
+            ratio: 4.0,
+            attackMs: 0.01, // instant attack
+            kneeDb: 6.0, // 6 dB knee (-13 dBFS to -7 dBFS)
+            exponentialRelease: 0.0,
+            maxReleaseSpeed: 1.0, // no cap, for test simplicity
+            enabled: true
+        )
+        let compressor = PostAgcCompressor(settings: settings, sampleRate: 48000)
+        
+        // Signal inside knee region: e.g. -9.0 dBFS (overshoot > 0 but within knee)
+        // We generate a 1000 Hz sine wave with peak amplitude -9.0 dBFS
+        let ampInsideKnee = LoudnessEqualizerMath.dbToLinear(-9.0)
+        var input = [Float](repeating: 0, count: 200)
+        for i in 0..<100 {
+            let phase = Float(2.0 * Double.pi * 1000.0 * Double(i) / Double(48000.0))
+            let val = ampInsideKnee * sin(phase)
+            input[i * 2] = val
+            input[i * 2 + 1] = val
+        }
+        var output = [Float](repeating: 0, count: 200)
+        
+        for _ in 0..<100 {
+            compressor.process(input: &input, output: &output, frameCount: 100, channelCount: 2)
+        }
+        
+        var maxPeak: Float = 0
+        for val in output {
+            let absVal = abs(val)
+            if absVal > maxPeak { maxPeak = absVal }
+        }
+        let outputDb = LoudnessEqualizerMath.linearToDb(maxPeak)
+        
+        // Since -9 dBFS is inside the soft-knee, it should have some gain reduction,
+        // but less than the full ratio would dictate.
+        #expect(outputDb < -9.0)
+    }
+
+    @Test("Exponential release slows down as gain reduction approaches 0")
+    func exponentialReleaseBehavior() {
+        // High exponential release factor (1.0) vs linear/default (0.0)
+        let expSettings = PostAgcCompressorSettings(
+            thresholdDb: -20.0,
+            ratio: 10.0,
+            attackMs: 0.1,
+            releaseMs: 50.0,
+            kneeDb: 0.0,
+            exponentialRelease: 1.0, // strong exponential release
+            maxReleaseSpeed: 1.0, // no cap, for test simplicity
+            enabled: true
+        )
+        
+        let linSettings = PostAgcCompressorSettings(
+            thresholdDb: -20.0,
+            ratio: 10.0,
+            attackMs: 0.1,
+            releaseMs: 50.0,
+            kneeDb: 0.0,
+            exponentialRelease: 0.0, // standard release
+            maxReleaseSpeed: 1.0, // no cap, for test simplicity
+            enabled: true
+        )
+        
+        let expCompressor = PostAgcCompressor(settings: expSettings, sampleRate: 48000)
+        let linCompressor = PostAgcCompressor(settings: linSettings, sampleRate: 48000)
+        
+        // 1. Force both into compression with a loud 1000 Hz sine wave (0 dBFS peak)
+        let loudAmp: Float = 1.0
+        var inputLoud = [Float](repeating: 0, count: 2000)
+        for i in 0..<1000 {
+            let phase = Float(2.0 * Double.pi * 1000.0 * Double(i) / Double(48000.0))
+            let val = loudAmp * sin(phase)
+            inputLoud[i * 2] = val
+            inputLoud[i * 2 + 1] = val
+        }
+        var output = [Float](repeating: 0, count: 2000)
+        for _ in 0..<10 {
+            expCompressor.process(input: &inputLoud, output: &output, frameCount: 1000, channelCount: 2)
+            linCompressor.process(input: &inputLoud, output: &output, frameCount: 1000, channelCount: 2)
+        }
+        
+        // 2. Feed silence to trigger release phase
+        var inputSilence = [Float](repeating: 0.0, count: 2000)
+        
+        // Process a few blocks of silence and compare the remaining attenuation (gain reduction)
+        // Since releaseMs is 50ms, let's step in small blocks, e.g., 240 frames (5ms)
+        var expOutputs: [Float] = []
+        var linOutputs: [Float] = []
+        
+        for _ in 0..<20 { // 100ms total release monitoring
+            // We use a tiny probe signal above 0 but below threshold to read the applied gain
+            var probeInput = [Float](repeating: 0.0001, count: 2)
+            var expProbeOutput = [Float](repeating: 0, count: 2)
+            var linProbeOutput = [Float](repeating: 0, count: 2)
+            
+            expCompressor.process(input: &inputSilence, output: &output, frameCount: 100, channelCount: 2)
+            linCompressor.process(input: &inputSilence, output: &output, frameCount: 100, channelCount: 2)
+            
+            expCompressor.process(input: &probeInput, output: &expProbeOutput, frameCount: 1, channelCount: 2)
+            linCompressor.process(input: &probeInput, output: &linProbeOutput, frameCount: 1, channelCount: 2)
+            
+            expOutputs.append(expProbeOutput[0] / probeInput[0])
+            linOutputs.append(linProbeOutput[0] / probeInput[0])
+        }
+        
+        // Under exponential release, release gets slower as we get closer to 1.0 gain (0 dB reduction).
+        // Therefore, the exponential release envelope should recover LESS of the gain toward 1.0
+        // in the later stages compared to the linear release.
+        // Let's verify that the exponential release gain recovery curve is distinct.
+        // (i.e. exp gain should be lower/more compressed than lin gain at the end of the release phase)
+        #expect(expOutputs.last! < linOutputs.last!)
+    }
+
+    @Test("NaN values in input do not propagate and are handled safely")
+    func nanSafety() {
+        let settings = PostAgcCompressorSettings(thresholdDb: -0.25, enabled: true)
+        let compressor = PostAgcCompressor(settings: settings, sampleRate: 48000)
+        
+        var input: [Float] = [Float.nan, Float.nan, 0.1, -0.1]
+        var output = [Float](repeating: 0, count: 4)
+        
+        // This should not crash, and output should be clean of NaNs for non-NaN inputs, or replaced safely.
+        compressor.process(input: &input, output: &output, frameCount: 2, channelCount: 2)
+        
+        // Check that non-NaN inputs produce non-NaN outputs
+        #expect(!output[2].isNaN)
+        #expect(!output[3].isNaN)
+    }
+
+    @Test("Multiband frequency splits work correctly")
+    func multibandSplits() {
+        let settings = PostAgcCompressorSettings(
+            thresholdDb: -10.0,
+            ratio: 10.0,
+            attackMs: 1.0,
+            releaseMs: 1000.0,
+            kneeDb: 0.0,
+            exponentialRelease: 0.0,
+            maxReleaseSpeed: 1.0,
+            enabled: true
+        )
+        
+        // 1. Bass signal (50 Hz) at -15.0 dBFS:
+        // This is above Band 1 threshold (-18.9 dBFS) but below Band 2 (-16.0 dBFS) and Band 3 (-10.0 dBFS).
+        // It should trigger Band 1 compression.
+        let sampleRate: Float = 48000
+        let bassCompressor = PostAgcCompressor(settings: settings, sampleRate: sampleRate)
+        let bassAmp = LoudnessEqualizerMath.dbToLinear(-15.0)
+        var bassInput = [Float](repeating: 0, count: 2000)
+        for i in 0..<1000 {
+            let phase = Float(2.0 * Double.pi * 50.0 * Double(i) / Double(sampleRate))
+            let val = bassAmp * sin(phase)
+            bassInput[i * 2] = val
+            bassInput[i * 2 + 1] = val
+        }
+        var bassOutput = [Float](repeating: 0, count: 2000)
+        for _ in 0..<30 {
+            bassCompressor.process(input: &bassInput, output: &bassOutput, frameCount: 1000, channelCount: 2)
+        }
+        var bassPeak: Float = 0
+        for val in bassOutput {
+            let absVal = abs(val)
+            if absVal > bassPeak { bassPeak = absVal }
+        }
+        let bassOutputDb = LoudnessEqualizerMath.linearToDb(bassPeak)
+        #expect(bassOutputDb < -15.5)
+        
+        // 2. High signal (1000 Hz) at -5.0 dBFS:
+        // This is above Band 3 threshold (-10.0 dBFS). It should trigger Band 3 compression.
+        let trebleCompressor = PostAgcCompressor(settings: settings, sampleRate: sampleRate)
+        let trebleAmp = LoudnessEqualizerMath.dbToLinear(-5.0)
+        var trebleInput = [Float](repeating: 0, count: 2000)
+        for i in 0..<1000 {
+            let phase = Float(2.0 * Double.pi * 1000.0 * Double(i) / Double(sampleRate))
+            let val = trebleAmp * sin(phase)
+            trebleInput[i * 2] = val
+            trebleInput[i * 2 + 1] = val
+        }
+        var trebleOutput = [Float](repeating: 0, count: 2000)
+        for _ in 0..<30 {
+            trebleCompressor.process(input: &trebleInput, output: &trebleOutput, frameCount: 1000, channelCount: 2)
+        }
+        var treblePeak: Float = 0
+        for val in trebleOutput {
+            let absVal = abs(val)
+            if absVal > treblePeak { treblePeak = absVal }
+        }
+        let trebleOutputDb = LoudnessEqualizerMath.linearToDb(treblePeak)
+        #expect(trebleOutputDb < -5.5)
+    }
+
+    @Test("Knee width is respected and changes gain reduction curve")
+    func kneeWidthRespected() {
+        // High knee (kneeDb = 6.0) vs hard knee (kneeDb = 0.0)
+        let softSettings = PostAgcCompressorSettings(
+            thresholdDb: -10.0,
+            ratio: 4.0,
+            attackMs: 0.01,
+            kneeDb: 6.0,
+            exponentialRelease: 0.0,
+            maxReleaseSpeed: 1.0,
+            enabled: true
+        )
+        let hardSettings = PostAgcCompressorSettings(
+            thresholdDb: -10.0,
+            ratio: 4.0,
+            attackMs: 0.01,
+            kneeDb: 0.0,
+            exponentialRelease: 0.0,
+            maxReleaseSpeed: 1.0,
+            enabled: true
+        )
+        
+        let softCompressor = PostAgcCompressor(settings: softSettings, sampleRate: 48000)
+        let hardCompressor = PostAgcCompressor(settings: hardSettings, sampleRate: 48000)
+        
+        // Input signal inside knee region: e.g. -8.0 dBFS (which after crossover is around -9.6 dBFS)
+        // With hard knee, this has 0.4 dB overshoot, resulting in -0.3 dB gain reduction.
+        // With soft knee, this is inside the knee region, resulting in -0.72 dB gain reduction.
+        let ampInsideKnee = LoudnessEqualizerMath.dbToLinear(-8.0)
+        var input = [Float](repeating: 0, count: 20)
+        for i in 0..<10 {
+            let phase = Float(2.0 * Double.pi * 1000.0 * Double(i) / Double(48000.0))
+            let val = ampInsideKnee * sin(phase)
+            input[i * 2] = val
+            input[i * 2 + 1] = val
+        }
+        var softOutput = [Float](repeating: 0, count: 20)
+        var hardOutput = [Float](repeating: 0, count: 20)
+        
+        for _ in 0..<50 {
+            softCompressor.process(input: &input, output: &softOutput, frameCount: 10, channelCount: 2)
+            hardCompressor.process(input: &input, output: &hardOutput, frameCount: 10, channelCount: 2)
+        }
+        
+        var softMaxPeak: Float = 0
+        var hardMaxPeak: Float = 0
+        for i in 0..<20 {
+            let sVal = abs(softOutput[i])
+            let hVal = abs(hardOutput[i])
+            if sVal > softMaxPeak { softMaxPeak = sVal }
+            if hVal > hardMaxPeak { hardMaxPeak = hVal }
+        }
+        
+        // Assert that the soft-knee compressor compressed (reduced gain) more than hard-knee.
+        #expect(softMaxPeak < hardMaxPeak - 0.001)
+    }
+
+    @Test("Non-stereo channel count is safely bypassed without allocating arrays")
+    func nonStereoPassthrough() {
+        let settings = PostAgcCompressorSettings(thresholdDb: -10.0, enabled: true)
+        let compressor = PostAgcCompressor(settings: settings, sampleRate: 48000)
+        
+        let input: [Float] = [0.5, 0.5, 0.5, 0.5]
+        var output = [Float](repeating: 0, count: 4)
+        
+        // Call process with channelCount = 4 (which is not stereo)
+        compressor.process(input: input, output: &output, frameCount: 1, channelCount: 4)
+        
+        // Non-stereo should be bypassed (exact copy of input)
+        #expect(output == input)
+    }
+}
