@@ -138,6 +138,13 @@ final class PostAgcCompressor: @unchecked Sendable {
             exponentialRelease: settings.exponentialRelease,
             sampleRate: sampleRate
         )
+
+        // Pre-allocate arrays for 2 channels (stereo) to prevent heap allocation on the audio thread
+        self.crossover200Hz = (0..<2).map { _ in LinkwitzRileyCrossover2(frequency: 200.0, sampleRate: Double(sampleRate)) }
+        self.crossover77Hz = (0..<2).map { _ in LinkwitzRileyCrossover2(frequency: 77.0, sampleRate: Double(sampleRate)) }
+        self.band1Samples = [Float](repeating: 0, count: 2)
+        self.band2Samples = [Float](repeating: 0, count: 2)
+        self.band3Samples = [Float](repeating: 0, count: 2)
     }
 
     // MARK: - Public API
