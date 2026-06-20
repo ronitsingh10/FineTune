@@ -264,7 +264,7 @@ struct DeviceDetailSheet: View {
                             HStack {
                                 Spacer()
                                 Button {
-                                    onLoudnessReferencePhonChange(83.0)
+                                    onLoudnessReferencePhonChange(ISO226Contours.defaultReferencePhon)
                                 } label: {
                                     Text("Reset to Default")
                                         .font(DesignTokens.Typography.caption)
@@ -272,7 +272,7 @@ struct DeviceDetailSheet: View {
                                 }
                                 .buttonStyle(.bordered)
                                 .controlSize(.small)
-                                .disabled(loudnessReferencePhon == 83.0)
+                                .disabled(loudnessReferencePhon == ISO226Contours.defaultReferencePhon)
                             }
                         }
                         .padding(.leading, 14)
@@ -289,7 +289,7 @@ struct DeviceDetailSheet: View {
         if isExpanded {
             return "\(Int(phon)) phon"
         } else {
-            return phon == 83.0 ? "Default" : "Custom"
+            return phon == ISO226Contours.defaultReferencePhon ? "Default" : "Custom"
         }
     }
 
