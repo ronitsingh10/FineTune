@@ -142,7 +142,7 @@ final class SettingsManager {
 
         // Per-device loudness settings
         var deviceLoudnessCompensationEnabled: [String: Bool] = [:] // deviceUID -> enabled
-        var deviceLoudnessReferencePhon: [String: Double] = [:] // deviceUID -> referencePhon (default: 83.0)
+        var deviceLoudnessReferencePhon: [String: Double] = [:] // deviceUID -> referencePhon (default: ISO226Contours.defaultReferencePhon)
 
         // User-created EQ presets (named EQ curves)
         var userEQPresets: [UserEQPreset] = []
@@ -800,7 +800,7 @@ final class SettingsManager {
 
 
     func getLoudnessReferencePhon(for deviceUID: String) -> Double {
-        settings.deviceLoudnessReferencePhon[deviceUID] ?? 83.0
+        settings.deviceLoudnessReferencePhon[deviceUID] ?? ISO226Contours.defaultReferencePhon
     }
 
     func setLoudnessReferencePhon(for deviceUID: String, to referencePhon: Double) {

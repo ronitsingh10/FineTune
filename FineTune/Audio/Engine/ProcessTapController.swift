@@ -129,7 +129,7 @@ final class ProcessTapController: ProcessTapControlling {
     /// Used by createSecondaryTap to initialize secondary compensator with the correct volume.
     private var _lastLoudnessVolume: Float = 1.0
     /// Last effective reference phon level passed to updateLoudnessCompensation.
-    private var _lastLoudnessReferencePhon: Double = 83.0
+    private var _lastLoudnessReferencePhon: Double = ISO226Contours.defaultReferencePhon
     /// Last effective loudness gain scale passed to updateLoudnessCompensation.
     private var _lastLoudnessGainScale: Float = 1.0
     private nonisolated(unsafe) var secondaryEQProcessor: EQProcessor?

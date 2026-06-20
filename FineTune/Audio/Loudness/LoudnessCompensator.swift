@@ -46,9 +46,9 @@ final class LoudnessCompensator: BiquadProcessor, @unchecked Sendable {
     // MARK: - State
 
     /// Phon level used for the last coefficient computation.
-    private var _currentPhon: Double = 83.0
+    private var _currentPhon: Double = ISO226Contours.defaultReferencePhon
     /// Reference phon level used for the last coefficient computation.
-    private var _currentReferencePhon: Double = 83.0
+    private var _currentReferencePhon: Double = ISO226Contours.defaultReferencePhon
     /// System volume used for the last coefficient computation.
     private var _currentSystemVolume: Float = 1.0
     /// Digital volume used for the last coefficient computation.
@@ -79,7 +79,7 @@ final class LoudnessCompensator: BiquadProcessor, @unchecked Sendable {
     ///   which the RT audio callback reads via `nonisolated(unsafe)`. Calling from any other
     ///   thread creates a data race. Not annotated `@MainActor` because `BiquadProcessor`
     ///   is not actor-isolated and test call sites run on arbitrary Swift Testing threads.
-    func updateForVolume(_ systemVolume: Float, digitalVolume: Float = 1.0, referencePhon: Double = 83.0, gainScale: Float = 1.0) {
+    func updateForVolume(_ systemVolume: Float, digitalVolume: Float = 1.0, referencePhon: Double = ISO226Contours.defaultReferencePhon, gainScale: Float = 1.0) {
         // Volume-based phon estimation (primary — tracks user's intended listening level,
         // matching Dolby Volume Modeler / THX Loudness Plus architecture).
         let phon = ISO226Contours.estimatedPhon(fromSystemVolume: systemVolume, referencePhon: referencePhon)
@@ -144,7 +144,7 @@ final class LoudnessCompensator: BiquadProcessor, @unchecked Sendable {
     }
 
     /// Fit the fixed four-section loudness topology to the ISO-derived target curve.
-    static func fittedSectionGains(forPhon phon: Double, referencePhon: Double = 83.0, sampleRate: Double) -> [Float] {
+    static func fittedSectionGains(forPhon phon: Double, referencePhon: Double = ISO226Contours.defaultReferencePhon, sampleRate: Double) -> [Float] {
         let targetCurve = targetCurveDB(forPhon: phon, referencePhon: referencePhon)
         let basisResponses = basisResponsesDB(sampleRate: sampleRate)
         let gramMatrix = gramMatrix(for: basisResponses)

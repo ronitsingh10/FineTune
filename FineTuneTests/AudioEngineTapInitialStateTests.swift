@@ -532,7 +532,7 @@ struct RecordingProcessTapControllerContractTests {
             #expect(snap.autoEQPreampEnabled == false)
             #expect(snap.eqSettings == EQSettings.flat)
             #expect(snap.loudnessVolume == 1.0)
-            #expect(snap.loudnessReferencePhon == 83.0)
+            #expect(snap.loudnessReferencePhon == ISO226Contours.defaultReferencePhon)
         } else {
             Issue.record("activate() did not record an .activate event")
         }

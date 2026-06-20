@@ -42,7 +42,7 @@ struct DeviceDetailSheetToggleTests {
             onOverrideChange: onOverrideChange,
             isLoudnessCompensationEnabled: false,
             onLoudnessCompensationToggle: { _ in },
-            loudnessReferencePhon: 83.0,
+            loudnessReferencePhon: ISO226Contours.defaultReferencePhon,
             onLoudnessReferencePhonChange: { _ in },
             onDismiss: {}
         )

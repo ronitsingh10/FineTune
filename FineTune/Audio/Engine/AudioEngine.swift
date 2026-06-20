@@ -652,7 +652,7 @@ final class AudioEngine {
             tap.updateLoudnessCompensation(
                 volume: effectiveLoudnessVolume(for: tap),
                 enabled: false,
-                referencePhon: 83.0,
+                referencePhon: ISO226Contours.defaultReferencePhon,
                 gainScale: 0.0
             )
         }

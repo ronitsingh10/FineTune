@@ -61,8 +61,11 @@ enum ISO226Contours {
     /// App-specific system-volume heuristic, not defined by ISO 226.
     static func estimatedPhon(fromSystemVolume volume: Float, referencePhon: Double) -> Double {
         let v = Double(max(0.0, min(1.0, volume)))
-        let lowerBound = supportedPhonRange.lowerBound
-        return lowerBound + (referencePhon - lowerBound) * v
+        if v <= 0.2 {
+            return v * 100.0
+        } else {
+            return 20.0 + (v - 0.2) / 0.8 * (referencePhon - 20.0)
+        }
     }
 
     /// App-specific system-volume heuristic, using the default reference phon level.

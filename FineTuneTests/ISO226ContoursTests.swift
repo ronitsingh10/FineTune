@@ -71,7 +71,7 @@ struct ISO226ContoursReferenceTests {
         )
         expectClose(
             ISO226Contours.estimatedPhon(fromSystemVolume: 0.5, referencePhon: 100.0),
-            60.0,
+            50.0,
             tolerance: 0.001
         )
     }
@@ -518,16 +518,16 @@ struct LoudnessCompensatorCustomReferenceTests {
 @Suite("ISO226Contours — estimatedPhon boundaries")
 struct EstimatedPhonBoundaryTests {
 
-    @Test("Zero volume maps to lower bound of phon range (20 phon)")
+    @Test("Zero volume maps to 0 phon")
     func zeroVolumeMapsToLowerBound() {
-        // volume=0 → 20 + 60*0 = 20 phon
+        // volume=0 → 0 phon
         let phon = ISO226Contours.estimatedPhon(fromSystemVolume: 0.0)
-        expectClose(phon, 20.0, tolerance: 0.001)
+        expectClose(phon, 0.0, tolerance: 0.001)
     }
 
-    @Test("Full volume maps to reference phon (80 phon)")
+    @Test("Full volume maps to reference phon (83 phon)")
     func fullVolumeMapsToReferencePhon() {
-        // volume=1.0 → 20 + 60*1.0 = 80 phon
+        // volume=1.0 → reference phon (83.0)
         let phon = ISO226Contours.estimatedPhon(fromSystemVolume: 1.0)
         expectClose(phon, ISO226Contours.defaultReferencePhon, tolerance: 0.001)
     }
@@ -539,18 +539,18 @@ struct EstimatedPhonBoundaryTests {
         expectClose(phon, ISO226Contours.defaultReferencePhon, tolerance: 0.001)
     }
 
-    @Test("Negative volume is clamped to lower bound (20 phon)")
+    @Test("Negative volume is clamped to 0 phon")
     func negativeVolumeClampsToLowerBound() {
         // volume=-0.5 → clamped to 0.0 → same as zero volume
         let phon = ISO226Contours.estimatedPhon(fromSystemVolume: -0.5)
-        expectClose(phon, 20.0, tolerance: 0.001)
+        expectClose(phon, 0.0, tolerance: 0.001)
     }
 
-    @Test("Quarter volume maps to 35.75 phon via linear curve")
+    @Test("Quarter volume maps to 23.9375 phon")
     func quarterVolumeMidpoint() {
-        // volume=0.25 → 20 + 63*0.25 = 35.75 phon
+        // volume=0.25 → 20 + 0.05 / 0.8 * 63.0 = 23.9375 phon
         let phon = ISO226Contours.estimatedPhon(fromSystemVolume: 0.25)
-        expectClose(phon, 35.75, tolerance: 0.01)
+        expectClose(phon, 23.9375, tolerance: 0.01)
     }
 }
 
