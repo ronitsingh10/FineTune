@@ -56,15 +56,21 @@ enum ISO226Contours {
     private static let referenceSoundPressureSquaredPa: Double = 4e-10
     static let supportedPhonRange = 20.0...120.0
 
+    // Volume-to-phon piecewise heuristic constants
+    static let piecewiseThreshold: Double = 0.2
+    static let piecewiseLowSlope: Double = 100.0
+    static let piecewiseLowMaxPhon: Double = 20.0
+    static let piecewiseHighDenom: Double = 0.8
+
     // MARK: - Volume → Phon Mapping
 
     /// App-specific system-volume heuristic, not defined by ISO 226.
     static func estimatedPhon(fromSystemVolume volume: Float, referencePhon: Double) -> Double {
         let v = Double(max(0.0, min(1.0, volume)))
-        if v <= 0.2 {
-            return v * 100.0
+        if v <= piecewiseThreshold {
+            return v * piecewiseLowSlope
         } else {
-            return 20.0 + (v - 0.2) / 0.8 * (referencePhon - 20.0)
+            return piecewiseLowMaxPhon + (v - piecewiseThreshold) / piecewiseHighDenom * (referencePhon - piecewiseLowMaxPhon)
         }
     }
 
