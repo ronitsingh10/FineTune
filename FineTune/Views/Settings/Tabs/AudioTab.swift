@@ -30,13 +30,6 @@ struct AudioTab: View {
                 audioEngine.handleInputLockEnabled()
             }
         }
-        .onChange(of: settings.appSettings.loudnessCompensationEnabled) { _, newValue in
-            if let defaultUID = deviceVolumeMonitor.defaultDeviceUID {
-                audioEngine.setLoudnessCompensationEnabled(for: defaultUID, enabled: newValue)
-            } else if let firstDevice = audioEngine.outputDevices.first {
-                audioEngine.setLoudnessCompensationEnabled(for: firstDevice.uid, enabled: newValue)
-            }
-        }
 
     }
 
@@ -53,16 +46,6 @@ struct AudioTab: View {
                     range: 0.1...1.0,
                     width: 280
                 )
-            }
-            SettingsRowDivider()
-            SettingsRow(
-                "Loudness Compensation",
-                description: "Boost low frequencies at low volume"
-            ) {
-                Toggle("", isOn: $settings.appSettings.loudnessCompensationEnabled)
-                    .toggleStyle(.switch)
-                    .controlSize(.small)
-                    .labelsHidden()
             }
         }
     }
