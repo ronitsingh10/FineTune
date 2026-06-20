@@ -20,7 +20,7 @@ final class RecordingProcessTapController: ProcessTapControlling {
         case updateEQSettings(EQSettings)
         case updateAutoEQProfile(profileID: String?)
         case setAutoEQPreampEnabled(Bool)
-        case updateLoudnessCompensation(volume: Float, enabled: Bool)
+        case updateLoudnessCompensation(volume: Float, enabled: Bool, referencePhon: Double, gainScale: Float)
         case updateLoudnessEqualization(LoudnessEqualizerSettings)
         case invalidate
     }
@@ -33,6 +33,7 @@ final class RecordingProcessTapController: ProcessTapControlling {
         var autoEQPreampEnabled: Bool
         var loudnessVolume: Float
         var loudnessCompensationEnabled: Bool
+        var loudnessReferencePhon: Double
         var loudnessEqualizerSettings: LoudnessEqualizerSettings
 
         @MainActor
@@ -42,6 +43,7 @@ final class RecordingProcessTapController: ProcessTapControlling {
             self.autoEQPreampEnabled = s.autoEQPreampEnabled
             self.loudnessVolume = s.loudnessVolume
             self.loudnessCompensationEnabled = s.loudnessCompensationEnabled
+            self.loudnessReferencePhon = s.loudnessReferencePhon
             self.loudnessEqualizerSettings = s.loudnessEqualizerSettings
         }
     }
@@ -64,6 +66,10 @@ final class RecordingProcessTapController: ProcessTapControlling {
         self.currentDeviceUIDs = deviceUIDs
     }
 
+    func clearEvents() {
+        events.removeAll()
+    }
+
     func activate(initial: TapInitialState) throws {
         events.append(.activate(TapInitialStateSnapshot(initial)))
     }
@@ -84,8 +90,8 @@ final class RecordingProcessTapController: ProcessTapControlling {
         events.append(.setAutoEQPreampEnabled(enabled))
     }
 
-    func updateLoudnessCompensation(volume: Float, enabled: Bool) {
-        events.append(.updateLoudnessCompensation(volume: volume, enabled: enabled))
+    func updateLoudnessCompensation(volume: Float, enabled: Bool, referencePhon: Double, gainScale: Float) {
+        events.append(.updateLoudnessCompensation(volume: volume, enabled: enabled, referencePhon: referencePhon, gainScale: gainScale))
     }
 
     func updateLoudnessEqualization(_ settings: LoudnessEqualizerSettings) {
@@ -235,32 +241,16 @@ struct AudioEngineTapInitialStateTests {
         #expect(snap.autoEQPreampEnabled == value)
     }
 
-    @Test("loudnessCompensationEnabled mirrors appSettings.loudnessCompensationEnabled",
+    @Test("loudnessCompensationEnabled mirrors per-device settings",
           arguments: [true, false])
     func loudnessCompensationFlagMirrored(value: Bool) throws {
         let fix = makeFixture()
-        var s = fix.settings.appSettings
-        s.loudnessCompensationEnabled = value
-        fix.settings.updateAppSettings(s)
+        fix.settings.setLoudnessCompensationEnabled(for: fix.device.uid, to: value)
 
         fix.engine.setDevice(for: fix.app, deviceUID: fix.device.uid)
 
         let snap = try #require(capturedInitial(fix))
         #expect(snap.loudnessCompensationEnabled == value)
-    }
-
-    @Test("loudnessEqualizerSettings.enabled mirrors appSettings.loudnessEqualizationEnabled",
-          arguments: [true, false])
-    func loudnessEqualizerFlagMirrored(value: Bool) throws {
-        let fix = makeFixture()
-        var s = fix.settings.appSettings
-        s.loudnessEqualizationEnabled = value
-        fix.settings.updateAppSettings(s)
-
-        fix.engine.setDevice(for: fix.app, deviceUID: fix.device.uid)
-
-        let snap = try #require(capturedInitial(fix))
-        #expect(snap.loudnessEqualizerSettings.enabled == value)
     }
 
     @Test("loudnessVolume = currentDeviceVolume × per-app volume")
@@ -372,10 +362,7 @@ struct AudioEngineTapInitialStateTests {
         )
         let custom = EQSettings(bandGains: [1, 1, 1, 1, 1, 1, 1, 1, 1, 1], isEnabled: true)
         fix.settings.setEQSettings(custom, for: fix.app.persistenceIdentifier)
-        var s = fix.settings.appSettings
-        s.loudnessCompensationEnabled = true
-        s.loudnessEqualizationEnabled = true
-        fix.settings.updateAppSettings(s)
+        fix.settings.setLoudnessCompensationEnabled(for: fix.device.uid, to: true)
 
         fix.engine.setDevice(for: fix.app, deviceUID: fix.device.uid)
 
@@ -425,6 +412,43 @@ struct AudioEngineTapInitialStateTests {
             return nil
         }
         #expect(postActivateAutoEQ.contains(where: { $0 == nil }))
+    }
+
+    @Test("Loudness Compensation settings are re-applied to tap after device switches")
+    func loudnessCompensationReappliedOnSwitch() async throws {
+        let fix = makeFixture()
+        let secondDevice = AudioDevice(
+            id: AudioDeviceID(100),
+            uid: "uid-second-device",
+            name: "Second Output",
+            icon: nil,
+            supportsAutoEQ: true
+        )
+        fix.deviceMonitor.addOutputDevice(secondDevice)
+        fix.deviceVolume.volumes[secondDevice.id] = 0.75
+        
+        // 1. Initial routing (device is "uid-test", default loudness compensation is false)
+        fix.engine.setDevice(for: fix.app, deviceUID: fix.device.uid)
+        let tap = try #require(fix.lastTap())
+        tap.clearEvents()
+        
+        // 2. Enable loudness compensation for the second device
+        fix.settings.setLoudnessCompensationEnabled(for: secondDevice.uid, to: true)
+        
+        // 3. Switch device to the second device
+        fix.engine.setDevice(for: fix.app, deviceUID: secondDevice.uid)
+        
+        // Allow tasks to run
+        try await Task.sleep(nanoseconds: 50_000_000)
+        
+        // 4. Verify that updateLoudnessCompensation(enabled: true) was called on the tap
+        let loudnessEvents = tap.events.compactMap { event -> (volume: Float, enabled: Bool, referencePhon: Double, gainScale: Float)? in
+            if case let .updateLoudnessCompensation(volume, enabled, referencePhon, gainScale) = event {
+                return (volume, enabled, referencePhon, gainScale)
+            }
+            return nil
+        }
+        #expect(loudnessEvents.contains(where: { $0.enabled == true }))
     }
 }
 
@@ -508,6 +532,7 @@ struct RecordingProcessTapControllerContractTests {
             #expect(snap.autoEQPreampEnabled == false)
             #expect(snap.eqSettings == EQSettings.flat)
             #expect(snap.loudnessVolume == 1.0)
+            #expect(snap.loudnessReferencePhon == ISO226Contours.defaultReferencePhon)
         } else {
             Issue.record("activate() did not record an .activate event")
         }

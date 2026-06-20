@@ -10,17 +10,7 @@ struct AudioTab: View {
     /// Memoized sorted output devices for the system-sounds picker.
     @State private var sortedOutputDevices: [AudioDevice] = []
 
-    private var unifiedLoudnessToggleBinding: Binding<Bool> {
-        Binding(
-            get: {
-                settings.appSettings.loudnessCompensationEnabled
-                    && settings.appSettings.loudnessEqualizationEnabled
-            },
-            set: { isEnabled in
-                settings.appSettings.setUnifiedLoudnessEnabled(isEnabled)
-            }
-        )
-    }
+
 
     var body: some View {
         ScrollView {
@@ -40,12 +30,7 @@ struct AudioTab: View {
                 audioEngine.handleInputLockEnabled()
             }
         }
-        .onChange(of: settings.appSettings.loudnessCompensationEnabled) { _, newValue in
-            audioEngine.setLoudnessCompensationEnabled(newValue)
-        }
-        .onChange(of: settings.appSettings.loudnessEqualizationEnabled) { _, newValue in
-            audioEngine.setLoudnessEqualizationEnabled(newValue)
-        }
+
     }
 
     // MARK: - Volume
@@ -61,16 +46,6 @@ struct AudioTab: View {
                     range: 0.1...1.0,
                     width: 280
                 )
-            }
-            SettingsRowDivider()
-            SettingsRow(
-                "Loudness Compensation",
-                description: "Boost low frequencies at low volume"
-            ) {
-                Toggle("", isOn: unifiedLoudnessToggleBinding)
-                    .toggleStyle(.switch)
-                    .controlSize(.small)
-                    .labelsHidden()
             }
         }
     }

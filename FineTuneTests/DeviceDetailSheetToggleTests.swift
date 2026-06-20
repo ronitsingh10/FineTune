@@ -40,6 +40,10 @@ struct DeviceDetailSheetToggleTests {
             autoDetectedTier: autoDetectedTier,
             currentOverride: currentOverride,
             onOverrideChange: onOverrideChange,
+            isLoudnessCompensationEnabled: false,
+            onLoudnessCompensationToggle: { _ in },
+            loudnessReferencePhon: ISO226Contours.defaultReferencePhon,
+            onLoudnessReferencePhonChange: { _ in },
             onDismiss: {}
         )
     }

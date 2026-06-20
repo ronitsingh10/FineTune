@@ -62,6 +62,12 @@ final class AudioRecordingPermission {
     // MARK: - App Activation Observer
 
     private func registerForActivation() {
+        let processName = ProcessInfo.processInfo.processName.lowercased()
+        let isRunningTests = processName.contains("test") ||
+                             ProcessInfo.processInfo.environment.keys.contains(where: { $0.lowercased().contains("test") }) ||
+                             NSClassFromString("XCTest") != nil
+        guard !isRunningTests else { return }
+        
         NotificationCenter.default.addObserver(
             forName: NSApplication.didBecomeActiveNotification,
             object: nil,

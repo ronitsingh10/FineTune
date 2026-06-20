@@ -7,8 +7,9 @@ import Accelerate
 /// to bass and treble at low listening levels. At the reference level (~80 phon),
 /// compensation is flat (bypassed). At lower levels, the contour difference is
 /// normalized around 1 kHz so only spectral balance is corrected. The app then fits
-/// that target curve with a low-cost four-section shelf/bell cascade. The downstream
-/// SoftLimiter handles any peaks that exceed unity after EQ boost.
+/// that target curve with a low-cost four-section shelf/bell cascade.
+/// Headroom is computed from the realized cascade response and subtracted from all
+/// band gains so the cascade peak never exceeds 0 dBFS.
 ///
 /// Subclass of `BiquadProcessor` — inherits atomic setup swaps, stereo biquad processing,
 /// delay buffer management, and NaN safety. Follows the same pattern as `EQProcessor`.
@@ -45,7 +46,16 @@ final class LoudnessCompensator: BiquadProcessor, @unchecked Sendable {
     // MARK: - State
 
     /// Phon level used for the last coefficient computation.
-    private var _currentPhon: Double = 80.0
+    private var _currentPhon: Double = ISO226Contours.defaultReferencePhon
+    /// Reference phon level used for the last coefficient computation.
+    private var _currentReferencePhon: Double = ISO226Contours.defaultReferencePhon
+    /// System volume used for the last coefficient computation.
+    private var _currentSystemVolume: Float = 1.0
+    /// Digital volume used for the last coefficient computation.
+    private var _currentDigitalVolume: Float = 1.0
+    /// Gain scale used for the last coefficient computation.
+    private var _currentGainScale: Float = 1.0
+
 
     // MARK: - Init
 
@@ -69,15 +79,21 @@ final class LoudnessCompensator: BiquadProcessor, @unchecked Sendable {
     ///   which the RT audio callback reads via `nonisolated(unsafe)`. Calling from any other
     ///   thread creates a data race. Not annotated `@MainActor` because `BiquadProcessor`
     ///   is not actor-isolated and test call sites run on arbitrary Swift Testing threads.
-    func updateForVolume(_ systemVolume: Float) {
-        let phon = ISO226Contours.estimatedPhon(fromSystemVolume: systemVolume)
+    func updateForVolume(_ systemVolume: Float, digitalVolume: Float = 1.0, referencePhon: Double = ISO226Contours.defaultReferencePhon, gainScale: Float = 1.0) {
+        // Volume-based phon estimation (primary — tracks user's intended listening level,
+        // matching Dolby Volume Modeler / THX Loudness Plus architecture).
+        let phon = ISO226Contours.estimatedPhon(fromSystemVolume: systemVolume, referencePhon: referencePhon)
 
         // Coalesce rapid updates, but never skip a disabled processor because re-enabling
         // loudness from the UI must rebuild coefficients immediately even at the same volume.
-        guard !isEnabled || abs(phon - _currentPhon) >= 1.0 else { return }
+        guard !isEnabled || abs(phon - _currentPhon) >= 1.0 || abs(referencePhon - _currentReferencePhon) >= 0.1 || abs(digitalVolume - _currentDigitalVolume) >= 0.05 || abs(gainScale - _currentGainScale) >= 0.01 else { return }
         _currentPhon = phon
+        _currentReferencePhon = referencePhon
+        _currentSystemVolume = systemVolume
+        _currentDigitalVolume = digitalVolume
+        _currentGainScale = gainScale
 
-        let gains = computeBandGains(phon: phon)
+        let gains = computeBandGains(phon: phon, referencePhon: referencePhon, digitalVolume: digitalVolume, gainScale: gainScale)
 
         // Bypass when all gains are negligible (near reference level)
         let allNegligible = gains.allSatisfy { abs($0) < 0.1 }
@@ -98,13 +114,38 @@ final class LoudnessCompensator: BiquadProcessor, @unchecked Sendable {
     // MARK: - Coefficient Computation
 
     /// Compute per-section gains (dB) for the fixed four-filter loudness topology.
-    private func computeBandGains(phon: Double) -> [Float] {
-        Self.fittedSectionGains(forPhon: phon, sampleRate: sampleRate)
+    ///
+    /// Post-processes the fitted gains by computing the realized cascade response,
+    /// finding its peak (the "headroom" needed), and subtracting that peak from all
+    /// band gains so the cascade never clips.
+    private func computeBandGains(phon: Double, referencePhon: Double, digitalVolume: Float, gainScale: Float = 1.0) -> [Float] {
+        let gains = Self.fittedSectionGains(forPhon: phon, referencePhon: referencePhon, sampleRate: sampleRate)
+        let scaledGains = gains.map { $0 * gainScale }
+        let realized = Self.realizedResponseDB(sectionGains: scaledGains.map(Double.init), sampleRate: sampleRate)
+        
+        // Exclude infrasound frequencies below 30 Hz from the headroom calculation
+        // to maximize dynamic range, since most output devices cannot reproduce them.
+        let frequencies = Self.fitGridFrequencies()
+        var peakDB = 0.0
+        for (index, freq) in frequencies.enumerated() {
+            if freq >= 30.0 {
+                peakDB = max(peakDB, realized[index])
+            }
+        }
+        
+        // Calculate digital headroom from actual digital volume attenuation in the pipeline
+        let linearVolume = max(Double(digitalVolume), 1e-4)
+        let volumeAttenuationDB = -20.0 * log10(linearVolume)
+        
+        // Dynamic headroom subtraction (only subtract boost exceeding the digital attenuation)
+        let headroomToSubtract = max(0.0, peakDB - volumeAttenuationDB)
+        
+        return scaledGains.map { $0 - Float(headroomToSubtract) }
     }
 
     /// Fit the fixed four-section loudness topology to the ISO-derived target curve.
-    static func fittedSectionGains(forPhon phon: Double, sampleRate: Double) -> [Float] {
-        let targetCurve = targetCurveDB(forPhon: phon)
+    static func fittedSectionGains(forPhon phon: Double, referencePhon: Double = ISO226Contours.defaultReferencePhon, sampleRate: Double) -> [Float] {
+        let targetCurve = targetCurveDB(forPhon: phon, referencePhon: referencePhon)
         let basisResponses = basisResponsesDB(sampleRate: sampleRate)
         let gramMatrix = gramMatrix(for: basisResponses)
 
@@ -174,7 +215,7 @@ final class LoudnessCompensator: BiquadProcessor, @unchecked Sendable {
 
     override func recomputeCoefficients() -> (coefficients: [Double], sectionCount: Int)? {
         // Called by updateSampleRate() — recompute for current phon at new sample rate
-        let gains = computeBandGains(phon: _currentPhon)
+        let gains = computeBandGains(phon: _currentPhon, referencePhon: _currentReferencePhon, digitalVolume: _currentDigitalVolume, gainScale: _currentGainScale)
         let allNegligible = gains.allSatisfy { abs($0) < 0.1 }
         guard !allNegligible else { return nil }
         let coefficients = Self.coefficientsForBands(gains: gains, sampleRate: sampleRate)
@@ -202,15 +243,15 @@ final class LoudnessCompensator: BiquadProcessor, @unchecked Sendable {
         return magnitude
     }
 
-    private static func targetCurveDB(forPhon phon: Double) -> [Double] {
-        let compensation = ISO226Contours.compensationGains(atPhon: phon)
+    private static func targetCurveDB(forPhon phon: Double, referencePhon: Double) -> [Double] {
+        let compensation = ISO226Contours.compensationGains(atPhon: phon, referencePhon: referencePhon)
         let fitFrequencies = fitGridFrequencies()
         return fitFrequencies.map { frequency in
             ISO226Contours.interpolateCompensation(compensation, atFrequency: frequency)
         }
     }
 
-    private static func basisResponsesDB(sampleRate: Double) -> [[Double]] {
+    static func basisResponsesDB(sampleRate: Double) -> [[Double]] {
         let fitFrequencies = fitGridFrequencies()
         return filterDefinitions.map { filter in
             let coefficients: [Double]
@@ -245,7 +286,7 @@ final class LoudnessCompensator: BiquadProcessor, @unchecked Sendable {
         }
     }
 
-    private static func realizedResponseDB(sectionGains: [Double], sampleRate: Double) -> [Double] {
+    static func realizedResponseDB(sectionGains: [Double], sampleRate: Double) -> [Double] {
         let coefficients = coefficientsForBands(gains: sectionGains.map(Float.init), sampleRate: sampleRate)
         return fitGridFrequencies().map { frequency in
             let omega = 2.0 * Double.pi * frequency / sampleRate
@@ -253,13 +294,13 @@ final class LoudnessCompensator: BiquadProcessor, @unchecked Sendable {
         }
     }
 
-    private static func fitGridFrequencies() -> [Double] {
+    static func fitGridFrequencies() -> [Double] {
         (0..<fitGridPointCount).map { index in
             20.0 * pow(20_000.0 / 20.0, Double(index) / Double(fitGridPointCount - 1))
         }
     }
 
-    private static func gramMatrix(for basisResponses: [[Double]]) -> [[Double]] {
+    static func gramMatrix(for basisResponses: [[Double]]) -> [[Double]] {
         (0..<bandCount).map { row in
             (0..<bandCount).map { column in
                 zip(basisResponses[row], basisResponses[column]).reduce(0.0) { partial, pair in
@@ -269,7 +310,7 @@ final class LoudnessCompensator: BiquadProcessor, @unchecked Sendable {
         }
     }
 
-    private static func solveLinearSystem(_ matrix: [[Double]], rhs: [Double]) -> [Double]? {
+    static func solveLinearSystem(_ matrix: [[Double]], rhs: [Double]) -> [Double]? {
         var augmented = matrix.enumerated().map { index, row in
             row + [rhs[index]]
         }

@@ -225,45 +225,7 @@ struct AppSettingsDefaultTests {
         #expect(settings.showDeviceDisconnectAlerts == true)
     }
 
-    @Test("loudnessEqualizationEnabled defaults to false")
-    func loudnessEqualizationEnabledDefault() {
-        let settings = AppSettings()
-        #expect(settings.loudnessEqualizationEnabled == false)
-    }
 
-    @Test("loudnessEqualizationEnabled round-trips through JSON as true")
-    func loudnessEqualizationEnabledRoundTrip() throws {
-        var settings = AppSettings()
-        settings.loudnessEqualizationEnabled = true
-        let data = try JSONEncoder().encode(settings)
-        let decoded = try JSONDecoder().decode(AppSettings.self, from: data)
-        #expect(decoded.loudnessEqualizationEnabled == true)
-    }
-
-    @Test("Unified loudness toggle updates compensation and equalization together")
-    func unifiedLoudnessToggleSetsBothFlags() {
-        var settings = AppSettings()
-
-        settings.setUnifiedLoudnessEnabled(true)
-        #expect(settings.loudnessCompensationEnabled == true)
-        #expect(settings.loudnessEqualizationEnabled == true)
-
-        settings.setUnifiedLoudnessEnabled(false)
-        #expect(settings.loudnessCompensationEnabled == false)
-        #expect(settings.loudnessEqualizationEnabled == false)
-    }
-
-    @Test("loudnessEqualizationEnabled persists via SettingsManager")
-    @MainActor
-    func loudnessEqualizationEnabledPersistence() throws {
-        let tempDir = FileManager.default.temporaryDirectory
-            .appendingPathComponent(UUID().uuidString)
-        let manager = SettingsManager(directory: tempDir)
-        var newSettings = manager.appSettings
-        newSettings.loudnessEqualizationEnabled = true
-        manager.updateAppSettings(newSettings)
-        #expect(manager.appSettings.loudnessEqualizationEnabled == true)
-    }
 
     @Test("volumeHotkeyStep defaults to .normal")
     func volumeHotkeyStepDefault() {
