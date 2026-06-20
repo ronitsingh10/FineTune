@@ -1,7 +1,7 @@
 struct PostAgcCompressorSettings: Codable, Equatable, Sendable {
     /// Threshold in dBFS. Signals above this are compressed.
-    /// Default +0.9 dBFS — catches overshoots 8.8 dB above the AGC target of -7.9 dBFS.
-    var thresholdDb: Float = 0.9
+    /// Default 0.0 dBFS — catches overshoots above the AGC target of -7.9 dBFS.
+    var thresholdDb: Float = 0.0
     
     /// Compression ratio. Default: 7.6 (from Stereo Tool preset).
     var ratio: Float = 7.6

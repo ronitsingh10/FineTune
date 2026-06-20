@@ -10,7 +10,7 @@ struct PostAgcCompressorTests {
     @Test("Default settings are applied correctly")
     func defaultSettings() {
         let settings = PostAgcCompressorSettings()
-        #expect(settings.thresholdDb == 0.9)
+        #expect(settings.thresholdDb == 0.0)
         #expect(settings.ratio == 7.6)
         #expect(settings.attackMs == 2.9)
         #expect(settings.releaseMs == 11.6)
