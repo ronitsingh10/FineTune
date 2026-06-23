@@ -412,6 +412,7 @@ final class AudioEngine {
     var displayableApps: [DisplayableApp] {
         let activeApps = apps
             .filter { !appListCoordinator.isIgnored(identifier: $0.persistenceIdentifier) }
+            .filter { $0.processObjectIDs.contains { $0.readProcessIsRunning() } }
         let activeIdentifiers = Set(activeApps.map { $0.persistenceIdentifier })
 
         // Get pinned apps that are not currently active
@@ -1905,8 +1906,10 @@ final class AudioEngine {
                     guard tap.isHealthCheckEligible(minActiveSeconds: 5.0) else { continue }
 
                     // Only health-check apps that are actively streaming (isRunning=true).
-                    // Paused apps have no callbacks, which is normal — not a health signal.
-                    let isActivelyStreaming = self.processMonitor.activeApps.contains { $0.id == pid }
+                    // Paused apps can still be present in activeApps for proactive tap setup,
+                    // but no callbacks while paused is normal — not a health signal.
+                    let isActivelyStreaming = self.apps.first { $0.id == pid }?
+                        .processObjectIDs.contains { $0.readProcessIsRunning() } ?? false
                     guard isActivelyStreaming else {
                         consecutiveMisses[pid] = 0
                         continue

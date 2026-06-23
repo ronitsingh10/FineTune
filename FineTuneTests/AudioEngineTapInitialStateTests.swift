@@ -336,6 +336,18 @@ struct AudioEngineTapInitialStateTests {
         #expect(snap.autoEQProfileID == nil)
     }
 
+    @Test("silent monitor-reported app is hidden but pre-tapped before playback")
+    func silentAppIsPreparedBeforePlayback() throws {
+        let fix = makeFixture()
+        fix.deviceVolume.defaultDeviceUID = fix.device.uid
+
+        fix.engine.applyPersistedSettings()
+
+        let tap = try #require(fix.lastTap())
+        #expect(tap.currentDeviceUID == fix.device.uid)
+        #expect(fix.engine.displayableApps.isEmpty)
+    }
+
     // MARK: Ordering / post-activation behaviour
 
     @Test("activate(initial:) is the first event the controller observes")
