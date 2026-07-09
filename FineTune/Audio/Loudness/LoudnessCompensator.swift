@@ -47,6 +47,11 @@ final class LoudnessCompensator: BiquadProcessor, @unchecked Sendable {
     /// Phon level used for the last coefficient computation.
     private var _currentPhon: Double = 80.0
 
+    /// Preamp gain (linear) applied before the biquad cascade to prevent clipping.
+    /// Equal to the inverse of the peak boost so that no frequency exceeds the
+    /// original signal level after compensation.
+    private nonisolated(unsafe) var _preampGain: Float = 1.0
+
     // MARK: - Init
 
     init(sampleRate: Double) {
@@ -82,10 +87,14 @@ final class LoudnessCompensator: BiquadProcessor, @unchecked Sendable {
         // Bypass when all gains are negligible (near reference level)
         let allNegligible = gains.allSatisfy { abs($0) < 0.1 }
         if allNegligible {
+            _preampGain = 1.0
             setEnabled(false)
             swapSetup(nil)
             return
         }
+
+        let peakBoostDB = Self.peakRealizedResponseDB(sectionGains: gains.map { Double($0) }, sampleRate: sampleRate)
+        _preampGain = peakBoostDB > 0 ? powf(10.0, Float(-peakBoostDB) / 20.0) : 1.0
 
         let coefficients = Self.coefficientsForBands(gains: gains, sampleRate: sampleRate)
         let newSetup = coefficients.withUnsafeBufferPointer { ptr in
@@ -176,9 +185,19 @@ final class LoudnessCompensator: BiquadProcessor, @unchecked Sendable {
         // Called by updateSampleRate() — recompute for current phon at new sample rate
         let gains = computeBandGains(phon: _currentPhon)
         let allNegligible = gains.allSatisfy { abs($0) < 0.1 }
-        guard !allNegligible else { return nil }
+        guard !allNegligible else {
+            _preampGain = 1.0
+            return nil
+        }
+        let peakBoostDB = Self.peakRealizedResponseDB(sectionGains: gains.map { Double($0) }, sampleRate: sampleRate)
+        _preampGain = peakBoostDB > 0 ? powf(10.0, Float(-peakBoostDB) / 20.0) : 1.0
         let coefficients = Self.coefficientsForBands(gains: gains, sampleRate: sampleRate)
         return (coefficients, Self.bandCount)
+    }
+
+    override func preProcess(output: UnsafeMutablePointer<Float>, frameCount: Int) {
+        var preamp = _preampGain
+        vDSP_vsmul(output, 1, &preamp, output, 1, vDSP_Length(frameCount * 2))
     }
 
     private static func cascadeMagnitude(coefficients: [Double], sectionCount: Int, omega: Double) -> Double {
@@ -200,6 +219,11 @@ final class LoudnessCompensator: BiquadProcessor, @unchecked Sendable {
         }
 
         return magnitude
+    }
+
+    private static func peakRealizedResponseDB(sectionGains: [Double], sampleRate: Double) -> Double {
+        let response = realizedResponseDB(sectionGains: sectionGains, sampleRate: sampleRate)
+        return max(0.0, response.max() ?? 0.0)
     }
 
     private static func targetCurveDB(forPhon phon: Double) -> [Double] {
