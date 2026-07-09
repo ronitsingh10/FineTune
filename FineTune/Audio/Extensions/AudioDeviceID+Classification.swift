@@ -65,9 +65,9 @@ nonisolated extension AudioDeviceID {
 // MARK: - AutoEQ Eligibility
 
 extension AudioDeviceID {
-    /// Returns `true` if this device is likely headphones and can benefit from AutoEQ correction.
+    /// Returns `true` when FineTune should expose AutoEQ correction controls for this device.
     /// HDMI, DisplayPort, AirPlay, virtual, and known speaker-only devices return `false`.
-    /// Built-in devices delegate to `builtInHasHeadphonesActive()` for headphone jack detection.
+    /// Built-in audio is allowed so Mac speakers and built-in jack headphones can be corrected.
     func supportsAutoEQ() -> Bool {
         let transport = readTransportType()
 
@@ -75,7 +75,7 @@ extension AudioDeviceID {
         case .hdmi, .displayPort, .airPlay, .virtual:
             return false
         case .builtIn:
-            return builtInHasHeadphonesActive()
+            return true
         default:
             break
         }
