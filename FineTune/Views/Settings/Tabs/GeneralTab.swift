@@ -5,6 +5,7 @@ import SwiftUI
 struct GeneralTab: View {
     @Bindable var settings: SettingsManager
     let onResetAll: () -> Void
+    let onResetCache: () -> Void
 
     @State private var showResetConfirmation = false
 
@@ -89,6 +90,19 @@ struct GeneralTab: View {
 
     private var dataSection: some View {
         SettingsSection("Data") {
+            SettingsRow(
+                "Reset audio cache",
+                description: "Refresh internal audio engine state without clearing saved settings"
+            ) {
+                Button {
+                    onResetCache()
+                } label: {
+                    Text("Reset")
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+            }
+            SettingsRowDivider()
             SettingsRow(
                 "Reset All Settings",
                 description: "Clear all volumes, EQ, and device routings"

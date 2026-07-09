@@ -11,6 +11,7 @@ struct SettingsRootView: View {
     let mediaKeyMonitor: MediaKeyMonitor
     let shortcutsRegistry: ShortcutsRegistry
     @ObservedObject var updateManager: UpdateManager
+    let onResetCache: () -> Void
 
     enum Section: String, Hashable, CaseIterable, Identifiable {
         case general, audio, shortcuts, updates, about
@@ -26,6 +27,9 @@ struct SettingsRootView: View {
                 onResetAll: {
                     audioEngine.handleSettingsReset()
                     deviceVolumeMonitor.setSystemFollowDefault()
+                },
+                onResetCache: {
+                    audioEngine.handleAudioCacheReset()
                 }
             )
             .tabItem { Label("General", systemImage: "gearshape") }
