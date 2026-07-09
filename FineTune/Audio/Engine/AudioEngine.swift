@@ -273,7 +273,12 @@ final class AudioEngine {
                     self?.deviceVolumeMonitor.refreshAfterDDCProbe()
                     self?.refreshAllTapOutputStates()
                 }
-                ddc.start()
+                // DDC probing writes to displays over I2C. Some USB-C→HDMI / DP
+                // adapters mishandle this and drop the video link. Gate behind a
+                // user setting (default on) so affected users can disable it.
+                if manager.appSettings.ddcVolumeControlEnabled {
+                    ddc.start()
+                }
                 #endif
 
                 // Start device volume monitor AFTER deviceMonitor.start() populates devices
@@ -807,6 +812,20 @@ final class AudioEngine {
             tap.updateLoudnessEqualization(settings)
         }
     }
+
+    #if !APP_STORE
+    /// Starts or stops DDC/CI monitor-volume probing at runtime when the user
+    /// toggles the setting. Stopping halts all I2C writes to displays — the fix
+    /// for adapters that blank the screen when probed. Starting requires a relaunch
+    /// to take full effect for displays that were skipped at launch.
+    func setDDCVolumeControlEnabled(_ enabled: Bool) {
+        if enabled {
+            ddcController.start()
+        } else {
+            ddcController.stop()
+        }
+    }
+    #endif
 
     /// Apply AutoEQ profile to all taps currently routed to the given device.
     private func applyAutoEQToTaps(for deviceUID: String) {
