@@ -61,7 +61,7 @@ struct DeviceInspectorInfoGrid: View {
 
     @ViewBuilder
     private func labelCell(_ text: String) -> some View {
-        Text(text)
+        Text(L10n.string(text))
             .font(DesignTokens.Typography.pickerText)
             .foregroundStyle(DesignTokens.Colors.textSecondary)
             .gridColumnAlignment(.leading)
@@ -106,7 +106,7 @@ private struct SampleRatePickerValue: View {
         .overlay(pickerBorder)
         .onHover { isHovered = $0 }
         .animation(DesignTokens.Animation.hover, value: isHovered)
-        .accessibilityLabel("Sample rate: \(currentDisplay). Activate to change.")
+        .accessibilityLabel(L10n.format("Sample rate: %@. Activate to change.", currentDisplay))
     }
 
     private var pickerLabel: some View {
@@ -166,8 +166,8 @@ private struct DeviceIDValueCell: View {
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .help(copied ? "Copied" : "Copy device ID")
-            .accessibilityLabel(copied ? "Device ID copied" : "Copy device ID")
+            .help(L10n.string(copied ? "Copied" : "Copy device ID"))
+            .accessibilityLabel(L10n.string(copied ? "Device ID copied" : "Copy device ID"))
         }
         .accessibilityElement(children: .contain)
     }

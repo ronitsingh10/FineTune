@@ -81,7 +81,7 @@ struct DeviceDetailSheet: View {
     // MARK: - Auto badge
 
     private var autoBadge: some View {
-        Text("Auto: \(Self.tierDisplayName(autoDetectedTier))")
+        Text(L10n.format("Auto: %@", Self.tierDisplayName(autoDetectedTier)))
             .font(.system(size: 9, weight: .semibold))
             .foregroundStyle(DesignTokens.Colors.textSecondary)
             .padding(.horizontal, 6)
@@ -90,7 +90,7 @@ struct DeviceDetailSheet: View {
                 Capsule()
                     .fill(DesignTokens.Colors.glassFillStrong)
             )
-            .accessibilityLabel("Auto-detected volume control: \(Self.tierDisplayName(autoDetectedTier))")
+            .accessibilityLabel(L10n.format("Auto-detected volume control: %@", Self.tierDisplayName(autoDetectedTier)))
     }
 
     // MARK: - Separator
@@ -140,7 +140,7 @@ struct DeviceDetailSheet: View {
         HStack(spacing: DesignTokens.Spacing.xs) {
             autoBadge
 
-            Text("Use FineTune's software volume")
+            Text(L10n.string("Use FineTune's software volume"))
                 .font(DesignTokens.Typography.pickerText)
                 .foregroundStyle(DesignTokens.Colors.textPrimary)
 
@@ -167,7 +167,7 @@ struct DeviceDetailSheet: View {
     // MARK: - Callout
 
     private var calloutText: some View {
-        Text("Turn on only if the volume slider doesn't work. FineTune remembers this for each device.")
+        Text(L10n.string("Turn on only if the volume slider doesn't work. FineTune remembers this for each device."))
             .font(DesignTokens.Typography.caption)
             .foregroundStyle(DesignTokens.Colors.textTertiary)
             .fixedSize(horizontal: false, vertical: true)
@@ -177,9 +177,9 @@ struct DeviceDetailSheet: View {
 
     static func tierDisplayName(_ tier: VolumeControlTier) -> String {
         switch tier {
-        case .hardware: return "Hardware"
+        case .hardware: return L10n.string("Hardware")
         case .ddc: return "DDC"
-        case .software: return "Software"
+        case .software: return L10n.string("Software")
         }
     }
 

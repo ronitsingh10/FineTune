@@ -327,10 +327,10 @@ final class AutoEQFetcher {
 
         var errorDescription: String? {
             switch self {
-            case .invalidURL: return "Invalid profile URL"
-            case .profileNotFound(let name): return "Profile not found: \(name)"
-            case .invalidData: return "Invalid profile data"
-            case .parseFailed(let name): return "Failed to parse profile: \(name)"
+            case .invalidURL: return L10n.string("Invalid profile URL")
+            case .profileNotFound(let name): return L10n.format("Profile not found: %@", name)
+            case .invalidData: return L10n.string("Invalid profile data")
+            case .parseFailed(let name): return L10n.format("Failed to parse profile: %@", name)
             }
         }
     }

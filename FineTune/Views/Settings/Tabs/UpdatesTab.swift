@@ -10,9 +10,9 @@ struct UpdatesTab: View {
         if let date = updateManager.lastUpdateCheckDate {
             let formatter = RelativeDateTimeFormatter()
             formatter.unitsStyle = .abbreviated
-            return "Version \(version) · \(formatter.localizedString(for: date, relativeTo: .now))"
+            return L10n.format("Version %@ · %@", version, formatter.localizedString(for: date, relativeTo: .now))
         }
-        return "Version \(version) · Never checked"
+        return L10n.format("Version %@ · Never checked", version)
     }
 
     private var automaticallyChecksBinding: Binding<Bool> {

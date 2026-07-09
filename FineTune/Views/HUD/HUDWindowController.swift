@@ -18,6 +18,9 @@ final class HUDWindowController: MediaKeyHUDPresenting {
 
     /// Slider fraction in [0, 1]. The wiring site converts to gain using the current device's tier.
     var volumeWriter: ((Double) -> Void)?
+    var foregroundAppFullscreenProvider: () -> Bool = {
+        HUDWindowController.detectForegroundAppFullscreen()
+    }
 
     // MARK: - Suppression-degraded tracking
 
@@ -74,7 +77,7 @@ final class HUDWindowController: MediaKeyHUDPresenting {
         showCallCount += 1
         showDidUpdatePanel = false
 
-        guard !isForegroundAppFullscreen() else {
+        guard !foregroundAppFullscreenProvider() else {
             logger.debug("Skipping HUD show: foreground app is fullscreen")
             return
         }
@@ -172,7 +175,7 @@ final class HUDWindowController: MediaKeyHUDPresenting {
     func showPerAppNotControlledHUD(displayName: String?, bundleID: String?, icon: NSImage?) {
         let title = displayName?.nilIfEmpty
             ?? bundleID?.nilIfEmpty
-            ?? "FineTune isn't controlling this app yet"
+            ?? L10n.string("FineTune isn't controlling this app yet")
         presentPerApp(
             icon: icon,
             title: title,
@@ -354,21 +357,21 @@ final class HUDWindowController: MediaKeyHUDPresenting {
     }
 
     private func accessibilityDescription(sliderFraction: Double, mute: Bool, deviceName: String) -> String {
-        let device = deviceName.isEmpty ? "Unknown device" : deviceName
-        if mute { return "\(device), muted" }
+        let device = deviceName.isEmpty ? L10n.string("Unknown device") : deviceName
+        if mute { return L10n.format("%@, muted", device) }
         let clamped = max(0, min(1, sliderFraction))
-        return "\(device), volume \(Int((clamped * 100).rounded())) percent"
+        return L10n.format("%@, volume %lld percent", device, Int((clamped * 100).rounded()))
     }
 
     private func postPerAppAccessibilityAnnouncement(panel: NSPanel, title: String, content: PerAppHUDContent) {
         let description: String
         switch content {
         case .volume(let sliderFraction):
-            description = "\(title), volume \(Int((sliderFraction * 100).rounded())) percent"
+            description = L10n.format("%@, volume %lld percent", title, Int((sliderFraction * 100).rounded()))
         case .mute(let isMuted):
-            description = isMuted ? "\(title), muted" : "\(title), unmuted"
+            description = isMuted ? L10n.format("%@, muted", title) : L10n.format("%@, unmuted", title)
         case .notControlled:
-            description = "\(title), not controlled by FineTune"
+            description = L10n.format("%@, not controlled by FineTune", title)
         }
         NSAccessibility.post(
             element: panel,
@@ -386,7 +389,7 @@ final class HUDWindowController: MediaKeyHUDPresenting {
 
     // MARK: - Fullscreen guard
 
-    private func isForegroundAppFullscreen() -> Bool {
+    private static func detectForegroundAppFullscreen() -> Bool {
         guard let frontmostApp = NSWorkspace.shared.frontmostApplication else { return false }
         let pid = frontmostApp.processIdentifier
         let options: CGWindowListOption = [.optionOnScreenOnly, .excludeDesktopElements]
@@ -454,7 +457,7 @@ private struct PerAppHUD: View {
     private static let barHeight: CGFloat = 4
 
     private var subtitleText: String? {
-        if case .notControlled = content { return "Not controlled by FineTune" }
+        if case .notControlled = content { return L10n.string("Not controlled by FineTune") }
         return nil
     }
 
@@ -494,11 +497,11 @@ private struct PerAppHUD: View {
     private var accessibilityDescription: String {
         switch content {
         case .volume:
-            return "\(title), volume \(Int((displayLevel * 100).rounded())) percent"
+            return L10n.format("%@, volume %lld percent", title, Int((displayLevel * 100).rounded()))
         case .mute(let isMuted):
-            return isMuted ? "\(title), muted" : "\(title), unmuted"
+            return isMuted ? L10n.format("%@, muted", title) : L10n.format("%@, unmuted", title)
         case .notControlled:
-            return "\(title), not controlled by FineTune"
+            return L10n.format("%@, not controlled by FineTune", title)
         }
     }
 
@@ -574,7 +577,7 @@ private struct PerAppHUD: View {
                                      ? DesignTokens.Colors.mutedIndicator
                                      : DesignTokens.Colors.hudTileActive)
                     .frame(width: 18, height: 18, alignment: .center)
-                Text(isMuted ? "Muted" : "Unmuted")
+                Text(L10n.string(isMuted ? "Muted" : "Unmuted"))
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundStyle(DesignTokens.Colors.textSecondary)
                 Spacer(minLength: 0)

@@ -60,6 +60,6 @@ struct SettingsRootView: View {
         .frame(width: 720, height: 560)
         .preferredColorScheme(settings.appSettings.appearance.swiftUIColorScheme)
         .background(WindowAppearanceBridge(appearance: settings.appSettings.appearance.nsAppearance))
-        .background(WindowTitleBridge(title: "FineTune Settings"))
+        .background(WindowTitleBridge(title: L10n.string("FineTune Settings")))
     }
 }

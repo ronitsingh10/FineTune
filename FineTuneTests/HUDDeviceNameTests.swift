@@ -41,6 +41,7 @@ struct HUDDeviceNameSmokeTests {
         popup.isVisible = popupVisible
         let hud = HUDWindowController(settingsManager: settings, mediaKeyStatus: status, popupVisibility: popup)
         hud.frameProvider = { NSRect(x: 0, y: 23, width: 1440, height: 877) }
+        hud.foregroundAppFullscreenProvider = { false }
         return hud
     }
 

@@ -38,6 +38,7 @@ struct MediaKeyTapDisabledTests {
         let popup = PopupVisibilityService()
         let hud = HUDWindowController(settingsManager: settings, mediaKeyStatus: status, popupVisibility: popup)
         hud.frameProvider = { NSRect(x: 0, y: 0, width: 1440, height: 900) }
+        hud.foregroundAppFullscreenProvider = { false }
         let accessibility = MockAccessibilityTrustProviding(isTrusted: isTrusted)
         let monitor = MediaKeyMonitor(
             decoder: StubMediaKeyDecoder(),

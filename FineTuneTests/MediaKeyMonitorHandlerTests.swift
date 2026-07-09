@@ -54,6 +54,7 @@ struct MediaKeyMonitorHandlerTests {
         let hud = hudController ?? HUDWindowController(settingsManager: settings, mediaKeyStatus: mediaKeyStatus, popupVisibility: popup)
         // Replace frameProvider to avoid NSScreen access in unit tests.
         hud.frameProvider = { NSRect(x: 0, y: 0, width: 1440, height: 900) }
+        hud.foregroundAppFullscreenProvider = { false }
 
         let monitor = MediaKeyMonitor(
             decoder: StubMediaKeyDecoder(),

@@ -54,7 +54,7 @@ private struct IconOption: View {
             }
         }
         .buttonStyle(.plain)
-        .accessibilityLabel(style.rawValue)
+        .accessibilityLabel(style.displayName)
     }
 }
 

@@ -28,13 +28,6 @@ private struct HUDStyleOption: View {
     let isSelected: Bool
     let onSelect: () -> Void
 
-    private var label: String {
-        switch style {
-        case .tahoe: return "Tahoe"
-        case .classic: return "Classic"
-        }
-    }
-
     var body: some View {
         Button(action: onSelect) {
             thumbnail
@@ -51,7 +44,7 @@ private struct HUDStyleOption: View {
                 }
         }
         .buttonStyle(.plain)
-        .accessibilityLabel(label)
+        .accessibilityLabel(style.displayName)
     }
 
     @ViewBuilder
