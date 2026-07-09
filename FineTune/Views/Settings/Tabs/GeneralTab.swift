@@ -1,5 +1,6 @@
 // FineTune/Views/Settings/Tabs/GeneralTab.swift
 import SwiftUI
+import AppKit
 
 @MainActor
 struct GeneralTab: View {
@@ -7,6 +8,7 @@ struct GeneralTab: View {
     let onResetAll: () -> Void
 
     @State private var showResetConfirmation = false
+    @State private var showLanguageRestartPrompt = false
 
     var body: some View {
         ScrollView {
@@ -30,6 +32,14 @@ struct GeneralTab: View {
         } message: {
             Text("This cannot be undone.")
         }
+        .alert("Restart required", isPresented: $showLanguageRestartPrompt) {
+            Button("Later", role: .cancel) {}
+            Button("Restart") {
+                relaunchFineTune()
+            }
+        } message: {
+            Text("Restart FineTune to apply the selected language.")
+        }
     }
 
     // MARK: - General
@@ -51,6 +61,23 @@ struct GeneralTab: View {
                 description: "Match macOS, or lock to Light or Dark"
             ) {
                 ThemeTilePicker(selection: $settings.appSettings.appearance)
+            }
+            SettingsRowDivider()
+            SettingsRow(
+                "Language",
+                description: "Choose the app language"
+            ) {
+                Picker("", selection: $settings.appSettings.languagePreference) {
+                    ForEach(AppLanguagePreference.allCases) { preference in
+                        Text(preference.description).tag(preference)
+                    }
+                }
+                .pickerStyle(.menu)
+                .labelsHidden()
+                .frame(width: DesignTokens.Dimensions.settingsPickerWidth)
+                .onChange(of: settings.appSettings.languagePreference) { _, _ in
+                    showLanguageRestartPrompt = true
+                }
             }
             SettingsRowDivider()
             SettingsRow(
@@ -103,5 +130,20 @@ struct GeneralTab: View {
                 .controlSize(.small)
             }
         }
+    }
+
+    private func relaunchFineTune() {
+        settings.flushSync()
+
+        let bundlePath = Bundle.main.bundlePath
+        let quotedBundlePath = bundlePath.replacingOccurrences(of: "'", with: "'\\''")
+        let script = "sleep 0.4; /usr/bin/open -n '\(quotedBundlePath)'"
+
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/sh")
+        process.arguments = ["-c", script]
+        try? process.run()
+
+        NSApp.terminate(nil)
     }
 }

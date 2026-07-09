@@ -7,7 +7,7 @@ struct SectionHeader: View {
     let title: String
 
     var body: some View {
-        Text(title)
+        Text(L10n.string(title))
             .sectionHeaderStyle()
     }
 }

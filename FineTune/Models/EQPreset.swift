@@ -39,6 +39,8 @@ enum EQPreset: String, CaseIterable, Identifiable {
         case media = "Media"
 
         var id: String { rawValue }
+
+        var displayName: String { L10n.string(rawValue) }
     }
 
     var category: Category {
@@ -62,26 +64,26 @@ enum EQPreset: String, CaseIterable, Identifiable {
 
     var name: String {
         switch self {
-        case .flat: return "Flat"
-        case .bassBoost: return "Bass Boost"
-        case .bassCut: return "Bass Cut"
-        case .trebleBoost: return "Treble Boost"
-        case .vocalClarity: return "Vocal Clarity"
-        case .podcast: return "Podcast"
-        case .spokenWord: return "Spoken Word"
-        case .loudness: return "Loudness"
-        case .lateNight: return "Late Night"
-        case .smallSpeakers: return "Small Speakers"
-        case .rock: return "Rock"
-        case .pop: return "Pop"
-        case .electronic: return "Electronic"
-        case .jazz: return "Jazz"
-        case .classical: return "Classical"
-        case .hipHop: return "Hip-Hop"
-        case .rnb: return "R&B"
-        case .deep: return "Deep"
-        case .acoustic: return "Acoustic"
-        case .movie: return "Movie"
+        case .flat: return L10n.string("Flat")
+        case .bassBoost: return L10n.string("Bass Boost")
+        case .bassCut: return L10n.string("Bass Cut")
+        case .trebleBoost: return L10n.string("Treble Boost")
+        case .vocalClarity: return L10n.string("Vocal Clarity")
+        case .podcast: return L10n.string("Podcast")
+        case .spokenWord: return L10n.string("Spoken Word")
+        case .loudness: return L10n.string("Loudness")
+        case .lateNight: return L10n.string("Late Night")
+        case .smallSpeakers: return L10n.string("Small Speakers")
+        case .rock: return L10n.string("Rock")
+        case .pop: return L10n.string("Pop")
+        case .electronic: return L10n.string("Electronic")
+        case .jazz: return L10n.string("Jazz")
+        case .classical: return L10n.string("Classical")
+        case .hipHop: return L10n.string("Hip-Hop")
+        case .rnb: return L10n.string("R&B")
+        case .deep: return L10n.string("Deep")
+        case .acoustic: return L10n.string("Acoustic")
+        case .movie: return L10n.string("Movie")
         }
     }
 

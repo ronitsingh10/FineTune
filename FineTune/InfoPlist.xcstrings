@@ -1,0 +1,46 @@
+{
+  "sourceLanguage": "en",
+  "strings": {
+    "CFBundleName": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FineTune"
+          }
+        }
+      }
+    },
+    "NSAudioCaptureUsageDescription": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FineTune 需要访问权限，才能控制各个应用的音量。"
+          }
+        }
+      }
+    },
+    "NSBluetoothAlwaysUsageDescription": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FineTune 使用蓝牙，以便从菜单栏连接已配对的音频设备。"
+          }
+        }
+      }
+    },
+    "NSMicrophoneUsageDescription": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FineTune 需要麦克风访问权限，才能捕获使用输入设备的 App 音频。"
+          }
+        }
+      }
+    }
+  },
+  "version": "1.0"
+}

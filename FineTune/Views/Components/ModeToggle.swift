@@ -43,7 +43,7 @@ struct ModeToggle: View {
                     .font(.system(size: 10))
                     .foregroundStyle(isSelected ? DesignTokens.Colors.accentPrimary : DesignTokens.Colors.textTertiary)
 
-                Text(label)
+                Text(L10n.string(label))
                     .font(.system(size: 11, weight: isSelected ? .medium : .regular))
                     .foregroundStyle(isSelected ? DesignTokens.Colors.textPrimary : DesignTokens.Colors.textSecondary)
             }

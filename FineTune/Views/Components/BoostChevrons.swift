@@ -47,8 +47,8 @@ struct BoostChevrons: View {
         }
         .buttonStyle(.plain)
         .onHover { isHovered = $0 }
-        .help("Volume boost: \(level.label)")
-        .accessibilityLabel("Volume boost \(level.label)")
+        .help(L10n.format("Volume boost: %@", level.label))
+        .accessibilityLabel(L10n.format("Volume boost %@", level.label))
         .animation(.snappy(duration: 0.2), value: level)
         .animation(DesignTokens.Animation.hover, value: isHovered)
     }

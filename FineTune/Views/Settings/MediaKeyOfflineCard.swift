@@ -41,7 +41,7 @@ struct MediaKeyOfflineCard: View {
                 .buttonStyle(.plain)
                 .glassButtonStyle()
                 .padding(.top, 2)
-                .accessibilityHint("Reinstalls the media-key event tap.")
+                .accessibilityHint(L10n.string("Reinstalls the media-key event tap."))
             }
         }
         .padding(.horizontal, DesignTokens.Spacing.sm)
@@ -56,7 +56,7 @@ struct MediaKeyOfflineCard: View {
                 .allowsHitTesting(false)
         }
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("Media keys offline. Retry to reinstall the event tap.")
+        .accessibilityLabel(L10n.string("Media keys offline. Retry to reinstall the event tap."))
     }
 }
 

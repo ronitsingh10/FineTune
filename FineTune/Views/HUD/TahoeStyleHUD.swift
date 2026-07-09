@@ -56,10 +56,10 @@ struct TahoeStyleHUD: View {
     #endif
 
     private var accessibilityDescription: String {
-        let device = deviceName.isEmpty ? "Unknown device" : deviceName
+        let device = deviceName.isEmpty ? L10n.string("Unknown device") : deviceName
         let percent = Int((displayFloat * 100).rounded())
-        if displayMute { return "\(device), muted, volume at \(percent) percent" }
-        return "\(device), volume \(percent) percent"
+        if displayMute { return L10n.format("%@, muted, volume at %lld percent", device, percent) }
+        return L10n.format("%@, volume %lld percent", device, percent)
     }
 
     private var sliderBinding: Binding<Double> {

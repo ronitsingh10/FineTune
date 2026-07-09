@@ -85,7 +85,7 @@ private struct BaseMuteButton: View {
         .onHover { hovering in
             isHovered = hovering
         }
-        .help(isMuted ? mutedHelp : unmutedHelp)
+        .help(L10n.string(isMuted ? mutedHelp : unmutedHelp))
         .animation(.spring(response: 0.25, dampingFraction: 0.5), value: isPulsing)
         .animation(DesignTokens.Animation.hover, value: isHovered)
         .onChange(of: isMuted) { _, _ in

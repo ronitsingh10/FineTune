@@ -55,7 +55,7 @@ struct AboutLinkChip: View {
                     .font(.system(size: 11, weight: .medium))
                     .foregroundStyle(resolvedIconColor)
                     .contentTransition(.symbolEffect(.replace))
-                Text(label)
+                Text(L10n.string(label))
                     .font(.system(size: 11, weight: .medium))
                     .foregroundStyle(resolvedTextColor)
             }
@@ -75,7 +75,7 @@ struct AboutLinkChip: View {
                 isHovered = hovering
             }
         }
-        .accessibilityLabel(label)
+        .accessibilityLabel(L10n.string(label))
     }
 }
 
