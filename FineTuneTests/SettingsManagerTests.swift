@@ -274,6 +274,28 @@ struct AppSettingsDefaultTests {
         #expect(settings.volumeHotkeyStep == .normal)
     }
 
+    @Test("volumeHUDEnabled defaults to true")
+    func volumeHUDEnabledDefault() {
+        let settings = AppSettings()
+        #expect(settings.volumeHUDEnabled == true)
+    }
+
+    @Test("volumeHUDEnabled round-trips through JSON")
+    func volumeHUDEnabledRoundTrip() throws {
+        var settings = AppSettings()
+        settings.volumeHUDEnabled = false
+        let data = try JSONEncoder().encode(settings)
+        let decoded = try JSONDecoder().decode(AppSettings.self, from: data)
+        #expect(decoded.volumeHUDEnabled == false)
+    }
+
+    @Test("Missing volumeHUDEnabled key decodes to true")
+    func volumeHUDEnabledMissingKeyDefault() throws {
+        let json = "{}".data(using: .utf8)!
+        let decoded = try JSONDecoder().decode(AppSettings.self, from: json)
+        #expect(decoded.volumeHUDEnabled == true)
+    }
+
     @Test("volumeHotkeyStep round-trips through JSON")
     func volumeHotkeyStepRoundTrip() throws {
         var settings = AppSettings()

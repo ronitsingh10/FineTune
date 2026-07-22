@@ -170,6 +170,40 @@ struct ShortcutsRegistryTests {
         #expect(hud.failureCalls == 1)
     }
 
+    @Test("disabled Volume HUD suppresses all HUD outcomes without blocking actions")
+    func disabledVolumeHUDSuppressesAllOutcomes() {
+        let settings = makeIsolatedSettings()
+        var appSettings = settings.appSettings
+        appSettings.volumeHUDEnabled = false
+        settings.appSettings = appSettings
+
+        let app = makeAudioApp(id: 1, bundleID: "com.test.app")
+        let engine = RecordingAudioEngine(apps: [app], initialVolume: 0.5)
+        let hud = RecordingHUDController()
+        let registry = makeRegistry(
+            settings: settings,
+            resolver: StubTargetResolver(target: "com.test.app"),
+            audioEngine: engine,
+            hud: hud
+        )
+
+        registry.dispatch(.targetAppVolumeUp)
+        registry.dispatch(.targetAppMuteToggle)
+
+        let noTargetRegistry = makeRegistry(
+            settings: settings,
+            resolver: StubTargetResolver(target: nil),
+            audioEngine: RecordingAudioEngine(apps: []),
+            hud: hud
+        )
+        noTargetRegistry.dispatch(.targetAppVolumeDown)
+
+        #expect(engine.setVolumeCalls.count == 1)
+        #expect(engine.toggleMuteCalls.count == 1)
+        #expect(hud.successCalls == 0)
+        #expect(hud.failureCalls == 0)
+    }
+
     // MARK: - name
 
     @Test("supportsRepeat is true only for volume up/down")

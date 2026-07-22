@@ -122,13 +122,17 @@ final class ShortcutsRegistry {
             }
         }
         audioEngine.setVolume(for: app, to: nextGain)
-        hud.showPerAppVolumeHUD(app: app, sliderFraction: nextSlider)
+        if settings.appSettings.volumeHUDEnabled {
+            hud.showPerAppVolumeHUD(app: app, sliderFraction: nextSlider)
+        }
     }
 
     private func toggleTargetMute() {
         guard let app = resolveTargetAudioApp() else { return }
         audioEngine.toggleMute(for: app)
-        hud.showPerAppMuteHUD(app: app, isMuted: audioEngine.isMuted(for: app))
+        if settings.appSettings.volumeHUDEnabled {
+            hud.showPerAppMuteHUD(app: app, isMuted: audioEngine.isMuted(for: app))
+        }
     }
 
     private func startRepeating(action: ShortcutAction) {
@@ -155,18 +159,22 @@ final class ShortcutsRegistry {
             .filter { audioEngine.isAudibleNow(bundleID: $0) }
 
         guard let bundleID = resolver.resolveTargetBundleID(audibleCandidates: candidates) else {
-            hud.showPerAppNotControlledHUD(displayName: nil, bundleID: nil, icon: nil)
+            if settings.appSettings.volumeHUDEnabled {
+                hud.showPerAppNotControlledHUD(displayName: nil, bundleID: nil, icon: nil)
+            }
             return nil
         }
         if let app = audioEngine.apps.first(where: { $0.bundleID == bundleID }) {
             return app
         }
         let running = NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).first
-        hud.showPerAppNotControlledHUD(
-            displayName: running?.localizedName,
-            bundleID: bundleID,
-            icon: running?.icon
-        )
+        if settings.appSettings.volumeHUDEnabled {
+            hud.showPerAppNotControlledHUD(
+                displayName: running?.localizedName,
+                bundleID: bundleID,
+                icon: running?.icon
+            )
+        }
         return nil
     }
 

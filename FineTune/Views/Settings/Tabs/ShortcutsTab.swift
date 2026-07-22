@@ -77,13 +77,26 @@ struct ShortcutsTab: View {
                 .padding(.vertical, 12)
             }
 
-            if settings.appSettings.mediaKeyControlEnabled && accessibility.isTrustedCached {
+            if settings.appSettings.mediaKeyControlEnabled {
                 SettingsRowDivider()
                 SettingsRow(
-                    "HUD Style",
-                    description: "How the volume indicator appears"
+                    "Volume HUD",
+                    description: "Show FineTune's volume indicator for media keys and volume hotkeys"
                 ) {
-                    HUDStyleSegmentedControl(selection: $settings.appSettings.hudStyle)
+                    Toggle("", isOn: $settings.appSettings.volumeHUDEnabled)
+                        .toggleStyle(.switch)
+                        .controlSize(.small)
+                        .labelsHidden()
+                }
+
+                if settings.appSettings.volumeHUDEnabled {
+                    SettingsRowDivider()
+                    SettingsRow(
+                        "HUD Style",
+                        description: "How the volume indicator appears"
+                    ) {
+                        HUDStyleSegmentedControl(selection: $settings.appSettings.hudStyle)
+                    }
                 }
             }
         }

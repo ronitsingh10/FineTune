@@ -461,6 +461,29 @@ struct MediaKeyMonitorHandlerTests {
         #expect(hud.showCallCount == 0)
     }
 
+    @Test("handleCore changes volume without showing HUD when Volume HUD is disabled")
+    func hudNotShownWhenDisabled() {
+        let (monitor, hud, _, settings) = makeMonitor(popupVisible: false)
+        var appSettings = settings.appSettings
+        appSettings.volumeHUDEnabled = false
+        settings.updateAppSettings(appSettings)
+
+        var writtenVolume: Float?
+        monitor.handleCore(
+            event: .volumeUp(isRepeat: false),
+            deviceID: 1,
+            tier: .software,
+            deviceName: "Test Device",
+            currentVolume: 0.5,
+            currentMute: false,
+            setVolume: { _, volume in writtenVolume = volume },
+            setMute: { _, _ in }
+        )
+
+        #expect(writtenVolume != nil)
+        #expect(hud.showCallCount == 0)
+    }
+
     @Test("handleCore calls HUD show for repeat volumeUp when popup hidden (AC #7 per-call)")
     func hudShownForRepeat() {
         let (monitor, hud, _, _) = makeMonitor(popupVisible: false)

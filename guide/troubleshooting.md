@@ -77,14 +77,15 @@ Media keys (F10 / F11 / F12) are opt-in and require the **Accessibility** permis
 
 1. Open **System Settings** → **Privacy & Security** → **Accessibility**
 2. Enable FineTune in the list. If it's already on, toggle it off and back on to clear a rare permission-bootstrap race.
-3. Open FineTune Settings → **Media Keys & HUD**, turn on **Control volume with media keys**, and pick a HUD style (Tahoe or Classic) or disable the HUD
+3. Open FineTune Settings → **Shortcuts**, turn on **Media Keys Control**, and turn **Volume HUD** off if another app already displays volume changes
 
 If the keys still don't work right after launch, a WindowServer handoff can briefly swallow the first keypress. Try once more; subsequent presses are reliable.
 
 ## Volume HUD not appearing
 
-- Check Settings → **Media Keys & HUD**. The HUD is off by default and has to be enabled separately from the media-key toggle.
-- Switch HUD styles if one isn't rendering. Tahoe uses macOS 26's system HUD look; Classic matches the older translucent rounded-rect style.
+* Open FineTune Settings → **Shortcuts** and turn on **Media Keys Control**. The **Volume HUD** control appears below it even before Accessibility permission is granted.
+* Turn on **Volume HUD**.
+* Switch HUD styles if one is not rendering. Tahoe uses the macOS 26 system HUD look. Classic matches the older translucent rounded rectangle style.
 
 ## EQ not applying / sounds the same
 
