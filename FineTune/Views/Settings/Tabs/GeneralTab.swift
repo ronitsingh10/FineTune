@@ -7,6 +7,7 @@ struct GeneralTab: View {
     let onResetAll: () -> Void
 
     @State private var showResetConfirmation = false
+    @State private var showLanguageRestartAlert = false
 
     var body: some View {
         ScrollView {
@@ -30,6 +31,12 @@ struct GeneralTab: View {
         } message: {
             Text("This cannot be undone.")
         }
+        .alert("Restart Required", isPresented: $showLanguageRestartAlert) {
+            Button("Restart Now") { restartApp() }
+            Button("Later", role: .cancel) {}
+        } message: {
+            Text("FineTune needs to restart to apply the new language.")
+        }
     }
 
     // MARK: - General
@@ -44,6 +51,26 @@ struct GeneralTab: View {
                     .toggleStyle(.switch)
                     .controlSize(.small)
                     .labelsHidden()
+            }
+            SettingsRowDivider()
+            SettingsRow(
+                "Language",
+                description: "Choose the display language for FineTune"
+            ) {
+                Picker("", selection: $settings.appSettings.language) {
+                    Text("Follow System")
+                        .tag(AppLanguage.system)
+                    Text(verbatim: "English")
+                        .tag(AppLanguage.en)
+                    Text(verbatim: "简体中文")
+                        .tag(AppLanguage.zhHans)
+                }
+                .pickerStyle(.menu)
+                .labelsHidden()
+                .fixedSize()
+                .onChange(of: settings.appSettings.language) { _, _ in
+                    showLanguageRestartAlert = true
+                }
             }
             SettingsRowDivider()
             SettingsRow(
@@ -101,6 +128,20 @@ struct GeneralTab: View {
                 .buttonStyle(.bordered)
                 .tint(.red)
                 .controlSize(.small)
+            }
+        }
+    }
+
+    /// Restarts the app by opening a new instance and terminating the current one.
+    private func restartApp() {
+        settings.flushSync()
+        let config = NSWorkspace.OpenConfiguration()
+        config.createsNewApplicationInstance = true
+        NSWorkspace.shared.openApplication(at: Bundle.main.bundleURL, configuration: config) { _, error in
+            if error == nil {
+                DispatchQueue.main.async {
+                    NSApp.terminate(nil)
+                }
             }
         }
     }

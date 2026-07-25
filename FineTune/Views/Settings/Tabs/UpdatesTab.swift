@@ -38,7 +38,7 @@ struct UpdatesTab: View {
                     SettingsRowDivider()
                     SettingsRow(
                         "Last checked",
-                        description: lastCheckDescription
+                        description: LocalizedStringKey(stringLiteral: lastCheckDescription)
                     ) {
                         Button("Check Now") {
                             updateManager.checkForUpdates()

@@ -1,0 +1,692 @@
+/* 
+  FineTune – 简体中文本地化字符串
+  FineTune/zh-Hans.lproj/Localizable.strings
+  编码: UTF-8
+*/
+
+// MARK: - SettingsRootView.swift · 设置窗口标签
+
+/* 设置 · General 标签页 */
+"General" = "通用";
+
+/* 设置 · Audio 标签页 */
+"Audio" = "音频";
+
+/* 设置 · Shortcuts 标签页 */
+"Shortcuts" = "快捷键";
+
+/* 设置 · Updates 标签页 */
+"Updates" = "更新";
+
+/* 设置 · About 标签页 */
+"About" = "关于";
+
+/* 设置窗口标题 */
+"FineTune Settings" = "FineTune 设置";
+
+// MARK: - GeneralTab.swift · 通用设置
+
+/* 确认对话框标题 · 重置所有设置 */
+"Reset all settings?" = "重置所有设置？";
+
+/* 确认对话框 · 重置按钮（destructive） */
+"Reset" = "重置";
+
+/* 确认对话框 · 取消按钮 */
+"Cancel" = "取消";
+
+/* 确认对话框 · 操作不可撤销提示 */
+"This cannot be undone." = "此操作无法撤销。";
+
+/* 通用设置 · 登录时启动行标题 */
+"Launch at Login" = "登录时启动";
+
+/* 通用设置 · 登录时启动说明 */
+"Start FineTune when you log in" = "登录时自动启动 FineTune";
+
+/* 通用设置 · 主题行标题 */
+"Theme" = "主题";
+
+/* 通用设置 · 主题说明 */
+"Match macOS, or lock to Light or Dark" = "跟随 macOS 外观，或锁定为浅色/深色";
+
+/* 通用设置 · 设备断开提醒行标题 */
+"Device Disconnect Alerts" = "设备断开提醒";
+
+/* 通用设置 · 设备断开提醒说明 */
+"Show notification when an audio device disconnects" = "音频设备断开时显示通知";
+
+/* 通用设置 · 菜单栏分区标题 */
+"Menu Bar" = "菜单栏";
+
+/* 通用设置 · 图标样式行标题 */
+"Icon Style" = "图标样式";
+
+/* 通用设置 · 图标样式说明 */
+"How FineTune appears in your menu bar" = "FineTune 在菜单栏中的显示样式";
+
+/* 通用设置 · 弹窗尺寸行标题 */
+"Popup Size" = "弹窗尺寸";
+
+/* 通用设置 · 弹窗尺寸说明 */
+"Smaller fits more on screen; larger leaves more breathing room." = "较小尺寸可容纳更多内容；较大尺寸视觉效果更宽松。";
+
+/* 通用设置 · 数据分区标题 */
+"Data" = "数据";
+
+/* 通用设置 · 重置所有设置行标题 */
+"Reset All Settings" = "重置所有设置";
+
+/* 通用设置 · 重置说明 */
+"Clear all volumes, EQ, and device routings" = "清除所有音量、EQ 及设备路由设置";
+
+// MARK: - AudioTab.swift · 音频设置
+
+/* 音频设置 · 音量分区标题 */
+"Volume" = "音量";
+
+/* 音频设置 · 默认音量行标题 */
+"Default Volume" = "默认音量";
+
+/* 音频设置 · 默认音量说明 */
+"Initial volume for new apps" = "新应用的初始音量";
+
+/* 音频设置 · 响度补偿行标题 */
+"Loudness Compensation" = "响度补偿";
+
+/* 音频设置 · 响度补偿说明 */
+"Boost low frequencies at low volume" = "低音量时增强低频";
+
+/* 音频设置 · 设备分区标题 */
+"Devices" = "设备";
+
+/* 音频设置 · 锁定输入设备行标题 */
+"Lock Input Device" = "锁定输入设备";
+
+/* 音频设置 · 锁定输入设备说明 */
+"Prevent auto-switching when devices connect" = "防止设备连接时自动切换";
+
+/* 音频设置 · 系统声音行标题 */
+"System Sounds" = "系统声音";
+
+/* 音频设置 · 系统声音说明 */
+"Where alerts and effects play" = "提示音和音效的输出位置";
+
+/* 音频设置 · 提示音量行标题 */
+"Alert Volume" = "提示音量";
+
+/* 音频设置 · 提示音量说明 */
+"Volume for alerts and notifications" = "提示音和通知的音量";
+
+// MARK: - ShortcutsTab.swift · 快捷键设置
+
+/* 快捷键设置 · 音量步进行标题 */
+"Volume Step" = "音量步进";
+
+/* 快捷键设置 · 音量步进说明 */
+"How much each keypress changes the volume. Applies to media keys, configured hotkeys, and arrow-key nav in the popup." = "每次按键调节音量的幅度。适用于媒体键、自定义快捷键及弹窗中的方向键导航。";
+
+/* 快捷键设置 · 媒体键分区标题 */
+"Media Keys" = "媒体键";
+
+/* 快捷键设置 · 媒体键控制行标题 */
+"Media Keys Control" = "媒体键控制";
+
+/* 快捷键设置 · 媒体键控制说明 */
+"Use F11/F12 (or volume keys) to control FineTune" = "使用 F11/F12（或音量键）控制 FineTune";
+
+/* 快捷键设置 · HUD 样式行标题 */
+"HUD Style" = "HUD 样式";
+
+/* 快捷键设置 · HUD 样式说明 */
+"How the volume indicator appears" = "音量指示器的显示方式";
+
+/* 快捷键设置 · 热键分区标题 */
+"Hotkeys" = "热键";
+
+/* 快捷键设置 · 开关弹窗动作说明 */
+"Show or hide the menu bar popup" = "显示或隐藏菜单栏弹窗";
+
+/* 快捷键设置 · 应用音量增大说明 */
+"Raise volume for the app playing audio" = "提高正在播放音频的应用的音量";
+
+/* 快捷键设置 · 应用音量减小说明 */
+"Lower volume for the app playing audio" = "降低正在播放音频的应用的音量";
+
+/* 快捷键设置 · 应用静音切换说明 */
+"Mute or unmute the app playing audio" = "静音或取消静音正在播放音频的应用";
+
+// MARK: - UpdatesTab.swift · 更新设置
+
+/* 更新设置 · 分区标题 */
+"Software Updates" = "软件更新";
+
+/* 更新设置 · 自动更新行标题 */
+"Automatic updates" = "自动更新";
+
+/* 更新设置 · 自动更新说明 */
+"Check for new versions automatically" = "自动检查新版本";
+
+/* 更新设置 · 上次检查行标题 */
+"Last checked" = "上次检查";
+
+/* 更新设置 · 立即检查按钮 */
+"Check Now" = "立即检查";
+
+/* 更新设置 · 版本号格式 */
+"Version %@ (%@)" = "版本 %@ (%@)";
+
+/* 更新设置 · 从未检查状态文字 */
+"Never checked" = "从未检查";
+
+// MARK: - AboutTab.swift · 关于
+
+/* 关于 · 应用名称标题 */
+"FineTune" = "FineTune";
+
+/* 关于 · GitHub 星标链接标签 */
+"Star on GitHub" = "Star on GitHub";
+
+/* 关于 · 许可证链接标签 */
+"GPL-3.0" = "GPL-3.0";
+
+/* 关于 · 版权声明格式 */
+"© %@ Ronit Singh" = "© %@ Ronit Singh";
+
+// MARK: - MenuBarPopupView.swift · 菜单栏弹窗
+
+/* 弹窗 · 编辑模式提示文字 */
+"Drag or type a number to set priority" = "拖拽或输入数字以设置优先级";
+
+/* 弹窗 · 完成排序按钮（含 .help 提示） */
+"Done reordering" = "完成排序";
+
+/* 弹窗 · 开始排序按钮 */
+"Reorder devices" = "重新排序设备";
+
+/* 弹窗 · 齿轮设置按钮 */
+"Settings" = "设置";
+
+/* 弹窗 · 底部退出按钮及应用名 */
+"Quit" = "退出";
+
+/* 弹窗 · 底部捐赠链接 accessibility 标签 */
+"Donate to FineTune" = "向 FineTune 捐赠";
+
+/* 弹窗 · 退出按钮 help 提示（含快捷键） */
+"Quit FineTune (⌘Q)" = "退出 FineTune（⌘Q）";
+
+/* 弹窗 · 无默认输出设备时的占位 */
+"No Output" = "无输出";
+
+/* 弹窗 · 无默认输入设备时的占位 */
+"No Input" = "无输入";
+
+/* 弹窗 · 输出设备切换按钮 · help 提示 */
+"Output Devices" = "输出设备";
+
+/* 弹窗 · 输入设备切换按钮 · help 提示 */
+"Input Devices" = "输入设备";
+
+/* 弹窗 · 蓝牙关闭时的提示 */
+"Turn on Bluetooth to connect devices" = "开启蓝牙以连接设备";
+
+/* 弹窗 · 已配对设备分区标题 */
+"Paired" = "已配对";
+
+/* 弹窗 · 无活跃音频应用空状态 */
+"No apps playing audio" = "没有应用在播放音频";
+
+/* 弹窗 · 已忽略应用计数 · 含编辑管理提示（插值 Int） */
+"%lld ignored · edit to manage" = "%lld 个已忽略 · 编辑以管理";
+
+/* 弹窗 · 应用列表分区标题 */
+"Apps" = "应用";
+
+/* 弹窗 · 已忽略应用计数（插值 Int） */
+"%lld ignored" = "%lld 个已忽略";
+
+/* 弹窗 · 忽略列表分区标题 */
+"Ignored" = "已忽略";
+
+/* 弹窗 · 设为默认设备按钮 help 提示 */
+"Default device" = "默认设备";
+
+/* 弹窗 · 设为默认设备按钮 help 提示 */
+"Set as default" = "设为默认";
+
+// MARK: - PermissionBannerView.swift · 权限横幅
+
+/* 权限横幅 · 需要音频录制权限提示 */
+"Audio capture access required" = "需要音频捕获权限";
+
+/* 权限横幅 · 系统设置路径说明（含箭头符号） */
+"Enable in System Settings → Privacy & Security → Screen & System Audio Recording" = "在「系统设置」→ 「隐私与安全」 → 「录屏与系统录音」 中启用";
+
+/* 权限横幅 · 打开系统设置按钮（权限已被拒绝） */
+"Open System Settings" = "打开系统设置";
+
+/* 权限横幅 · 请求权限按钮 */
+"Grant Access" = "授予权限";
+
+// MARK: - AccessibilityPromptStrip.swift · 无障碍权限提示条
+
+/* 无障碍 · 授予权限按钮 */
+"Grant" = "授予";
+
+/* 无障碍 · 已授予状态标签 */
+"Granted" = "已授予";
+
+/* 无障碍 · 授权成功后的说明 */
+"Access granted — volume keys now control FineTune." = "访问权限已授予 — 音量键现可控制 FineTune。";
+
+/* 无障碍 · 请求权限说明（含按键名称） */
+"FineTune needs Accessibility to intercept F10 / F11 / F12." = "FineTune 需要「辅助功能」权限以拦截 F10 / F11 / F12。";
+
+// MARK: - MediaKeyOfflineCard.swift · 媒体键离线提示卡
+
+/* 媒体键 · 离线状态标题 */
+"Media keys offline" = "媒体键离线";
+
+/* 媒体键 · 离线原因及操作说明 */
+"The system disabled FineTune's event tap — usually after a sleep/wake cycle or a main-thread stall. Retry to reinstall it." = "系统已禁用 FineTune 的事件监听（通常发生在睡眠/唤醒周期或主线程卡顿后）。重试以重新安装。";
+
+/* 媒体键 · 重试按钮 */
+"Retry" = "重试";
+
+// MARK: - AutoEQSearchPanel.swift · AutoEQ 搜索面板
+
+/* AutoEQ · 未启用校正的空状态 */
+"No correction active" = "未启用校正";
+
+/* AutoEQ · 空状态提示文字 */
+"Search or pick a favorite below" = "搜索或从下方收藏中选择";
+
+/* AutoEQ · 配置加载中 */
+"Loading profile..." = "正在加载配置文件…";
+
+/* AutoEQ · 搜索框占位文字 */
+"Search headphones..." = "搜索耳机…";
+
+/* AutoEQ · 清除搜索按钮标签 */
+"Clear search" = "清除搜索";
+
+/* AutoEQ · 耳机目录加载中 */
+"Loading headphone catalog..." = "正在加载耳机目录…";
+
+/* AutoEQ · 目录未加载时的搜索提示 */
+"Type to search headphones" = "输入以搜索耳机";
+
+/* AutoEQ · 收藏分区标题（全大写样式） */
+"FAVORITES" = "收藏";
+
+/* AutoEQ · 无搜索结果 */
+"No profiles found" = "未找到配置文件";
+
+/* AutoEQ · 导入按钮标签 */
+"Import ParametricEQ.txt..." = "导入 ParametricEQ.txt…";
+
+/* AutoEQ · 部分结果计数格式 */
+"Showing %lld of %lld results" = "显示 %lld / %lld 条结果";
+
+/* AutoEQ · 结果总数格式 */
+"%lld results" = "%lld 条结果";
+
+/* AutoEQ · 校正开关标签 */
+"Correction" = "校正";
+
+/* AutoEQ · 前置放大器开关标签 */
+"Preamp" = "前置放大器";
+
+/* AutoEQ · 从收藏移除（accessibility label） */
+"Remove from favorites" = "从收藏移除";
+
+/* AutoEQ · 添加至收藏（accessibility label） */
+"Add to favorites" = "添加至收藏";
+
+/* AutoEQ · 移除校正配置（accessibility label） */
+"Remove correction profile" = "移除校正配置";
+
+/* AutoEQ · 返回无校正状态（accessibility hint） */
+"Returns to no correction state" = "返回无校正状态";
+
+/* AutoEQ · 导入配置 accessibility label */
+"Import custom profile" = "导入自定义配置";
+
+/* AutoEQ · 导入文件选择器 accessibility hint */
+"Opens file picker for ParametricEQ.txt files" = "打开 ParametricEQ.txt 文件选择器";
+
+/* AutoEQ · 加载配置失败错误格式 */
+"Failed to load %@" = "加载 %@ 失败";
+
+// MARK: - AutoEQPicker.swift · AutoEQ 选择器按钮
+
+/* AutoEQ · 关闭面板的 help 提示 */
+"Close AutoEQ" = "关闭 AutoEQ";
+
+/* AutoEQ · 打开面板的 help 提示 */
+"AutoEQ correction" = "AutoEQ 校正";
+
+// MARK: - DevicePicker.swift · 设备选择器
+
+/* 设备选择器 · 系统音频选项 */
+"System Audio" = "系统音频";
+
+/* 设备选择器 · 未选择时的占位文字 */
+"Select" = "选择";
+
+/* 设备选择器 · 多选模式下系统音频不可用 */
+"Not available in multi mode" = "多选模式下不可用";
+
+/* 设备选择器 · 跟随系统默认说明 */
+"Follows macOS default" = "跟随 macOS 默认";
+
+/* 设备选择器 · 多选路由模式标签 */
+"Multi" = "多选";
+
+/* 设备选择器 · 多选设备计数格式 */
+"%lld devices" = "%lld 个设备";
+
+/* 设备选择器 · 多选路由副标题 · 单设备格式 */
+"Multi · %@" = "多选 · %@";
+
+/* 设备选择器 · 多选路由副标题 · 多设备格式 */
+"Multi · %lld devices" = "多选 · %lld 个设备";
+
+// MARK: - DeviceDetailSheet.swift · 设备详情面板
+
+/* 设备详情 · 自动检测标签格式 */
+"Auto: %@" = "自动: %@";
+
+/* 设备详情 · 自动检测说明 accessibility 标签 */
+"Auto-detected volume control: %@" = "自动检测音量控制: %@";
+
+/* 设备详情 · 使用软件音量切换行 */
+"Use FineTune's software volume" = "使用 FineTune 软件音量";
+
+/* 设备详情 · 软件音量开关说明 */
+"Turn on only if the volume slider doesn't work. FineTune remembers this for each device." = "仅在音量滑块无效时开启。FineTune 会为每台设备记住此设置。";
+
+/* 设备详情 · 硬件音量控制级别 */
+"Hardware" = "硬件";
+
+/* 设备详情 · DDC 音量控制 */
+"DDC" = "DDC";
+
+/* 设备详情 · 软件音量控制 */
+"Software" = "软件";
+
+/* 设备详情 · 独占模式行文本 · 含进程名及 PID */
+"In exclusive use by %@ (PID %lld)" = "由 %@（PID %lld）独占使用";
+
+/* 设备详情 · 独占模式行文本 · 仅 PID */
+"In exclusive use by PID %lld" = "由 PID %lld 独占使用";
+
+// MARK: - DeviceInspectorInfoGrid.swift · 设备检查器信息表格
+
+/* 检查器 · 传输类型标签 */
+"Transport" = "传输类型";
+
+/* 检查器 · 采样率标签 */
+"Sample rate" = "采样率";
+
+/* 检查器 · 音频格式标签 */
+"Format" = "格式";
+
+/* 检查器 · 设备 ID 标签 */
+"Device ID" = "设备 ID";
+
+/* 检查器 · 复制按钮 */
+"Copy device ID" = "复制设备 ID";
+
+/* 检查器 · 复制成功提示 */
+"Copied" = "已复制";
+
+/* 检查器 · 复制成功 accessibility 标签 */
+"Device ID copied" = "设备 ID 已复制";
+
+/* 检查器 · 采样率选择器 accessibility 标签格式 */
+"Sample rate: %@. Activate to change." = "采样率: %@。点击以更改。";
+
+// MARK: - DeviceEditRow.swift · 设备编辑行
+
+/* 编辑模式 · 更改图标按钮 */
+"Change icon" = "更改图标";
+
+/* 编辑模式 · 默认设备徽章 */
+"DEFAULT" = "默认";
+
+/* 编辑模式 · 默认设备无法隐藏提示 */
+"Cannot hide the default device" = "无法隐藏默认设备";
+
+/* 编辑模式 · 显示于主视图 help 提示 */
+"Show in main view" = "在主视图中显示";
+
+/* 编辑模式 · 从主视图隐藏 help 提示 */
+"Hide from main view" = "从主视图中隐藏";
+
+/* 编辑模式 · 关闭设备检查器 */
+"Close device inspector" = "关闭设备检查器";
+
+/* 编辑模式 · 打开设备检查器 */
+"Device inspector" = "设备检查器";
+
+/* 编辑模式 · 编辑优先级 accessibility 标签 */
+"Edit priority position" = "编辑优先级位置";
+
+// MARK: - DeviceIconPicker.swift · 设备图标选择器
+
+/* 图标选择 · 搜索框占位文字 */
+"Search icons" = "搜索图标";
+
+/* 图标选择 · 恢复默认按钮 */
+"Restore Default" = "恢复默认";
+
+/* 图标选择 · 搜索无匹配结果 */
+"No matching icons" = "无匹配图标";
+
+/* 图标选择 · 建议分区标题 */
+"Suggested" = "建议";
+
+// MARK: - ModeToggle.swift · 模式切换
+
+/* 模式切换 · 单选模式 */
+"Single" = "单选";
+
+// MARK: - EQPresetPicker.swift · EQ 预设选择器
+
+/* EQ 预设 · 我的预设分区 */
+"My Presets" = "我的预设";
+
+/* EQ 预设 · 自定义状态文字 */
+"Custom" = "自定义";
+
+/* EQ 预设 · 删除预设按钮提示 */
+"Delete preset" = "删除预设";
+
+// MARK: - AppRowControls.swift · 应用行控制区
+
+/* EQ 面板 · 关闭按钮 */
+"Close Equalizer" = "关闭 EQ";
+
+/* EQ 面板 · 展开按钮 / 图标样式-均衡器图标 */
+"Equalizer" = "均衡器";
+
+// MARK: - PairedDeviceRow.swift · 已配对蓝牙设备行
+
+/* 蓝牙 · 连接按钮 */
+"Connect" = "连接";
+
+// MARK: - MuteButton.swift · 静音按钮
+
+/* 静音按钮 · 取消静音（输出设备） */
+"Unmute" = "取消静音";
+
+/* 静音按钮 · 静音（输出设备） */
+"Mute" = "静音";
+
+/* 静音按钮 · 取消麦克风静音 */
+"Unmute microphone" = "取消麦克风静音";
+
+/* 静音按钮 · 麦克风静音 */
+"Mute microphone" = "麦克风静音";
+
+// MARK: - EQPanelView.swift · EQ 面板
+
+/* EQ 面板 · 启用开关标签 */
+"EQ" = "EQ";
+
+/* EQ 面板 · 预设选择器标签 */
+"Preset" = "预设";
+
+// MARK: - DeviceRow.swift · 设备行（AutoEQ 副标题）
+
+/* 设备行 · AutoEQ 配置已禁用时的副标题格式 */
+"%@ (off)" = "%@（关闭）";
+
+// MARK: - AppEditRow.swift · 应用编辑行
+
+/* 编辑模式 · 取消固定提示 */
+"Unpin app" = "取消固定应用";
+
+/* 编辑模式 · 固定应用提示 */
+"Pin app" = "固定应用";
+
+/* 编辑模式 · 停止忽略提示 */
+"Stop ignoring" = "停止忽略";
+
+/* 编辑模式 · 忽略应用提示 */
+"Ignore app" = "忽略应用";
+
+// MARK: - AudioEngine.swift · 通知
+
+/* 通知 · 设备重新连接标题 */
+"Audio Device Reconnected" = "音频设备已重新连接";
+
+/* 通知 · 设备重新连接正文格式 */
+"\"%@\" is back. %lld app(s) switched back." = "「%@」已恢复。%lld 个应用已切回。";
+
+/* 通知 · 设备断开标题 */
+"Audio Device Disconnected" = "音频设备已断开";
+
+/* 通知 · 设备断开正文格式 */
+"\"%@\" disconnected. %lld app(s) switched to %@" = "「%@」已断开。%lld 个应用已切换到 %@";
+
+/* 通知 · 默认设备变更标题 */
+"Default Audio Device Changed" = "默认音频设备已更改";
+
+/* 通知 · 默认设备变更正文格式 */
+"%lld app(s) switched to \"%@\"" = "%lld 个应用已切换到「%@」";
+
+// MARK: - SettingsUITypes.swift · 设置枚举用户可见文字
+
+/* 弹窗尺寸 · 紧凑 */
+"Compact" = "紧凑";
+
+/* 弹窗尺寸 · 舒适 */
+"Comfortable" = "舒适";
+
+/* 弹窗尺寸 · 宽敞 */
+"Spacious" = "宽敞";
+
+/* 外观模式 · 跟随系统 */
+"System" = "跟随系统";
+
+/* 外观模式 · 浅色 */
+"Light" = "浅色";
+
+/* 外观模式 · 深色 */
+"Dark" = "深色";
+
+/* 音量步进 · 粗调 12.5% */
+"Coarse (12.5%)" = "粗调（12.5%）";
+
+/* 音量步进 · 正常 6.25% */
+"Normal (6.25%)" = "正常（6.25%）";
+
+/* 音量步进 · 微调 3.13% */
+"Fine (3.13%)" = "微调（3.13%）";
+
+/* 音量步进 · 精细 1.56% */
+"Extra-Fine (1.56%)" = "精细（1.56%）";
+
+// MARK: - ShortcutAction.swift · 快捷键动作名称
+
+/* 快捷键 · 开关 FineTune 弹窗 */
+"Toggle FineTune Popup" = "切换 FineTune 弹窗";
+
+/* 快捷键 · 应用音量增大 */
+"App Volume Up" = "应用音量增大";
+
+/* 快捷键 · 应用音量减小 */
+"App Volume Down" = "应用音量减小";
+
+/* 快捷键 · 应用静音切换 */
+"App Mute" = "应用静音";
+
+// MARK: - HUDStyleSegmentedControl.swift · HUD 样式选项
+
+/* HUD 样式 · Tahoe 圆形交互样式 */
+"Tahoe" = "Tahoe";
+
+/* HUD 样式 · Classic 经典方块样式 */
+"Classic" = "Classic";
+
+// MARK: - ClassicStyleHUD.swift · 经典 HUD 辅助功能
+
+/* 经典 HUD · 静音状态 */
+"Muted" = "已静音";
+
+/* 经典 HUD · 音量状态描述格式 */
+"Volume %lld percent" = "音量 %lld%%";
+
+// MARK: - AboutLinkChip.swift · 关于页链接芯片
+
+/* 关于页 · 捐赠链接标签（也用于弹窗底部） */
+"Donate" = "捐赠";
+
+// MARK: - MenuBarIconStyle · 菜单栏图标样式（枚举 rawValue）
+
+/* 图标样式 · 默认应用图标 */
+"Default" = "默认";
+
+/* 图标样式 · 扬声器图标 */
+"Speaker" = "扬声器";
+
+/* 图标样式 · 当前设备图标 */
+"Device" = "设备";
+
+/* 图标样式 · 波形图标 */
+"Waveform" = "波形";
+
+// MARK: - BoostChevrons.swift · 增益倍数帮助提示
+
+/* 增益 · 帮助提示格式 */
+"Volume boost: %@" = "音量增益: %@";
+
+// MARK: - IconStyleSegmentedControl.swift · 图标样式 segmented control
+
+/* 图标选项 · accessibility 标签中各样式名，已在上方 MenuBarIconStyle 枚举中覆盖 */
+
+// MARK: - GeneralTab.swift · 语言切换
+
+/* 通用设置 · 语言分区标题 */
+"Language" = "语言";
+
+/* 通用设置 · 语言说明 */
+"Choose the display language for FineTune" = "选择 FineTune 的显示语言";
+
+/* 语言选项 · 跟随系统 */
+"Follow System" = "跟随系统";
+
+/* 重启确认对话框 · 标题 */
+"Restart Required" = "需要重启";
+
+/* 重启确认对话框 · 说明 */
+"FineTune needs to restart to apply the new language." = "FineTune 需要重启以应用新的语言设置。";
+
+/* 重启确认对话框 · 立即重启按钮 */
+"Restart Now" = "立即重启";
+
+/* 重启确认对话框 · 稍后按钮 */
+"Later" = "稍后";

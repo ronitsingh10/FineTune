@@ -7,6 +7,14 @@ CLAUDE.md
 
 # Git worktrees
 .worktrees/
+.maistro-worktrees/
+.maistro-session.json
+
+# Code analysis database
+.codegraph/
+
+# AI agent system files
+.system/
 
 # Build artifacts
 build/

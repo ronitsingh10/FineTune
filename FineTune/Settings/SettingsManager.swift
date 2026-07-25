@@ -50,6 +50,9 @@ nonisolated struct AppSettings: Codable, Equatable {
     // its UserDefaults; settings.json is the source of truth.
     var customShortcuts: [String: ShortcutCodable] = [:]
 
+    // Language
+    var language: AppLanguage = .system  // Display language (system, English, or Chinese)
+
     // Appearance
     var appearance: AppearancePreference = .system  // Follow system appearance, or lock light/dark
 
@@ -76,6 +79,7 @@ nonisolated struct AppSettings: Codable, Equatable {
         mediaKeyControlEnabled = try c.decodeIfPresent(Bool.self, forKey: .mediaKeyControlEnabled) ?? true
         volumeHotkeyStep = try c.decodeIfPresent(VolumeHotkeyStep.self, forKey: .volumeHotkeyStep) ?? .normal
         customShortcuts = try c.decodeIfPresent([String: ShortcutCodable].self, forKey: .customShortcuts) ?? [:]
+        language = try c.decodeIfPresent(AppLanguage.self, forKey: .language) ?? .system
         appearance = try c.decodeIfPresent(AppearancePreference.self, forKey: .appearance) ?? .system
         popupSize = try c.decodeIfPresent(MenuBarPopupSize.self, forKey: .popupSize) ?? .comfortable
     }
@@ -804,8 +808,25 @@ final class SettingsManager {
         if newSettings.launchAtLogin != settings.appSettings.launchAtLogin {
             setLaunchAtLogin(newSettings.launchAtLogin)
         }
+        // Handle language override — write/remove AppleLanguages in UserDefaults
+        if newSettings.language != settings.appSettings.language {
+            applyLanguageOverride(newSettings.language)
+        }
         settings.appSettings = newSettings
         scheduleSave()
+    }
+
+    /// Writes or removes the `AppleLanguages` override in `UserDefaults.standard`.
+    /// `.system` removes the key (falling back to macOS system language);
+    /// `.en` and `.zhHans` write a single-element array to force the language.
+    private func applyLanguageOverride(_ language: AppLanguage) {
+        if let languages = language.appleLanguages {
+            UserDefaults.standard.set(languages, forKey: "AppleLanguages")
+        } else {
+            UserDefaults.standard.removeObject(forKey: "AppleLanguages")
+        }
+        // Force a barrier so the value is synchronously visible before we might terminate
+        _ = UserDefaults.standard.synchronize()
     }
 
     private func setLaunchAtLogin(_ enabled: Bool) {
@@ -862,6 +883,9 @@ final class SettingsManager {
         settings.appDeviceSelectionMode.removeAll()
         settings.appSelectedDeviceUIDs.removeAll()
         settings.userEQPresets.removeAll()
+
+        // Clear language override to follow system
+        UserDefaults.standard.removeObject(forKey: "AppleLanguages")
 
         // Also unregister from launch at login
         try? SMAppService.mainApp.unregister()

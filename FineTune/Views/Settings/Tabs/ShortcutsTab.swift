@@ -37,7 +37,7 @@ struct ShortcutsTab: View {
             ) {
                 Picker("", selection: $settings.appSettings.volumeHotkeyStep) {
                     ForEach(VolumeHotkeyStep.allCases) { step in
-                        Text(step.description).tag(step)
+                        Text(LocalizedStringKey(stringLiteral: step.description)).tag(step)
                     }
                 }
                 .pickerStyle(.menu)
@@ -96,8 +96,8 @@ struct ShortcutsTab: View {
             ForEach(Array(ShortcutAction.allCases.enumerated()), id: \.element) { index, action in
                 if index > 0 { SettingsRowDivider() }
                 SettingsRow(
-                    action.displayName,
-                    description: description(for: action)
+                    LocalizedStringKey(stringLiteral: action.displayName),
+                    description: LocalizedStringKey(stringLiteral: description(for: action))
                 ) {
                     KeyboardShortcuts.Recorder(
                         for: shortcutsRegistry.name(for: action),
