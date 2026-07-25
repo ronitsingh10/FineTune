@@ -62,6 +62,28 @@ enum AppearancePreference: String, Codable, CaseIterable, Identifiable, CustomSt
     }
 }
 
+// MARK: - App Language
+
+/// Display language for FineTune. `.system` follows the macOS system language;
+/// `.en` and `.zhHans` override `AppleLanguages` in UserDefaults.
+nonisolated enum AppLanguage: String, Codable, CaseIterable, Identifiable {
+    case system = "system"
+    case en = "en"
+    case zhHans = "zh-Hans"
+
+    var id: Self { self }
+
+    /// The value to write to `UserDefaults.standard` for key `"AppleLanguages"`.
+    /// `nil` means "remove the override and follow system language".
+    var appleLanguages: [String]? {
+        switch self {
+        case .system: return nil
+        case .en: return ["en"]
+        case .zhHans: return ["zh-Hans"]
+        }
+    }
+}
+
 extension AppearancePreference {
     /// AppKit appearance override. `nil` means "inherit from window or app".
     /// Apply via `nsView.window?.appearance = value` for any `NSWindow`/`NSPanel`
