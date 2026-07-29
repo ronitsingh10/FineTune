@@ -923,6 +923,10 @@ struct MenuBarPopupView: View {
                 onEQToggle: {
                     toggleEQ(for: displayableApp.id, scrollProxy: scrollProxy)
                 },
+                monoChannel: audioEngine.getMonoChannel(for: app),
+                onMonoChannelChange: { channel in
+                    audioEngine.setMonoChannel(for: app, to: channel)
+                },
                 isFocused: hasKeyboardEngaged && selectedRow == .app(persistenceID: displayableApp.id)
             )
             .id(PopupKeyboardNavModel.RowID.app(persistenceID: displayableApp.id))
@@ -990,6 +994,10 @@ struct MenuBarPopupView: View {
             isEQExpanded: expandedRowID == displayableApp.id,
             onEQToggle: {
                 toggleEQ(for: displayableApp.id, scrollProxy: scrollProxy)
+            },
+            monoChannel: audioEngine.getMonoChannelForInactive(identifier: identifier),
+            onMonoChannelChange: { channel in
+                audioEngine.setMonoChannelForInactive(identifier: identifier, to: channel)
             },
             isFocused: hasKeyboardEngaged && selectedRow == .app(persistenceID: displayableApp.id)
         )

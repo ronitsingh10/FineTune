@@ -102,6 +102,7 @@ private func processWithDefaults(
     rampCoefficient: Float = 1.0,
     preferredStereoLeft: Int = 0,
     preferredStereoRight: Int = 1,
+    monoOutputChannel: Int = -1,
     currentVol: inout Float,
     eqProc: EQProcessor? = nil,
     autoEQProc: AutoEQProcessor? = nil,
@@ -117,6 +118,7 @@ private func processWithDefaults(
         rampCoefficient: rampCoefficient,
         preferredStereoLeft: preferredStereoLeft,
         preferredStereoRight: preferredStereoRight,
+        monoOutputChannel: monoOutputChannel,
         currentVol: &currentVol,
         eqProc: eqProc,
         autoEQProc: autoEQProc,
@@ -396,6 +398,142 @@ struct BufferMappingTests {
         var vol: Float = 1.0
         // Should not crash.
         processWithDefaults(input: input, output: output, currentVol: &vol)
+    }
+}
+
+// MARK: - Per-App Mono Channel Tests
+
+@Suite("ProcessTapController — Mono Output Channel")
+struct MonoOutputChannelTests {
+
+    @Test("Stereo input is averaged onto the chosen channel; every other channel is silent")
+    func sumsToSingleChannel() {
+        let frames = 128
+        let channels = 8
+        let input = TestABL(buffers: [(channels: 2, frames: frames)])
+        let output = TestABL(buffers: [(channels: UInt32(channels), frames: frames)])
+
+        let inData = input.data(at: 0)
+        for f in 0..<frames {
+            inData[f * 2] = 0.8
+            inData[f * 2 + 1] = 0.2
+        }
+
+        var vol: Float = 1.0
+        processWithDefaults(input: input, output: output, monoOutputChannel: 2, currentVol: &vol)
+
+        let outData = output.data(at: 0)
+        for f in 0..<frames {
+            for ch in 0..<channels {
+                let expected: Float = (ch == 2) ? 0.5 : 0.0  // (0.8 + 0.2) / 2
+                #expect(abs(outData[f * channels + ch] - expected) < 1e-6,
+                        "frame \(f) channel \(ch)")
+            }
+        }
+    }
+
+    @Test("Correlated stereo keeps its level instead of gaining +6 dB")
+    func averagesRatherThanSums() {
+        let frames = 64
+        let input = TestABL(buffers: [(channels: 2, frames: frames)])
+        let output = TestABL(buffers: [(channels: 2, frames: frames)])
+        // 0.8 stays under SoftLimiter.threshold (0.95); summing would hit 1.6 and be limited.
+        fill(input, bufferIndex: 0, value: 0.8)
+
+        var vol: Float = 1.0
+        processWithDefaults(input: input, output: output, monoOutputChannel: 0, currentVol: &vol)
+
+        let outData = output.data(at: 0)
+        for f in 0..<frames {
+            #expect(abs(outData[f * 2] - 0.8) < 1e-6, "frame \(f) should keep its level")
+            #expect(outData[f * 2 + 1] == 0.0, "frame \(f) right channel should be silent")
+        }
+    }
+
+    @Test("A source silent in one channel folds down 6 dB — documented cost of 1/N averaging")
+    func silentChannelCostsSixDecibels() {
+        let frames = 64
+        let input = TestABL(buffers: [(channels: 2, frames: frames)])
+        let output = TestABL(buffers: [(channels: 2, frames: frames)])
+
+        // Program audio in channel 1 only, as a mono recording carried in L.
+        let inData = input.data(at: 0)
+        for f in 0..<frames {
+            inData[f * 2] = 0.8
+            inData[f * 2 + 1] = 0.0
+        }
+
+        var vol: Float = 1.0
+        processWithDefaults(input: input, output: output, monoOutputChannel: 0, currentVol: &vol)
+
+        // Half amplitude = -6.02 dB. Deliberate, not a bug: the same 1/N that keeps
+        // correlated stereo at unity. Recoverable exactly with the app's 2× boost.
+        let outData = output.data(at: 0)
+        for f in 0..<frames {
+            #expect(abs(outData[f * 2] - 0.4) < 1e-6, "frame \(f)")
+        }
+    }
+
+    @Test("A channel past the device's channel count clamps to the last channel")
+    func clampsOutOfRangeChannel() {
+        let frames = 32
+        let input = TestABL(buffers: [(channels: 2, frames: frames)])
+        let output = TestABL(buffers: [(channels: 2, frames: frames)])
+        fill(input, bufferIndex: 0, value: 0.5)
+
+        var vol: Float = 1.0
+        processWithDefaults(input: input, output: output, monoOutputChannel: 99, currentVol: &vol)
+
+        let outData = output.data(at: 0)
+        for f in 0..<frames {
+            #expect(outData[f * 2] == 0.0)
+            #expect(abs(outData[f * 2 + 1] - 0.5) < 1e-6)
+        }
+    }
+
+    @Test("Volume and gate multipliers still apply on the mono path")
+    func respectsGain() {
+        let frames = 32
+        let input = TestABL(buffers: [(channels: 2, frames: frames)])
+        let output = TestABL(buffers: [(channels: 4, frames: frames)])
+        fill(input, bufferIndex: 0, value: 1.0)
+
+        var vol: Float = 0.0
+        processWithDefaults(
+            input: input,
+            output: output,
+            targetVol: 0.5,
+            outputGateMultiplier: 0.5,
+            monoOutputChannel: 1,
+            currentVol: &vol
+        )
+
+        let outData = output.data(at: 0)
+        for f in 0..<frames {
+            #expect(abs(outData[f * 4 + 1] - 0.25) < 1e-6, "frame \(f)")
+        }
+    }
+
+    @Test("monoOutputChannel: -1 leaves the existing stereo mapping untouched")
+    func disabledIsPassthrough() {
+        let frames = 32
+        let input = TestABL(buffers: [(channels: 2, frames: frames)])
+        let output = TestABL(buffers: [(channels: 2, frames: frames)])
+
+        let inData = input.data(at: 0)
+        for f in 0..<frames {
+            inData[f * 2] = 0.6
+            inData[f * 2 + 1] = 0.3
+        }
+
+        var vol: Float = 1.0
+        processWithDefaults(input: input, output: output, monoOutputChannel: -1, currentVol: &vol)
+
+        let outData = output.data(at: 0)
+        for f in 0..<frames {
+            #expect(outData[f * 2] == 0.6)
+            #expect(outData[f * 2 + 1] == 0.3)
+        }
     }
 }
 

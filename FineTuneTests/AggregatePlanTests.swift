@@ -33,6 +33,42 @@ struct AggregatePlanTests {
         #expect(plan.clockDeviceUID == "builtin")
     }
 
+    @Test("Single plain device with per-app mono routing: NOT stacked, so channels 3+ exist")
+    func singlePlainDeviceWithMonoRouting() {
+        let plan = ProcessTapController.planAggregate(
+            outputUIDs: ["scarlett"],
+            expand: { _ in nil },
+            outputStreamCount: { _ in 1 },
+            requiresFullChannelLayout: true
+        )
+        #expect(plan.subDeviceUIDs == ["scarlett"])
+        // Same crux as the flattened case: stacked would hide everything past the
+        // preferred stereo pair, so "send this app to channel 4" could never work.
+        #expect(plan.isStacked == false)
+    }
+
+    @Test("Mirroring to several devices stays stacked even with mono routing requested")
+    func mirroringIgnoresMonoRouting() {
+        let plan = ProcessTapController.planAggregate(
+            outputUIDs: ["builtin", "scarlett"],
+            expand: { _ in nil },
+            outputStreamCount: { _ in 1 },
+            requiresFullChannelLayout: true
+        )
+        #expect(plan.isStacked == true)
+    }
+
+    @Test("Multi-stream device stays stacked even with mono routing requested")
+    func multiStreamIgnoresMonoRouting() {
+        let plan = ProcessTapController.planAggregate(
+            outputUIDs: ["motu"],
+            expand: { _ in nil },
+            outputStreamCount: { _ in 2 },
+            requiresFullChannelLayout: true
+        )
+        #expect(plan.isStacked == true)
+    }
+
     @Test("Single aggregate around a single-stream device: flattened and NOT stacked")
     func singleAggregateFlattened() {
         let plan = ProcessTapController.planAggregate(

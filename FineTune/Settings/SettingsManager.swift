@@ -98,6 +98,7 @@ final class SettingsManager {
         var appMutes: [String: Bool] = [:]  // bundleID → isMuted
         var appBoosts: [String: Float] = [:]  // bundleID → boost rawValue (1.0, 2.0, 3.0, 4.0)
         var appEQSettings: [String: EQSettings] = [:]  // bundleID → EQ settings
+        var appMonoChannel: [String: Int] = [:]  // bundleID → zero-based output channel (absent = stereo)
         var appSettings: AppSettings = AppSettings()  // App-wide settings
         var systemSoundsFollowsDefault: Bool = true  // Whether system sounds follows macOS default
         var appDeviceSelectionMode: [String: DeviceSelectionMode] = [:]  // bundleID → selection mode
@@ -153,6 +154,8 @@ final class SettingsManager {
             appMutes = try c.decodeIfPresent([String: Bool].self, forKey: .appMutes) ?? [:]
             appBoosts = try c.decodeIfPresent([String: Float].self, forKey: .appBoosts) ?? [:]
             appEQSettings = try c.decodeIfPresent([String: EQSettings].self, forKey: .appEQSettings) ?? [:]
+            appMonoChannel = (try c.decodeIfPresent([String: Int].self, forKey: .appMonoChannel) ?? [:])
+                .filter { $0.value >= 0 }
             var decodedAppSettings = try c.decodeIfPresent(AppSettings.self, forKey: .appSettings) ?? AppSettings()
             if !decodedAppSettings.defaultNewAppVolume.isFinite || decodedAppSettings.defaultNewAppVolume < 0 {
                 decodedAppSettings.defaultNewAppVolume = 1.0
@@ -267,6 +270,22 @@ final class SettingsManager {
 
     func setEQSettings(_ eqSettings: EQSettings, for appIdentifier: String) {
         settings.appEQSettings[appIdentifier] = eqSettings
+        scheduleSave()
+    }
+
+    // MARK: - Per-App Mono Channel
+
+    /// Zero-based output channel this app is summed to mono onto, or nil for normal stereo.
+    func getMonoChannel(for identifier: String) -> Int? {
+        settings.appMonoChannel[identifier]
+    }
+
+    func setMonoChannel(for identifier: String, to channel: Int?) {
+        if let channel, channel >= 0 {
+            settings.appMonoChannel[identifier] = channel
+        } else {
+            settings.appMonoChannel.removeValue(forKey: identifier)
+        }
         scheduleSave()
     }
 

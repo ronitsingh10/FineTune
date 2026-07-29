@@ -9,4 +9,6 @@ struct TapInitialState {
     var loudnessVolume: Float = 1.0
     var loudnessCompensationEnabled: Bool = false
     var loudnessEqualizerSettings: LoudnessEqualizerSettings = .init()
+    /// Zero-based output channel to sum this app to mono onto; `-1` for normal stereo.
+    var monoOutputChannel: Int = -1
 }

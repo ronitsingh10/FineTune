@@ -36,6 +36,8 @@ struct InactiveAppRow: View {
     let onRenameUserPreset: (UUID, String) -> Void
     let isEQExpanded: Bool
     let onEQToggle: () -> Void
+    let monoChannel: Int?
+    let onMonoChannelChange: (Int?) -> Void
     let isFocused: Bool
 
     @State private var localEQSettings: EQSettings
@@ -69,6 +71,8 @@ struct InactiveAppRow: View {
         onRenameUserPreset: @escaping (UUID, String) -> Void = { _, _ in },
         isEQExpanded: Bool = false,
         onEQToggle: @escaping () -> Void = {},
+        monoChannel: Int? = nil,
+        onMonoChannelChange: @escaping (Int?) -> Void = { _ in },
         isFocused: Bool = false
     ) {
         self.appInfo = appInfo
@@ -99,6 +103,8 @@ struct InactiveAppRow: View {
         self.onRenameUserPreset = onRenameUserPreset
         self.isEQExpanded = isEQExpanded
         self.onEQToggle = onEQToggle
+        self.monoChannel = monoChannel
+        self.onMonoChannelChange = onMonoChannelChange
         self.isFocused = isFocused
         self._localEQSettings = State(initialValue: eqSettings)
     }
@@ -161,6 +167,8 @@ struct InactiveAppRow: View {
                     onDeviceModeChange: onDeviceModeChange,
                     onSelectFollowDefault: onSelectFollowDefault,
                     onEQToggle: onEQToggle,
+                    monoChannel: monoChannel,
+                    onMonoChannelChange: onMonoChannelChange,
                     isRowFocused: isFocused
                 )
             }
