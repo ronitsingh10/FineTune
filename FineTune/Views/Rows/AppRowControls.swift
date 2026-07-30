@@ -23,6 +23,8 @@ struct AppRowControls: View {
     let onDeviceModeChange: (DeviceSelectionMode) -> Void
     let onSelectFollowDefault: () -> Void
     let onEQToggle: () -> Void
+    var monoChannel: Int? = nil
+    var onMonoChannelChange: (Int?) -> Void = { _ in }
     var isRowFocused: Bool = false
 
     @State private var dragOverrideValue: Double?
@@ -125,6 +127,8 @@ struct AppRowControls: View {
                 onDevicesSelected: onDevicesSelected,
                 onSelectFollowDefault: onSelectFollowDefault,
                 showModeToggle: true,
+                monoChannel: monoChannel,
+                onMonoChannelChange: onMonoChannelChange,
                 triggerWidth: 0,
                 triggerStyle: .iconOnly
             )

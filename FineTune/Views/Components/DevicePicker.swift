@@ -23,9 +23,14 @@ struct DevicePicker: View {
     let onDevicesSelected: (Set<String>) -> Void  // Multi mode callback
     let onSelectFollowDefault: () -> Void
     let showModeToggle: Bool
+    /// Zero-based output channel the app is summed to mono onto; nil = normal stereo.
+    var monoChannel: Int? = nil
+    var onMonoChannelChange: (Int?) -> Void = { _ in }
 
     @State private var isExpanded = false
     @State private var isButtonHovered = false
+    /// Output channel count of the routed device, read when the dropdown opens.
+    @State private var routedChannelCount = 0
 
     @Environment(\.appearancePreference) private var appearancePreference
 
@@ -323,8 +328,13 @@ struct DevicePicker: View {
             }
             .scrollIndicators(.hidden)
             .frame(maxHeight: 220)
+
+            channelSection
         }
         .frame(width: popoverWidth)
+        .onAppear { routedChannelCount = resolvedChannelCount() }
+        .onChange(of: selectedDeviceUID) { _, _ in routedChannelCount = resolvedChannelCount() }
+        .onChange(of: currentMode) { _, _ in routedChannelCount = resolvedChannelCount() }
         .background(
             VisualEffectBackground(material: .menu, blendingMode: .behindWindow)
                 .clipShape(RoundedRectangle(cornerRadius: cornerRadius))
@@ -364,6 +374,59 @@ struct DevicePicker: View {
                 handleItemTap(item)
             }
         )
+    }
+
+    // MARK: - Output Channel Section
+
+    /// Output channel count of the device this app currently plays to.
+    /// Read from the HAL on open rather than plumbed in — it is a property of the
+    /// hardware, not of any app, and only the open dropdown needs it.
+    private func resolvedChannelCount() -> Int {
+        guard currentMode == .single,
+              let device = devices.first(where: { $0.uid == selectedDeviceUID })
+        else { return 0 }
+        return device.id.outputChannelCount()
+    }
+
+    /// Per-app mono routing: sum the app to one physical output channel.
+    /// Only meaningful for a single destination — a multi-device route mirrors a
+    /// stereo pair to each device, so there is no stable channel to aim at.
+    @ViewBuilder
+    private var channelSection: some View {
+        if currentMode == .single && routedChannelCount >= 2 {
+            Divider()
+                .padding(.horizontal, 6)
+
+            VStack(alignment: .leading, spacing: itemSpacing) {
+                Text("Output Channel")
+                    .font(DesignTokens.Typography.caption)
+                    .foregroundStyle(DesignTokens.Colors.textTertiary)
+                    .padding(.horizontal, 8)
+                    .padding(.top, 6)
+                    .padding(.bottom, 2)
+
+                ScrollView(.vertical) {
+                    LazyVStack(spacing: itemSpacing) {
+                        ChannelPickerRow(
+                            label: "Stereo",
+                            isSelected: monoChannel == nil,
+                            onTap: { onMonoChannelChange(nil) }
+                        )
+                        ForEach(0..<routedChannelCount, id: \.self) { channel in
+                            ChannelPickerRow(
+                                label: "Mono → Channel \(channel + 1)",
+                                isSelected: monoChannel == channel,
+                                onTap: { onMonoChannelChange(channel) }
+                            )
+                        }
+                    }
+                }
+                .scrollIndicators(.hidden)
+                .frame(maxHeight: 110)
+            }
+            .padding(.bottom, 6)
+            .padding(.horizontal, 5)
+        }
     }
 
     private func isItemSelected(_ item: MenuItem) -> Bool {
@@ -526,6 +589,49 @@ private struct DevicePickerRow: View {
             Text(device.name)
                 .lineLimit(1)
         }
+    }
+}
+
+// MARK: - Channel Picker Row
+
+/// Same metrics as `DevicePickerRow` so the two lists read as one menu.
+private struct ChannelPickerRow: View {
+    let label: String
+    let isSelected: Bool
+    let onTap: () -> Void
+
+    @State private var isHovered = false
+
+    var body: some View {
+        Button(action: onTap) {
+            HStack(spacing: DesignTokens.Spacing.xs) {
+                if isSelected {
+                    Image(systemName: "checkmark")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(DesignTokens.Colors.accentPrimary)
+                        .frame(width: 16)
+                } else {
+                    Spacer()
+                        .frame(width: 16)
+                }
+
+                Text(label)
+                    .lineLimit(1)
+
+                Spacer()
+            }
+            .font(.system(size: 11))
+            .padding(.horizontal, 8)
+            .frame(height: 24)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: 5)
+                    .fill(isHovered ? Color.accentColor.opacity(0.15) : Color.clear)
+            )
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .whenHovered { isHovered = $0 }
     }
 }
 

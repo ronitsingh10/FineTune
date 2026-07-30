@@ -93,6 +93,14 @@ final class AppListCoordinator {
         settingsManager.setEQSettings(settings, for: identifier)
     }
 
+    func getMonoChannelForInactive(identifier: String) -> Int? {
+        settingsManager.getMonoChannel(for: identifier)
+    }
+
+    func setMonoChannelForInactive(identifier: String, to channel: Int?) {
+        settingsManager.setMonoChannel(for: identifier, to: channel)
+    }
+
     func getDeviceRoutingForInactive(identifier: String) -> String? {
         settingsManager.getDeviceRouting(for: identifier)
     }

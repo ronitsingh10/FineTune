@@ -521,6 +521,14 @@ final class AudioEngine {
         appListCoordinator.setEQSettingsForInactive(settings, identifier: identifier)
     }
 
+    func getMonoChannelForInactive(identifier: String) -> Int? {
+        appListCoordinator.getMonoChannelForInactive(identifier: identifier)
+    }
+
+    func setMonoChannelForInactive(identifier: String, to channel: Int?) {
+        appListCoordinator.setMonoChannelForInactive(identifier: identifier, to: channel)
+    }
+
     func getDeviceRoutingForInactive(identifier: String) -> String? {
         appListCoordinator.getDeviceRoutingForInactive(identifier: identifier)
     }
@@ -744,6 +752,30 @@ final class AudioEngine {
         volumeState.getMute(for: app.id)
     }
 
+    // MARK: - Per-App Mono Channel
+
+    /// Zero-based output channel this app is summed to mono onto, or nil for normal stereo.
+    func getMonoChannel(for app: AudioApp) -> Int? {
+        settingsManager.getMonoChannel(for: app.persistenceIdentifier)
+    }
+
+    func setMonoChannel(for app: AudioApp, to channel: Int?) {
+        settingsManager.setMonoChannel(for: app.persistenceIdentifier, to: channel)
+        guard let tap = taps[app.id] else { return }
+        Task { try? await tap.setMonoOutputChannel(effectiveMonoChannel(for: app) ?? -1) }
+    }
+
+    /// The mono channel actually applied to the tap, as opposed to the persisted choice.
+    ///
+    /// Suppressed in multi-device mode: a mirroring route sends a stereo pair to each
+    /// device, so a device-global channel index has no meaning and would clamp onto the
+    /// last channel of the mirror. The persisted value is left alone, so switching back
+    /// to a single device restores the user's channel.
+    private func effectiveMonoChannel(for app: AudioApp) -> Int? {
+        guard getDeviceSelectionMode(for: app) == .single else { return nil }
+        return settingsManager.getMonoChannel(for: app.persistenceIdentifier)
+    }
+
     /// Update EQ settings for an app
     func setEQSettings(_ settings: EQSettings, for app: AudioApp) {
         guard let tap = taps[app.id] else { return }
@@ -832,7 +864,8 @@ final class AudioEngine {
             autoEQPreampEnabled: settingsManager.autoEQPreampEnabled,
             loudnessVolume: deviceVolume * volumeState.getVolume(for: app.id),
             loudnessCompensationEnabled: settingsManager.appSettings.loudnessCompensationEnabled,
-            loudnessEqualizerSettings: loudnessEqSettings
+            loudnessEqualizerSettings: loudnessEqSettings,
+            monoOutputChannel: effectiveMonoChannel(for: app) ?? -1
         )
     }
 
@@ -981,6 +1014,10 @@ final class AudioEngine {
 
         Task {
             await updateTapForCurrentMode(for: app)
+            // Mono routing is single-device only; re-derive it now that the mode changed.
+            if let tap = taps[app.id] {
+                try? await tap.setMonoOutputChannel(effectiveMonoChannel(for: app) ?? -1)
+            }
         }
     }
 

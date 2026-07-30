@@ -70,6 +70,10 @@ final class ProcessTapController: ProcessTapControlling {
     private nonisolated(unsafe) var _primaryPreferredStereoRightChannel: Int = 1
     private nonisolated(unsafe) var _secondaryPreferredStereoLeftChannel: Int = 0
     private nonisolated(unsafe) var _secondaryPreferredStereoRightChannel: Int = 1
+    /// Zero-based output channel this app is summed to mono onto. `-1` = stereo (off).
+    /// Shared by both callbacks: the target channel is a user choice, not a device property,
+    /// so it survives a crossfade unchanged.
+    private nonisolated(unsafe) var _monoOutputChannel: Int = -1
     /// Monotonic host tick of the last audio callback execution.
     private nonisolated(unsafe) var _lastRenderHostTime: UInt64 = 0
     /// Monotonic host tick of successful activation.
@@ -206,6 +210,9 @@ final class ProcessTapController: ProcessTapControlling {
         set { _isMuted = newValue }
     }
 
+    /// Zero-based output channel this app is summed to mono onto; `-1` for normal stereo.
+    var monoOutputChannel: Int { _monoOutputChannel }
+
     // MARK: - Initialization
 
     /// Initialize with multiple output devices for synchronized multi-device output.
@@ -319,10 +326,15 @@ final class ProcessTapController: ProcessTapControlling {
     ///   - outputUIDs: The user-selected output device UIDs (1 = single, >1 = mirroring).
     ///   - expand: Returns an aggregate's hardware sub-device UIDs, or `nil` for non-aggregates.
     ///   - outputStreamCount: Returns a device's output-stream count (0 if unknown).
+    ///   - requiresFullChannelLayout: The user has picked an explicit output channel for this
+    ///     app (per-app mono routing), so a plain single device must also go non-stacked —
+    ///     otherwise constraint 2 hides everything past the preferred stereo pair. Without it
+    ///     the direct-device case stays stacked exactly as before.
     static func planAggregate(
         outputUIDs: [String],
         expand: (String) -> [String]?,
-        outputStreamCount: (String) -> Int
+        outputStreamCount: (String) -> Int,
+        requiresFullChannelLayout: Bool = false
     ) -> AggregatePlan {
         precondition(!outputUIDs.isEmpty, "Must have at least one output device")
 
@@ -342,8 +354,9 @@ final class ProcessTapController: ProcessTapControlling {
         flatUIDs = flatUIDs.filter { seen.insert($0).inserted }
 
         let isMirroring = outputUIDs.count > 1
-        let isSingleFlatten = didFlatten && !isMirroring && flatUIDs.count == 1
-        let isStacked = !(isSingleFlatten && outputStreamCount(flatUIDs[0]) == 1)
+        let isSingleOutput = !isMirroring && flatUIDs.count == 1
+        let wantsEveryChannel = didFlatten || requiresFullChannelLayout
+        let isStacked = !(isSingleOutput && wantsEveryChannel && outputStreamCount(flatUIDs[0]) == 1)
 
         return AggregatePlan(
             subDeviceUIDs: flatUIDs,
@@ -366,7 +379,8 @@ final class ProcessTapController: ProcessTapControlling {
             },
             outputStreamCount: { uid in
                 audioDeviceID(for: uid)?.streamCount(scope: kAudioObjectPropertyScopeOutput) ?? 0
-            }
+            },
+            requiresFullChannelLayout: _monoOutputChannel >= 0
         )
 
         if plan.subDeviceUIDs != outputUIDs {
@@ -416,6 +430,25 @@ final class ProcessTapController: ProcessTapControlling {
         guard let uid = preferredTapSourceDeviceUID,
               let deviceID = audioDeviceID(for: uid) else { return false }
         return deviceID.isVirtualDevice()
+    }
+
+    /// Routes this app to a single output channel (summed to mono), or back to stereo with `-1`.
+    ///
+    /// Changing the target channel is just an atomic write the IO callback picks up on its next
+    /// buffer. Turning the feature on or off is not: `planAggregate` only exposes the device's
+    /// full channel layout while a channel is requested, so the wrapper has to be rebuilt on that
+    /// transition — same destructive path the Bluetooth rate change uses.
+    func setMonoOutputChannel(_ channel: Int) async throws {
+        let normalized = max(-1, channel)
+        let wasEnabled = _monoOutputChannel >= 0
+        guard normalized != _monoOutputChannel else { return }
+        _monoOutputChannel = normalized
+
+        guard activated, wasEnabled != (normalized >= 0),
+              let primaryUID = currentDeviceUIDs.first,
+              primaryResources.tapDescription != nil else { return }
+        logger.info("[MONO] \(self.app.name): channel \(normalized) — rebuilding aggregate for new channel layout")
+        try await performDestructiveDeviceSwitch(to: primaryUID, allDeviceUIDs: currentDeviceUIDs)
     }
 
     /// Recreates the aggregate at the device's new rate on a Bluetooth A2DP↔SCO change. Recreation is
@@ -593,6 +626,7 @@ final class ProcessTapController: ProcessTapControlling {
         let preferred = preferredStereoChannels(for: targetDeviceUIDs.first)
         _primaryPreferredStereoLeftChannel = preferred.left
         _primaryPreferredStereoRightChannel = preferred.right
+        _monoOutputChannel = initial.monoOutputChannel
 
         primaryResources.tapID = tapID
         logger.debug("Created process tap #\(tapID)")
@@ -1324,6 +1358,7 @@ final class ProcessTapController: ProcessTapControlling {
         rampCoefficient: Float,
         preferredStereoLeft: Int,
         preferredStereoRight: Int,
+        monoOutputChannel: Int,
         currentVol: inout Float,
         eqProc: EQProcessor?,
         autoEQProc: AutoEQProcessor?,
@@ -1376,7 +1411,35 @@ final class ProcessTapController: ProcessTapControlling {
             let eq = eqProc  // Parameter read — each callback passes its own processor
             let eqCanProcessStereoInterleaved = (inputChannels == 2 && outputChannels == 2)
 
-            if inputChannels == outputChannels {
+            if monoOutputChannel >= 0 {
+                // Sum every input channel to mono and place it on one output channel.
+                //
+                // Fixed 1/N fold-down. Averaging keeps ordinary stereo program material at unity,
+                // at the cost of 6 dB on a source that is silent in one channel (a mono recording
+                // carried in L) — recoverable with the app's existing 2× boost. Content-dependent
+                // normalization would fix that case but needs level detection with state, which
+                // pumps on quiet passages and makes a routed app's gain depend on what it plays.
+                let target = min(monoOutputChannel, outputChannels - 1)
+                let inverseChannels = 1.0 / Float(inputChannels)
+                for frame in 0..<frameCount {
+                    currentVol += (targetVol - currentVol) * rampCoefficient
+                    let gain = currentVol * crossfadeMultiplier * outputGateMultiplier
+                    let inBase = frame * inputChannels
+                    var sum: Float = 0
+                    for ch in 0..<inputChannels {
+                        sum += inputSamples[inBase + ch]
+                    }
+                    let outBase = frame * outputChannels
+                    for ch in 0..<outputChannels {
+                        outputSamples[outBase + ch] = 0
+                    }
+                    outputSamples[outBase + target] = sum * inverseChannels * gain
+                }
+                let writtenSamples = frameCount * outputChannels
+                if writtenSamples < outputSampleCount {
+                    memset(outputSamples.advanced(by: writtenSamples), 0, (outputSampleCount - writtenSamples) * MemoryLayout<Float>.size)
+                }
+            } else if inputChannels == outputChannels {
                 let sampleCount = frameCount * inputChannels
                 for frame in 0..<frameCount {
                     currentVol += (targetVol - currentVol) * rampCoefficient
@@ -1626,6 +1689,7 @@ final class ProcessTapController: ProcessTapControlling {
             rampCoefficient: rampCoeff,
             preferredStereoLeft: stereoLeft,
             preferredStereoRight: stereoRight,
+            monoOutputChannel: _monoOutputChannel,
             currentVol: &currentVol,
             eqProc: eqProc,
             autoEQProc: autoEQProc,

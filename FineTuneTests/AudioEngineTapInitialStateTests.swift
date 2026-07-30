@@ -34,6 +34,7 @@ final class RecordingProcessTapController: ProcessTapControlling {
         var loudnessVolume: Float
         var loudnessCompensationEnabled: Bool
         var loudnessEqualizerSettings: LoudnessEqualizerSettings
+        var monoOutputChannel: Int
 
         @MainActor
         init(_ s: TapInitialState) {
@@ -43,6 +44,7 @@ final class RecordingProcessTapController: ProcessTapControlling {
             self.loudnessVolume = s.loudnessVolume
             self.loudnessCompensationEnabled = s.loudnessCompensationEnabled
             self.loudnessEqualizerSettings = s.loudnessEqualizerSettings
+            self.monoOutputChannel = s.monoOutputChannel
         }
     }
 
@@ -52,6 +54,7 @@ final class RecordingProcessTapController: ProcessTapControlling {
     // Mutable surface — recorded as plain property writes (not events).
     var volume: Float = 1.0
     var isMuted: Bool = false
+    private(set) var monoOutputChannel: Int = -1
     var currentDeviceVolume: Float = 1.0
     var isDeviceMuted: Bool = false
     var audioLevel: Float = 0.0
@@ -90,6 +93,10 @@ final class RecordingProcessTapController: ProcessTapControlling {
 
     func updateLoudnessEqualization(_ settings: LoudnessEqualizerSettings) {
         events.append(.updateLoudnessEqualization(settings))
+    }
+
+    func setMonoOutputChannel(_ channel: Int) async throws {
+        monoOutputChannel = channel
     }
 
     func switchDevice(to newDeviceUID: String, preferredTapSourceDeviceUID: String?, sourceDeviceDead: Bool) async throws {
@@ -221,6 +228,43 @@ struct AudioEngineTapInitialStateTests {
 
         let snap = try #require(capturedInitial(fix))
         #expect(snap.eqSettings == custom)
+    }
+
+    @Test("A persisted mono channel lands in TapInitialState.monoOutputChannel")
+    func monoChannelIsCarried() throws {
+        let fix = makeFixture()
+        fix.settings.setMonoChannel(for: fix.app.persistenceIdentifier, to: 4)
+
+        fix.engine.setDevice(for: fix.app, deviceUID: fix.device.uid)
+
+        let snap = try #require(capturedInitial(fix))
+        #expect(snap.monoOutputChannel == 4)
+    }
+
+    @Test("No persisted mono channel leaves the tap in stereo")
+    func monoChannelDefaultsToStereo() throws {
+        let fix = makeFixture()
+
+        fix.engine.setDevice(for: fix.app, deviceUID: fix.device.uid)
+
+        let snap = try #require(capturedInitial(fix))
+        #expect(snap.monoOutputChannel == -1)
+    }
+
+    @Test("Multi-device mode suppresses the mono channel without discarding it")
+    func monoChannelSuppressedInMultiMode() throws {
+        let fix = makeFixture()
+        fix.settings.setMonoChannel(for: fix.app.persistenceIdentifier, to: 4)
+        fix.engine.setDeviceSelectionMode(for: fix.app, to: .multi)
+
+        fix.engine.setDevice(for: fix.app, deviceUID: fix.device.uid)
+
+        // A mirroring route sends a stereo pair to each device, so channel 4 has no
+        // meaning — it must not reach the tap and clamp onto the last channel.
+        let snap = try #require(capturedInitial(fix))
+        #expect(snap.monoOutputChannel == -1)
+        // The user's choice survives, so returning to a single device restores it.
+        #expect(fix.settings.getMonoChannel(for: fix.app.persistenceIdentifier) == 4)
     }
 
     @Test("autoEQPreampEnabled mirrors settingsManager.autoEQPreampEnabled",

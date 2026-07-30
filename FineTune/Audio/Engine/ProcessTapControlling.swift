@@ -10,6 +10,8 @@ protocol ProcessTapControlling: AnyObject, Sendable {
     var app: AudioApp { get }
     var volume: Float { get set }
     var isMuted: Bool { get set }
+    /// Zero-based output channel this app is summed to mono onto; `-1` for normal stereo.
+    var monoOutputChannel: Int { get }
     var currentDeviceVolume: Float { get set }
     var isDeviceMuted: Bool { get set }
     var audioLevel: Float { get }
@@ -24,6 +26,7 @@ protocol ProcessTapControlling: AnyObject, Sendable {
     func setAutoEQPreampEnabled(_ enabled: Bool)
     func updateLoudnessCompensation(volume: Float, enabled: Bool)
     func updateLoudnessEqualization(_ settings: LoudnessEqualizerSettings)
+    func setMonoOutputChannel(_ channel: Int) async throws
     func switchDevice(to newDeviceUID: String, preferredTapSourceDeviceUID: String?, sourceDeviceDead: Bool) async throws
     func updateDevices(to newDeviceUIDs: [String], preferredTapSourceDeviceUID: String?, sourceDeviceDead: Bool) async throws
     func hasRecentAudioCallback(within seconds: Double) -> Bool
