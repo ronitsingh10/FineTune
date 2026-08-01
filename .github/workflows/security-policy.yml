@@ -1,0 +1,26 @@
+name: Security policy
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/**'
+      - 'scripts/test_release_action_pins.rb'
+  push:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/**'
+      - 'scripts/test_release_action_pins.rb'
+
+permissions:
+  contents: read
+
+jobs:
+  release-action-pins:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+
+      - name: Verify release action pins
+        run: ruby scripts/test_release_action_pins.rb

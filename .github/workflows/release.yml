@@ -16,7 +16,9 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Setup Xcode
-        uses: maxim-lobanov/setup-xcode@v1
+        # v1 resolved to this reviewed commit on 2026-08-01. Keep this pinned
+        # to a full commit SHA so release credentials never follow a moving ref.
+        uses: maxim-lobanov/setup-xcode@ed7a3b1fda3918c0306d1b724322adc0b8cc0a90
         with:
           xcode-version: latest-stable
 
