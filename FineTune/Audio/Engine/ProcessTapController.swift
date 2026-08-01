@@ -186,6 +186,15 @@ final class ProcessTapController: ProcessTapControlling {
         return deltaNanos >= (minActiveSeconds * 1_000_000_000.0)
     }
 
+    func hasOutputSampleRateMismatch() -> Bool {
+        guard activated, let primaryUID = currentDeviceUIDs.first,
+              let outputDeviceID = audioDeviceID(for: primaryUID) else { return false }
+        guard let outputRate = try? outputDeviceID.readNominalSampleRate(), outputRate > 0 else { return false }
+        guard let aggregateRate = try? primaryResources.aggregateDeviceID.readNominalSampleRate(),
+              aggregateRate > 0 else { return false }
+        return abs(outputRate - aggregateRate) > 0.5
+    }
+
     var currentDeviceVolume: Float {
         get { _currentDeviceVolume }
         set { _currentDeviceVolume = newValue }
@@ -418,18 +427,43 @@ final class ProcessTapController: ProcessTapControlling {
         return deviceID.isVirtualDevice()
     }
 
-    /// Recreates the aggregate at the device's new rate on a Bluetooth A2DP↔SCO change. Recreation is
-    /// the only reliable way to re-rate the IOProc — in-place nominal-rate or buffer-size writes
-    /// silence a running aggregate's IOProc, which can't be reconfigured live. Routed through the
-    /// destructive switch with `sourceAlreadySilent: true` so the old aggregate is force-silenced
-    /// first (cutting the rate-mismatched garbage) before the rebuild, then volume ramps back up — a
-    /// brief clean dip rather than a crackle. The switch can't be fully gapless: the BT link itself
-    /// renegotiates across the profile change.
+    /// Rebuilds the aggregate when the output format changes. Recreation is the only reliable way to
+    /// re-rate the IOProc — in-place nominal-rate or buffer-size writes silence a running aggregate's
+    /// IOProc, which can't be reconfigured live. `performFormatChangeSwitch` force-silences first
+    /// (cutting rate-mismatched garbage) before the rebuild for a brief clean dip rather than crackle.
     func recreateForOutputRateChange() async throws {
         guard activated, let primaryUID = currentDeviceUIDs.first else { return }
         guard primaryResources.tapDescription != nil else { throw CrossfadeError.noTapDescription }
         logger.info("[RATE] \(self.app.name): recreating aggregate at new rate")
-        try await performDestructiveDeviceSwitch(to: primaryUID, allDeviceUIDs: currentDeviceUIDs, sourceAlreadySilent: true)
+        try await performFormatChangeSwitch(to: primaryUID, allDeviceUIDs: currentDeviceUIDs)
+    }
+
+    /// Zeroes output on the first HAL notification, before debounce confirms a real format change.
+    func prepareForOutputFormatChange() {
+        _forceSilence = true
+        OSMemoryBarrier()
+    }
+
+    func cancelOutputFormatChangePreparation() {
+        _forceSilence = false
+        OSMemoryBarrier()
+    }
+
+    /// Fast path for format changes: rebuild aggregate devices without the 200 ms stepped crossfade ramp.
+    private func performFormatChangeSwitch(to primaryDeviceUID: String, allDeviceUIDs: [String]? = nil) async throws {
+        let deviceUIDs = allDeviceUIDs ?? [primaryDeviceUID]
+        let targetVolume = _volume
+
+        _forceSilence = true
+        OSMemoryBarrier()
+        defer {
+            _primaryCurrentVolume = targetVolume
+            _forceSilence = false
+            OSMemoryBarrier()
+        }
+
+        try performDeviceSwitch(to: deviceUIDs)
+        try await Task.sleep(for: .milliseconds(30))
     }
 
     private func preferredStereoChannels(for deviceUID: String?) -> (left: Int, right: Int) {
@@ -1257,6 +1291,12 @@ final class ProcessTapController: ProcessTapControlling {
                 loudnessEqualizerProcessor = newLE
                 DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 0.5) { _ = oldLE }
             }
+
+            _outputGateRawPhase = 0
+            _outputGateProgress = 0
+            _outputGateSilentSamples = 0
+            _outputGateRampSamples = Float(deviceSampleRate) * 0.040
+            _outputGateSilenceHoldSamples = Int32(deviceSampleRate * 0.200)
         }
     }
 

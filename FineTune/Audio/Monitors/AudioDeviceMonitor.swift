@@ -59,27 +59,44 @@ final class AudioDeviceMonitor: AudioDeviceProviding {
     /// Listeners for kAudioDevicePropertyDataSource changes on built-in devices (headphone jack detection)
     @ObservationIgnored private var dataSourceListeners: [AudioDeviceID: AudioObjectPropertyListenerBlock] = [:]
 
-    /// Called when a BT output device crosses the A2DP ↔ SCO/HFP sample-rate boundary (44.1 kHz).
-    /// Off-protocol (on the concrete monitor) — wired via the `as? AudioDeviceMonitor` cast, like the
-    /// priority-order closures; no-ops under a non-AudioDeviceMonitor provider.
-    var onBTDeviceSampleRateChanged: ((_ uid: String, _ newRate: Double) -> Void)?
+    /// Fired on the first HAL notification before debounce settles. AudioEngine silences affected taps immediately.
+    var onOutputDeviceFormatChanging: ((_ uid: String) -> Void)?
+    /// Fired when debounce/stability checks conclude there was no real format change (false alarm).
+    var onOutputDeviceFormatUnchanged: ((_ uid: String) -> Void)?
+    /// Fired after debounce and format stability when sample rate or bit depth actually changed.
+    /// Off-protocol — wired via the `as? AudioDeviceMonitor` cast, like the priority-order closures.
+    var onOutputDeviceFormatChanged: ((_ uid: String) -> Void)?
 
-    /// Listeners for kAudioDevicePropertyNominalSampleRate changes on BT output devices (A2DP↔SCO).
+    /// Listeners for kAudioDevicePropertyNominalSampleRate changes on all output devices.
+    /// BT A2DP↔SCO switches keep the same AudioObjectID and only change nominal rate; wired/USB
+    /// devices also need this so tap aggregates don't run at a stale rate (#395).
     @ObservationIgnored private var sampleRateListeners: [AudioDeviceID: AudioObjectPropertyListenerBlock] = [:]
     @ObservationIgnored private var lastKnownSampleRates: [AudioDeviceID: Double] = [:]
-    @ObservationIgnored private var sampleRateDebounce: [AudioDeviceID: Task<Void, Never>] = [:]
+    @ObservationIgnored private var formatChangeDebounce: [AudioDeviceID: Task<Void, Never>] = [:]
+
+    /// Listeners for kAudioStreamPropertyPhysicalFormat on output streams (bit depth / format ID).
+    @ObservationIgnored private var physicalFormatListeners: [AudioObjectID: AudioObjectPropertyListenerBlock] = [:]
+    @ObservationIgnored private var lastKnownFormats: [AudioDeviceID: OutputFormatFingerprint] = [:]
+
+    /// 150 ms debounce — the HAL fires several nominal-rate notifications while BT SCO settles.
+    nonisolated static let bluetoothSampleRateDebounceMs = 150
+    nonisolated static let wiredSampleRateDebounceMs = 50
 
     /// Debounces rapid HAL device-list notifications (e.g. Bluetooth connect fires 2-3 in ~20ms).
     /// Querying device properties during the burst produces HALC_ShellObject errors because
     /// HAL proxy objects are mid-transition. 50ms lets the HAL stabilize before we enumerate.
     private var deviceListDebounceTask: Task<Void, Never>?
 
-    /// True when the BT output's nominal rate changed to a different valid rate, so each affected
+    /// True when the output's nominal rate changed to a different valid rate, so each affected
     /// tap's aggregate must be recreated to match. Pure, for testability. `newRate <= 0` is a transient/failed read
     /// (never act, and the caller must not store it as the baseline or the next real read looks like
     /// no change). Fires on ANY change (A2DP↔SCO and within-band) — the aggregate must always match.
     nonisolated static func isMeaningfulRateChange(oldRate: Double, newRate: Double) -> Bool {
         newRate > 0 && newRate != oldRate
+    }
+
+    nonisolated static func sampleRateDebounceMs(for deviceID: AudioDeviceID) -> Int {
+        deviceID.isBluetoothDevice() ? bluetoothSampleRateDebounceMs : wiredSampleRateDebounceMs
     }
 
     func start() {
@@ -119,6 +136,7 @@ final class AudioDeviceMonitor: AudioDeviceProviding {
         }
         removeAllDataSourceListeners()
         removeAllSampleRateListeners()
+        removeAllPhysicalFormatListeners()
     }
 
     /// O(1) lookup by device UID (output devices)
@@ -218,8 +236,9 @@ final class AudioDeviceMonitor: AudioDeviceProviding {
             inputDevicesByID = Dictionary(uniqueKeysWithValues: inputDevices.map { ($0.id, $0) })
 
             syncDataSourceListeners(outputDeviceIDs: outputDeviceList.map(\.id))
-            let btOutputIDs = Set(outputDeviceList.filter { $0.id.isBluetoothDevice() }.map(\.id))
-            syncSampleRateListeners(btOutputDeviceIDs: btOutputIDs)
+            let outputIDs = Set(outputDeviceList.map(\.id))
+            syncSampleRateListeners(outputDeviceIDs: outputIDs)
+            syncPhysicalFormatListeners(outputDeviceIDs: outputIDs)
 
         } catch {
             logger.error("Failed to refresh device list: \(error.localizedDescription)")
@@ -278,19 +297,19 @@ final class AudioDeviceMonitor: AudioDeviceProviding {
         }
     }
 
-    // MARK: - Bluetooth Sample-Rate Listeners (A2DP ↔ SCO/HFP)
+    // MARK: - Sample rate listeners (A2DP ↔ SCO/HFP and wired)
 
-    /// Installs/removes kAudioDevicePropertyNominalSampleRate listeners on BT output devices so
+    /// Installs/removes kAudioDevicePropertyNominalSampleRate listeners on all output devices so
     /// A2DP ↔ SCO/HFP mode switches (which keep the same AudioObjectID, only changing the nominal
-    /// rate) trigger tap re-evaluation.
-    private func syncSampleRateListeners(btOutputDeviceIDs: Set<AudioDeviceID>) {
+    /// rate) and wired format changes trigger tap re-evaluation.
+    private func syncSampleRateListeners(outputDeviceIDs: Set<AudioDeviceID>) {
         let currentIDs = Set(sampleRateListeners.keys)
 
-        for deviceID in currentIDs.subtracting(btOutputDeviceIDs) {
+        for deviceID in currentIDs.subtracting(outputDeviceIDs) {
             removeSampleRateListener(for: deviceID)
         }
 
-        for deviceID in btOutputDeviceIDs.subtracting(currentIDs) {
+        for deviceID in outputDeviceIDs.subtracting(currentIDs) {
             guard let uid = devicesByID[deviceID]?.uid else { continue }
             var address = AudioObjectPropertyAddress(
                 mSelector: kAudioDevicePropertyNominalSampleRate,
@@ -299,48 +318,95 @@ final class AudioDeviceMonitor: AudioDeviceProviding {
             )
             let block: AudioObjectPropertyListenerBlock = { [weak self] _, _ in
                 Task { @MainActor [weak self] in
-                    self?.scheduleSampleRateCheck(forDeviceID: deviceID, uid: uid)
+                    self?.notifyFormatChangePending(forDeviceID: deviceID, uid: uid)
                 }
             }
             let status = AudioObjectAddPropertyListenerBlock(deviceID, &address, .main, block)
             if status == noErr {
                 sampleRateListeners[deviceID] = block
                 lastKnownSampleRates[deviceID] = (try? deviceID.readNominalSampleRate()) ?? 0
+                if let fingerprint = OutputFormatFingerprint.from(deviceID: deviceID) {
+                    lastKnownFormats[deviceID] = fingerprint
+                }
             } else {
-                logger.warning("Failed to add sample rate listener for BT device \(deviceID): \(status)")
+                logger.warning("Failed to add sample rate listener for device \(deviceID): \(status)")
             }
         }
     }
 
-    /// 150 ms debounce — the HAL fires several nominal-rate notifications while SCO settles.
-    private func scheduleSampleRateCheck(forDeviceID deviceID: AudioDeviceID, uid: String) {
-        sampleRateDebounce[deviceID]?.cancel()
-        sampleRateDebounce[deviceID] = Task { @MainActor [weak self] in
-            try? await Task.sleep(for: .milliseconds(150))
+    private func notifyFormatChangePending(forDeviceID deviceID: AudioDeviceID, uid: String) {
+        onOutputDeviceFormatChanging?(uid)
+        scheduleFormatChangeCheck(forDeviceID: deviceID, uid: uid)
+    }
+
+    /// Debounces rapid HAL notifications — BT uses 150 ms while SCO settles; wired uses 50 ms.
+    private func scheduleFormatChangeCheck(forDeviceID deviceID: AudioDeviceID, uid: String) {
+        formatChangeDebounce[deviceID]?.cancel()
+        let debounceMs = Self.sampleRateDebounceMs(for: deviceID)
+        formatChangeDebounce[deviceID] = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .milliseconds(debounceMs))
             guard !Task.isCancelled, let self else { return }
-            self.checkSampleRateThreshold(forDeviceID: deviceID, uid: uid)
+            await self.checkFormatChange(forDeviceID: deviceID, uid: uid)
         }
     }
 
-    private func checkSampleRateThreshold(forDeviceID deviceID: AudioDeviceID, uid: String) {
-        let newRate = (try? deviceID.readNominalSampleRate()) ?? 0
+    private func checkFormatChange(forDeviceID deviceID: AudioDeviceID, uid: String) async {
+        guard await waitForStableOutputFormat(deviceID: deviceID) else {
+            onOutputDeviceFormatUnchanged?(uid)
+            return
+        }
+
+        let newFingerprint = OutputFormatFingerprint.from(deviceID: deviceID)
+        let oldFingerprint = lastKnownFormats[deviceID]
+        let newRate = newFingerprint?.sampleRate ?? ((try? deviceID.readNominalSampleRate()) ?? 0)
+        let oldRate = lastKnownSampleRates[deviceID] ?? 0
+
+        let fingerprintChanged = OutputFormatFingerprint.isMeaningfulChange(old: oldFingerprint, new: newFingerprint)
+        let rateChanged = Self.isMeaningfulRateChange(oldRate: oldRate, newRate: newRate)
+        guard fingerprintChanged || rateChanged else {
+            onOutputDeviceFormatUnchanged?(uid)
+            return
+        }
 
         // Skip transient HAL failures BEFORE touching the baseline. Storing a transient 0 would make
         // the next real read (e.g. 24 kHz SCO) look like a cold start and miss the A2DP→call
         // transition — re-introducing the crackle this listener exists to prevent.
-        guard newRate > 0 else { return }
+        if let newFingerprint {
+            lastKnownFormats[deviceID] = newFingerprint
+            lastKnownSampleRates[deviceID] = newFingerprint.sampleRate
+        } else if newRate > 0 {
+            lastKnownSampleRates[deviceID] = newRate
+        }
 
-        let oldRate = lastKnownSampleRates[deviceID] ?? 0
-        guard Self.isMeaningfulRateChange(oldRate: oldRate, newRate: newRate) else { return }
-        lastKnownSampleRates[deviceID] = newRate
+        logger.info("[FORMAT] Output device \(uid, privacy: .public) format stabilized")
+        onOutputDeviceFormatChanged?(uid)
+    }
 
-        logger.info("[RATE] BT device \(uid, privacy: .public) \(oldRate, format: .fixed(precision: 0)) → \(newRate, format: .fixed(precision: 0)) Hz (call mode: \(newRate < 44_100))")
-        onBTDeviceSampleRateChanged?(uid, newRate)
+    private func waitForStableOutputFormat(deviceID: AudioDeviceID) async -> Bool {
+        var lastRate: Double = 0
+        var stableReads = 0
+        for _ in 0..<8 {
+            let rate = (try? deviceID.readNominalSampleRate()) ?? 0
+            guard rate > 0 else {
+                stableReads = 0
+                try? await Task.sleep(for: .milliseconds(25))
+                continue
+            }
+            if lastRate > 0, abs(rate - lastRate) < 0.5 {
+                stableReads += 1
+                if stableReads >= 2 { return true }
+            } else {
+                stableReads = 1
+            }
+            lastRate = rate
+            try? await Task.sleep(for: .milliseconds(25))
+        }
+        return lastRate > 0
     }
 
     private func removeSampleRateListener(for deviceID: AudioDeviceID) {
-        sampleRateDebounce[deviceID]?.cancel()
-        sampleRateDebounce.removeValue(forKey: deviceID)
+        formatChangeDebounce[deviceID]?.cancel()
+        formatChangeDebounce.removeValue(forKey: deviceID)
         lastKnownSampleRates.removeValue(forKey: deviceID)
 
         guard let block = sampleRateListeners.removeValue(forKey: deviceID) else { return }
@@ -351,7 +417,7 @@ final class AudioDeviceMonitor: AudioDeviceProviding {
         )
         let status = AudioObjectRemovePropertyListenerBlock(deviceID, &address, .main, block)
         if status != noErr && status != OSStatus(kAudioHardwareBadObjectError) {
-            logger.warning("Failed to remove sample rate listener for BT device \(deviceID): \(status)")
+            logger.warning("Failed to remove sample rate listener for device \(deviceID): \(status)")
         }
     }
 
@@ -359,6 +425,72 @@ final class AudioDeviceMonitor: AudioDeviceProviding {
         for deviceID in Array(sampleRateListeners.keys) {
             removeSampleRateListener(for: deviceID)
         }
+    }
+
+    // MARK: - Physical format listeners (bit depth)
+
+    /// Installs/removes kAudioStreamPropertyPhysicalFormat listeners on output streams.
+    /// Sample-rate listeners miss bit-depth-only changes (e.g. 24→32-bit at 48 kHz).
+    private func syncPhysicalFormatListeners(outputDeviceIDs: Set<AudioDeviceID>) {
+        var desiredStreams: [AudioObjectID: AudioDeviceID] = [:]
+        for deviceID in outputDeviceIDs {
+            guard deviceID.readPhysicalFormat() != nil else { continue }
+            for streamID in deviceID.readOutputStreamIDs() {
+                desiredStreams[streamID] = deviceID
+            }
+        }
+
+        let currentStreams = Set(physicalFormatListeners.keys)
+
+        for streamID in currentStreams.subtracting(desiredStreams.keys) {
+            removePhysicalFormatListener(for: streamID)
+        }
+
+        for (streamID, deviceID) in desiredStreams where !currentStreams.contains(streamID) {
+            guard let uid = devicesByID[deviceID]?.uid else { continue }
+            var address = AudioObjectPropertyAddress(
+                mSelector: kAudioStreamPropertyPhysicalFormat,
+                mScope: kAudioObjectPropertyScopeGlobal,
+                mElement: kAudioObjectPropertyElementMain
+            )
+            let block: AudioObjectPropertyListenerBlock = { [weak self] _, _ in
+                Task { @MainActor [weak self] in
+                    self?.notifyFormatChangePending(forDeviceID: deviceID, uid: uid)
+                }
+            }
+            let status = AudioObjectAddPropertyListenerBlock(streamID, &address, .main, block)
+            if status == noErr {
+                physicalFormatListeners[streamID] = block
+                if lastKnownFormats[deviceID] == nil,
+                   let fingerprint = OutputFormatFingerprint.from(deviceID: deviceID) {
+                    lastKnownFormats[deviceID] = fingerprint
+                }
+            } else {
+                logger.warning("Failed to add physical format listener for stream \(streamID): \(status)")
+            }
+        }
+    }
+
+    private func removePhysicalFormatListener(for streamID: AudioObjectID) {
+        guard let block = physicalFormatListeners.removeValue(forKey: streamID) else { return }
+        var address = AudioObjectPropertyAddress(
+            mSelector: kAudioStreamPropertyPhysicalFormat,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        let status = AudioObjectRemovePropertyListenerBlock(streamID, &address, .main, block)
+        if status != noErr && status != OSStatus(kAudioHardwareBadObjectError) {
+            logger.warning("Failed to remove physical format listener for stream \(streamID): \(status)")
+        }
+    }
+
+    private func removeAllPhysicalFormatListeners() {
+        for streamID in Array(physicalFormatListeners.keys) {
+            removePhysicalFormatListener(for: streamID)
+        }
+        formatChangeDebounce.values.forEach { $0.cancel() }
+        formatChangeDebounce.removeAll()
+        lastKnownFormats.removeAll()
     }
 
     /// Sorts UIDs by priority order: UIDs in the priority list come first (in priority order),

@@ -28,6 +28,9 @@ protocol ProcessTapControlling: AnyObject, Sendable {
     func updateDevices(to newDeviceUIDs: [String], preferredTapSourceDeviceUID: String?, sourceDeviceDead: Bool) async throws
     func hasRecentAudioCallback(within seconds: Double) -> Bool
     func isHealthCheckEligible(minActiveSeconds: Double) -> Bool
+    func hasOutputSampleRateMismatch() -> Bool
+    func prepareForOutputFormatChange()
+    func cancelOutputFormatChangePreparation()
 
     var tapSourceDeviceUID: String? { get }
     func refreshTapSource(_ preferredDeviceUID: String?) async throws
@@ -63,4 +66,10 @@ extension ProcessTapControlling {
     func recreateForOutputRateChange() async throws {
         // Default no-op for mocks that don't override
     }
+
+    func hasOutputSampleRateMismatch() -> Bool { false }
+
+    func prepareForOutputFormatChange() {}
+
+    func cancelOutputFormatChangePreparation() {}
 }

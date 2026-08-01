@@ -131,4 +131,8 @@ nonisolated extension AudioDeviceID {
         let bufferList = UnsafeMutableAudioBufferListPointer(list)
         return bufferList.reduce(0) { $0 + Int($1.mNumberChannels) }
     }
+
+    func readOutputStreamIDs() -> [AudioObjectID] {
+        (try? readStreams(scope: kAudioObjectPropertyScopeOutput)) ?? []
+    }
 }
