@@ -438,6 +438,38 @@ final class AudioEngine {
         return pinnedActive + pinnedInactive + unpinnedActive
     }
 
+    /// Apps section list with groups first (non-empty), then ungrouped displayable apps.
+    var popupAppItems: [PopupAppItem] {
+        let groupedIDs = settingsManager.groupedAppIdentifiers
+        let coordinator = appListCoordinator
+
+        let groups = settingsManager.appGroups
+            .filter { !$0.members.isEmpty }
+            .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+            .map { group -> PopupAppItem in
+                let live = self.apps
+                    .filter {
+                        group.memberIdentifiers.contains($0.persistenceIdentifier)
+                            && !coordinator.isIgnored(identifier: $0.persistenceIdentifier)
+                    }
+                    .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+                let liveIDs = Set(live.map(\.persistenceIdentifier))
+                let inactive = group.members
+                    .filter {
+                        !liveIDs.contains($0.persistenceIdentifier)
+                            && !coordinator.isIgnored(identifier: $0.persistenceIdentifier)
+                    }
+                    .sorted { $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending }
+                return .group(group, liveMembers: live, inactiveMembers: inactive)
+            }
+
+        let ungrouped = displayableApps
+            .filter { !groupedIDs.contains($0.id) }
+            .map { PopupAppItem.app($0) }
+
+        return ungrouped + groups
+    }
+
     // MARK: - Pinning
 
     /// Pin an active app so it remains visible when inactive.
@@ -754,6 +786,196 @@ final class AudioEngine {
     /// Get EQ settings for an app
     func getEQSettings(for app: AudioApp) -> EQSettings {
         return settingsManager.getEQSettings(for: app.persistenceIdentifier)
+    }
+
+    // MARK: - App Groups
+
+    func createAppGroup(name: String) -> AppGroup {
+        settingsManager.createAppGroup(name: name)
+    }
+
+    func renameAppGroup(id: UUID, name: String) {
+        settingsManager.renameAppGroup(id: id, name: name)
+    }
+
+    func deleteAppGroup(id: UUID) {
+        settingsManager.deleteAppGroup(id: id)
+    }
+
+    func addAppToGroup(groupID: UUID, app: AudioApp) {
+        let member = AppGroupMemberInfo(
+            persistenceIdentifier: app.persistenceIdentifier,
+            displayName: app.name,
+            bundleID: app.bundleID
+        )
+        settingsManager.addAppToGroup(groupID: groupID, member: member)
+        applyGroupSettingsToLiveMember(app)
+    }
+
+    func addAppToGroup(groupID: UUID, info: PinnedAppInfo) {
+        let member = AppGroupMemberInfo(
+            persistenceIdentifier: info.persistenceIdentifier,
+            displayName: info.displayName,
+            bundleID: info.bundleID
+        )
+        settingsManager.addAppToGroup(groupID: groupID, member: member)
+        if let app = apps.first(where: { $0.persistenceIdentifier == info.persistenceIdentifier }) {
+            applyGroupSettingsToLiveMember(app)
+        }
+    }
+
+    /// Resolves a persistence ID from a drag payload and adds it to the group.
+    func addAppToGroup(groupID: UUID, identifier: String) {
+        if let app = apps.first(where: { $0.persistenceIdentifier == identifier }) {
+            addAppToGroup(groupID: groupID, app: app)
+            return
+        }
+        if let pinned = appListCoordinator.pinnedAppInfo()
+            .first(where: { $0.persistenceIdentifier == identifier }) {
+            addAppToGroup(groupID: groupID, info: pinned)
+            return
+        }
+        // Fall back to metadata already stored on another group (move between groups).
+        if let existing = settingsManager.appGroups
+            .flatMap(\.members)
+            .first(where: { $0.persistenceIdentifier == identifier }) {
+            settingsManager.addAppToGroup(groupID: groupID, member: existing)
+            if let app = apps.first(where: { $0.persistenceIdentifier == identifier }) {
+                applyGroupSettingsToLiveMember(app)
+            }
+            return
+        }
+        // Last resort: identifier-only member.
+        let member = AppGroupMemberInfo(
+            persistenceIdentifier: identifier,
+            displayName: identifier,
+            bundleID: identifier.hasPrefix("name:") ? nil : identifier
+        )
+        settingsManager.addAppToGroup(groupID: groupID, member: member)
+    }
+
+    func removeAppFromGroup(groupID: UUID, identifier: String) {
+        settingsManager.removeAppFromGroup(groupID: groupID, identifier: identifier)
+    }
+
+    func setGroupCollapsed(id: UUID, collapsed: Bool) {
+        settingsManager.setGroupCollapsed(id: id, collapsed: collapsed)
+    }
+
+    func setGroupVolume(id: UUID, to volume: Float) {
+        settingsManager.setGroupVolume(id: id, to: volume)
+        guard let group = settingsManager.appGroup(id: id) else { return }
+        for memberID in group.memberIdentifiers {
+            if let app = apps.first(where: { $0.persistenceIdentifier == memberID }) {
+                volumeState.setVolume(for: app.id, to: volume, identifier: memberID)
+                if let tap = taps[app.id] {
+                    tap.volume = effectiveVolume(for: app.id, deviceUIDs: tap.currentDeviceUIDs)
+                    if settingsManager.appSettings.loudnessCompensationEnabled {
+                        tap.updateLoudnessCompensation(
+                            volume: effectiveLoudnessVolume(for: tap),
+                            enabled: true
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    func setGroupMute(id: UUID, to muted: Bool) {
+        settingsManager.setGroupMute(id: id, to: muted)
+        guard let group = settingsManager.appGroup(id: id) else { return }
+        for memberID in group.memberIdentifiers {
+            if let app = apps.first(where: { $0.persistenceIdentifier == memberID }) {
+                volumeState.setMute(for: app.id, to: muted, identifier: memberID)
+                taps[app.id]?.isMuted = muted
+            }
+        }
+    }
+
+    func toggleGroupMute(id: UUID) {
+        guard let group = settingsManager.appGroup(id: id) else { return }
+        setGroupMute(id: id, to: !group.muted)
+    }
+
+    func setGroupEQSettings(_ settings: EQSettings, for groupID: UUID) {
+        settingsManager.setGroupEQSettings(id: groupID, settings)
+        guard let group = settingsManager.appGroup(id: groupID) else { return }
+        for memberID in group.memberIdentifiers {
+            if let app = apps.first(where: { $0.persistenceIdentifier == memberID }),
+               let tap = taps[app.id] {
+                tap.updateEQSettings(settings)
+            }
+        }
+    }
+
+    func setGroupBoost(id: UUID, to boost: BoostLevel) {
+        settingsManager.setGroupBoost(id: id, to: boost)
+        guard let group = settingsManager.appGroup(id: id) else { return }
+        for memberID in group.memberIdentifiers {
+            if let app = apps.first(where: { $0.persistenceIdentifier == memberID }) {
+                volumeState.setBoost(for: app.id, to: boost, identifier: memberID)
+                if let tap = taps[app.id] {
+                    tap.volume = effectiveVolume(for: app.id, deviceUIDs: tap.currentDeviceUIDs)
+                }
+            }
+        }
+    }
+
+    func setGroupDevice(id: UUID, deviceUID: String?) {
+        settingsManager.setGroupDeviceRouting(id: id, deviceUID: deviceUID)
+        guard let group = settingsManager.appGroup(id: id) else { return }
+        for memberID in group.memberIdentifiers {
+            if let app = apps.first(where: { $0.persistenceIdentifier == memberID }) {
+                setDevice(for: app, deviceUID: deviceUID)
+            } else {
+                setDeviceRoutingForInactive(identifier: memberID, deviceUID: deviceUID)
+            }
+        }
+    }
+
+    func setGroupDeviceSelectionMode(id: UUID, to mode: DeviceSelectionMode) {
+        settingsManager.setGroupDeviceSelectionMode(id: id, to: mode)
+        guard let group = settingsManager.appGroup(id: id) else { return }
+        for memberID in group.memberIdentifiers {
+            if let app = apps.first(where: { $0.persistenceIdentifier == memberID }) {
+                setDeviceSelectionMode(for: app, to: mode)
+            } else {
+                setDeviceSelectionModeForInactive(identifier: memberID, to: mode)
+            }
+        }
+    }
+
+    func setGroupSelectedDeviceUIDs(id: UUID, to uids: Set<String>) {
+        settingsManager.setGroupSelectedDeviceUIDs(id: id, to: uids)
+        guard let group = settingsManager.appGroup(id: id) else { return }
+        for memberID in group.memberIdentifiers {
+            if let app = apps.first(where: { $0.persistenceIdentifier == memberID }) {
+                setSelectedDeviceUIDs(for: app, to: uids)
+            } else {
+                setSelectedDeviceUIDsForInactive(identifier: memberID, to: uids)
+            }
+        }
+    }
+
+    /// Applies the group's persisted volume/mute/EQ/boost onto a live member's runtime state.
+    private func applyGroupSettingsToLiveMember(_ app: AudioApp) {
+        guard let group = settingsManager.group(containing: app.persistenceIdentifier) else { return }
+        volumeState.setVolume(for: app.id, to: group.volume, identifier: app.persistenceIdentifier)
+        volumeState.setMute(for: app.id, to: group.muted, identifier: app.persistenceIdentifier)
+        volumeState.setBoost(for: app.id, to: group.boost, identifier: app.persistenceIdentifier)
+        if let tap = taps[app.id] {
+            tap.volume = effectiveVolume(for: app.id, deviceUIDs: tap.currentDeviceUIDs)
+            tap.isMuted = group.muted
+            tap.updateEQSettings(group.eqSettings)
+        }
+        if group.followsDefault {
+            setDevice(for: app, deviceUID: nil)
+        } else if group.deviceSelectionMode == .multi {
+            setDeviceSelectionMode(for: app, to: .multi)
+            setSelectedDeviceUIDs(for: app, to: Set(group.selectedDeviceUIDs))
+        } else {
+            setDevice(for: app, deviceUID: group.deviceUID)
+        }
     }
 
     // MARK: - Per-Device AutoEQ
