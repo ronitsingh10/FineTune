@@ -1043,6 +1043,12 @@ struct MenuBarPopupView: View {
             onToggleCollapsed: {
                 audioEngine.setGroupCollapsed(id: group.id, collapsed: !latest.isCollapsed)
             },
+            getAudioLevel: {
+                liveMembers
+                    .map { audioEngine.getAudioLevel(for: $0) }
+                    .max() ?? 0
+            },
+            isPopupVisible: isPopupVisible,
             onRemoveMember: { identifier in
                 audioEngine.removeAppFromGroup(groupID: group.id, identifier: identifier)
             },

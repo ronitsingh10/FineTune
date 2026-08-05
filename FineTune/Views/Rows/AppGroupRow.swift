@@ -27,10 +27,15 @@ struct AppGroupRow: View {
     let onRenameUserPreset: (UUID, String) -> Void
     let onEQToggle: () -> Void
     let onToggleCollapsed: () -> Void
+    /// Peak level across live members; polled while the popup is visible.
+    let getAudioLevel: () -> Float
+    let isPopupVisible: Bool
     var onRemoveMember: ((String) -> Void)? = nil
     var showsRemoveControls: Bool = false
 
     @State private var localEQSettings: EQSettings
+    @State private var displayLevel: Float = 0
+    @State private var levelTimer: Timer?
 
     init(
         group: AppGroup,
@@ -56,6 +61,8 @@ struct AppGroupRow: View {
         onRenameUserPreset: @escaping (UUID, String) -> Void = { _, _ in },
         onEQToggle: @escaping () -> Void = {},
         onToggleCollapsed: @escaping () -> Void = {},
+        getAudioLevel: @escaping () -> Float = { 0 },
+        isPopupVisible: Bool = true,
         onRemoveMember: ((String) -> Void)? = nil,
         showsRemoveControls: Bool = false
     ) {
@@ -82,6 +89,8 @@ struct AppGroupRow: View {
         self.onRenameUserPreset = onRenameUserPreset
         self.onEQToggle = onEQToggle
         self.onToggleCollapsed = onToggleCollapsed
+        self.getAudioLevel = getAudioLevel
+        self.isPopupVisible = isPopupVisible
         self.onRemoveMember = onRemoveMember
         self.showsRemoveControls = showsRemoveControls
         self._localEQSettings = State(initialValue: group.eqSettings)
@@ -104,6 +113,11 @@ struct AppGroupRow: View {
         ExpandableGlassRow(isExpanded: isEQExpanded, isFocused: isFocused) {
             VStack(alignment: .leading, spacing: 0) {
                 HStack(spacing: DesignTokens.Spacing.sm) {
+                    VUMeter(
+                        level: displayLevel,
+                        isMuted: group.muted || group.volume == 0
+                    )
+
                     Button(action: onToggleCollapsed) {
                         Image(systemName: group.isCollapsed ? "chevron.right" : "chevron.down")
                             .font(.system(size: 10, weight: .semibold))
@@ -182,6 +196,39 @@ struct AppGroupRow: View {
         .onChange(of: group.eqSettings) { _, newValue in
             localEQSettings = newValue
         }
+        .onAppear {
+            if isPopupVisible {
+                startLevelPolling()
+            }
+        }
+        .onDisappear {
+            stopLevelPolling()
+        }
+        .onChange(of: isPopupVisible) { _, visible in
+            if visible {
+                startLevelPolling()
+            } else {
+                stopLevelPolling()
+                displayLevel = 0
+            }
+        }
+    }
+
+    private func startLevelPolling() {
+        guard levelTimer == nil else { return }
+        levelTimer = Timer.scheduledTimer(
+            withTimeInterval: DesignTokens.Timing.vuMeterUpdateInterval,
+            repeats: true
+        ) { _ in
+            MainActor.assumeIsolated {
+                displayLevel = getAudioLevel()
+            }
+        }
+    }
+
+    private func stopLevelPolling() {
+        levelTimer?.invalidate()
+        levelTimer = nil
     }
 
     private var routingOrMemberSubtitle: String? {
