@@ -92,7 +92,7 @@ final class SettingsManager {
     private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "FineTune", category: "SettingsManager")
 
     struct Settings: Codable {
-        var version: Int = 12
+        var version: Int = 13
         var appVolumes: [String: Float] = [:]
         var appDeviceRouting: [String: String] = [:]  // bundleID → deviceUID
         var appMutes: [String: Bool] = [:]  // bundleID → isMuted
@@ -108,6 +108,7 @@ final class SettingsManager {
         var pinnedAppInfo: [String: PinnedAppInfo] = [:]  // Persistence identifier → app metadata
         var ignoredApps: Set<String> = []  // Persistence identifiers of hidden apps
         var ignoredAppInfo: [String: IgnoredAppInfo] = [:]  // Persistence identifier → app metadata
+        var appGroups: [AppGroup] = []  // Named collections with shared volume / mute / EQ
 
         // DDC monitor speaker volumes (keyed by CoreAudio device UID for stability across reboots)
         var ddcVolumes: [String: Int] = [:]       // device UID → volume (0-100)
@@ -168,6 +169,7 @@ final class SettingsManager {
             pinnedAppInfo = try c.decodeIfPresent([String: PinnedAppInfo].self, forKey: .pinnedAppInfo) ?? [:]
             ignoredApps = try c.decodeIfPresent(Set<String>.self, forKey: .ignoredApps) ?? []
             ignoredAppInfo = try c.decodeIfPresent([String: IgnoredAppInfo].self, forKey: .ignoredAppInfo) ?? [:]
+            appGroups = try c.decodeIfPresent([AppGroup].self, forKey: .appGroups) ?? []
             ddcVolumes = try c.decodeIfPresent([String: Int].self, forKey: .ddcVolumes) ?? [:]
             ddcMuteStates = try c.decodeIfPresent([String: Bool].self, forKey: .ddcMuteStates) ?? [:]
             ddcSavedVolumes = try c.decodeIfPresent([String: Int].self, forKey: .ddcSavedVolumes) ?? [:]
@@ -344,6 +346,8 @@ final class SettingsManager {
         // Hiding is mutually exclusive with pinning
         settings.pinnedApps.remove(identifier)
         settings.pinnedAppInfo.removeValue(forKey: identifier)
+        // Remove from any audio group
+        removeAppFromAllGroups(identifier)
         // Clear per-app settings — FineTune won't interact with this app
         settings.appVolumes.removeValue(forKey: identifier)
         settings.appBoosts.removeValue(forKey: identifier)
@@ -353,6 +357,186 @@ final class SettingsManager {
         settings.appDeviceSelectionMode.removeValue(forKey: identifier)
         settings.appSelectedDeviceUIDs.removeValue(forKey: identifier)
         scheduleSave()
+    }
+
+    // MARK: - App Groups
+
+    var appGroups: [AppGroup] {
+        settings.appGroups
+    }
+
+    func appGroup(id: UUID) -> AppGroup? {
+        settings.appGroups.first { $0.id == id }
+    }
+
+    /// Returns the group that currently contains `identifier`, if any.
+    func group(containing identifier: String) -> AppGroup? {
+        settings.appGroups.first { $0.memberIdentifiers.contains(identifier) }
+    }
+
+    /// All persistence identifiers currently assigned to any group.
+    var groupedAppIdentifiers: Set<String> {
+        Set(settings.appGroups.flatMap(\.memberIdentifiers))
+    }
+
+    @discardableResult
+    func createAppGroup(name: String) -> AppGroup {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let group = AppGroup(name: trimmed.isEmpty ? "New Group" : trimmed)
+        settings.appGroups.append(group)
+        scheduleSave()
+        return group
+    }
+
+    func renameAppGroup(id: UUID, name: String) {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty,
+              let index = settings.appGroups.firstIndex(where: { $0.id == id }) else { return }
+        settings.appGroups[index].name = trimmed
+        scheduleSave()
+    }
+
+    func deleteAppGroup(id: UUID) {
+        settings.appGroups.removeAll { $0.id == id }
+        scheduleSave()
+    }
+
+    func setGroupCollapsed(id: UUID, collapsed: Bool) {
+        guard let index = settings.appGroups.firstIndex(where: { $0.id == id }) else { return }
+        settings.appGroups[index].isCollapsed = collapsed
+        scheduleSave()
+    }
+
+    /// Adds an app to a group. An app belongs to at most one group — membership
+    /// in any other group is cleared first. Applies the group's volume/mute/EQ.
+    func addAppToGroup(groupID: UUID, member: AppGroupMemberInfo) {
+        removeAppFromAllGroups(member.persistenceIdentifier)
+        guard let index = settings.appGroups.firstIndex(where: { $0.id == groupID }) else { return }
+        guard !settings.appGroups[index].memberIdentifiers.contains(member.persistenceIdentifier) else { return }
+        settings.appGroups[index].members.append(member)
+        applyGroupAudioSettings(settings.appGroups[index], to: member.persistenceIdentifier)
+        scheduleSave()
+    }
+
+    func removeAppFromGroup(groupID: UUID, identifier: String) {
+        guard let index = settings.appGroups.firstIndex(where: { $0.id == groupID }) else { return }
+        settings.appGroups[index].members.removeAll { $0.persistenceIdentifier == identifier }
+        scheduleSave()
+    }
+
+    func removeAppFromAllGroups(_ identifier: String) {
+        var changed = false
+        for i in settings.appGroups.indices {
+            let before = settings.appGroups[i].members.count
+            settings.appGroups[i].members.removeAll { $0.persistenceIdentifier == identifier }
+            if settings.appGroups[i].members.count != before {
+                changed = true
+            }
+        }
+        if changed {
+            scheduleSave()
+        }
+    }
+
+    /// Updates group volume and fans out to every member's `appVolumes` entry.
+    func setGroupVolume(id: UUID, to volume: Float) {
+        guard let index = settings.appGroups.firstIndex(where: { $0.id == id }) else { return }
+        let clamped = volume.isFinite ? max(0, min(1, volume)) : 1.0
+        settings.appGroups[index].volume = clamped
+        for memberID in settings.appGroups[index].memberIdentifiers {
+            settings.appVolumes[memberID] = clamped
+        }
+        scheduleSave()
+    }
+
+    /// Updates group mute and fans out to every member's `appMutes` entry.
+    func setGroupMute(id: UUID, to muted: Bool) {
+        guard let index = settings.appGroups.firstIndex(where: { $0.id == id }) else { return }
+        settings.appGroups[index].muted = muted
+        for memberID in settings.appGroups[index].memberIdentifiers {
+            settings.appMutes[memberID] = muted
+        }
+        scheduleSave()
+    }
+
+    /// Updates group EQ and fans out to every member's `appEQSettings` entry.
+    func setGroupEQSettings(id: UUID, _ eqSettings: EQSettings) {
+        guard let index = settings.appGroups.firstIndex(where: { $0.id == id }) else { return }
+        settings.appGroups[index].eqSettings = eqSettings
+        for memberID in settings.appGroups[index].memberIdentifiers {
+            settings.appEQSettings[memberID] = eqSettings
+        }
+        scheduleSave()
+    }
+
+    /// Updates group boost and fans out to every member's `appBoosts` entry.
+    func setGroupBoost(id: UUID, to boost: BoostLevel) {
+        guard let index = settings.appGroups.firstIndex(where: { $0.id == id }) else { return }
+        settings.appGroups[index].boost = boost
+        for memberID in settings.appGroups[index].memberIdentifiers {
+            settings.appBoosts[memberID] = boost.rawValue
+        }
+        scheduleSave()
+    }
+
+    /// Updates group device routing and fans out to every member.
+    /// Pass `nil` for `deviceUID` to follow the system default.
+    func setGroupDeviceRouting(id: UUID, deviceUID: String?) {
+        guard let index = settings.appGroups.firstIndex(where: { $0.id == id }) else { return }
+        if let deviceUID {
+            settings.appGroups[index].followsDefault = false
+            settings.appGroups[index].deviceUID = deviceUID
+            for memberID in settings.appGroups[index].memberIdentifiers {
+                settings.appDeviceRouting[memberID] = deviceUID
+            }
+        } else {
+            settings.appGroups[index].followsDefault = true
+            settings.appGroups[index].deviceUID = nil
+            for memberID in settings.appGroups[index].memberIdentifiers {
+                settings.appDeviceRouting.removeValue(forKey: memberID)
+            }
+        }
+        scheduleSave()
+    }
+
+    func setGroupDeviceSelectionMode(id: UUID, to mode: DeviceSelectionMode) {
+        guard let index = settings.appGroups.firstIndex(where: { $0.id == id }) else { return }
+        settings.appGroups[index].deviceSelectionMode = mode
+        for memberID in settings.appGroups[index].memberIdentifiers {
+            settings.appDeviceSelectionMode[memberID] = mode
+        }
+        scheduleSave()
+    }
+
+    func setGroupSelectedDeviceUIDs(id: UUID, to uids: Set<String>) {
+        guard let index = settings.appGroups.firstIndex(where: { $0.id == id }) else { return }
+        let list = Array(uids)
+        settings.appGroups[index].selectedDeviceUIDs = list
+        settings.appGroups[index].followsDefault = false
+        if let primary = list.first {
+            settings.appGroups[index].deviceUID = primary
+        }
+        for memberID in settings.appGroups[index].memberIdentifiers {
+            settings.appSelectedDeviceUIDs[memberID] = list
+            if let primary = list.first {
+                settings.appDeviceRouting[memberID] = primary
+            }
+        }
+        scheduleSave()
+    }
+
+    private func applyGroupAudioSettings(_ group: AppGroup, to identifier: String) {
+        settings.appVolumes[identifier] = group.volume
+        settings.appMutes[identifier] = group.muted
+        settings.appEQSettings[identifier] = group.eqSettings
+        settings.appBoosts[identifier] = group.boost.rawValue
+        settings.appDeviceSelectionMode[identifier] = group.deviceSelectionMode
+        settings.appSelectedDeviceUIDs[identifier] = group.selectedDeviceUIDs
+        if group.followsDefault {
+            settings.appDeviceRouting.removeValue(forKey: identifier)
+        } else if let uid = group.deviceUID {
+            settings.appDeviceRouting[identifier] = uid
+        }
     }
 
     func unignoreApp(_ identifier: String) {
@@ -653,6 +837,8 @@ final class SettingsManager {
             if activeIdentifiers.contains(identifier) { continue }
             // Keep pinned apps
             if settings.pinnedApps.contains(identifier) { continue }
+            // Keep apps that belong to a group
+            if settings.appGroups.contains(where: { $0.memberIdentifiers.contains(identifier) }) { continue }
             // Keep apps with explicit device routing (user intent)
             if settings.appDeviceRouting[identifier] != nil { continue }
 
@@ -840,6 +1026,7 @@ final class SettingsManager {
         settings.pinnedAppInfo.removeAll()
         settings.ignoredApps.removeAll()
         settings.ignoredAppInfo.removeAll()
+        settings.appGroups.removeAll()
         settings.appSettings = AppSettings()
         settings.systemSoundsFollowsDefault = true
         settings.lockedInputDeviceUID = nil

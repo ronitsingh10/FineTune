@@ -16,6 +16,10 @@ protocol URLHandlerEngine {
     func setVolumeForInactive(identifier: String, to volume: Float)
     func setMuteForInactive(identifier: String, to muted: Bool)
     func getMuteForInactive(identifier: String) -> Bool
+    func setGroupVolume(id: UUID, to volume: Float)
+    func setGroupMute(id: UUID, to muted: Bool)
+    func toggleGroupMute(id: UUID)
+    func setGroupDevice(id: UUID, deviceUID: String?)
 }
 
 /// Handles URL scheme actions for FineTune (finetune://...)
@@ -27,31 +31,28 @@ final class URLHandler {
     init(audioEngine: any URLHandlerEngine) {
         self.audioEngine = audioEngine
     }
-    
+
     func handleURL(_ url: URL) {
         logger.info("Received URL: \(url.absoluteString)")
-        
+
         guard url.scheme == "finetune" else {
             logger.warning("Unknown URL scheme: \(url.scheme ?? "nil")")
             return
         }
-        
+
         let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
         let host = components?.host
         let queryItems = components?.queryItems ?? []
-      
+
         switch host {
-        // Volume actions
         case "set-volumes":
             handleSetVolumes(queryItems: queryItems)
         case "step-volume":
             handleStepVolume(queryItems: queryItems)
-        // Mute actions
         case "set-mute":
             handleSetMute(queryItems: queryItems)
         case "toggle-mute":
             handleToggleMute(queryItems: queryItems)
-        // Other actions
         case "set-device":
             handleSetDevice(queryItems: queryItems)
         case "reset":
@@ -60,168 +61,229 @@ final class URLHandler {
             logger.warning("Unknown URL action: \(host ?? "nil")")
         }
     }
-    
+
     // MARK: - Volume Actions
 
-    /// Set volumes for one or more apps
-    /// URL format: finetune://set-volumes?app=com.a&volume=100&app=com.b&volume=50
-    /// Volume is percentage: 0-100 (gain only, boost is per-app and set separately)
+    /// Set volumes for one or more apps and/or groups.
+    /// URL format:
+    ///   finetune://set-volumes?app=com.a&volume=100&group=Voice&volume=50
+    /// Volume is percentage: 0-100 (gain only; boost is separate).
     private func handleSetVolumes(queryItems: [URLQueryItem]) {
-        var pairs: [(identifier: String, volume: Int)] = []
-        var currentApp: String?
+        enum Target {
+            case app(String)
+            case group(String)
+        }
 
-        // Parse app/volume pairs in order
+        var pairs: [(target: Target, volume: Int)] = []
+        var current: Target?
+
         for item in queryItems {
             switch item.name.lowercased() {
             case "app":
-                currentApp = item.value
+                if let value = item.value { current = .app(value) }
+            case "group":
+                if let value = item.value { current = .group(value) }
             case "volume":
-                guard let app = currentApp else {
-                    logger.warning("set-volumes: volume parameter without preceding app")
+                guard let target = current else {
+                    logger.warning("set-volumes: volume parameter without preceding app/group")
                     continue
                 }
                 guard let volumeStr = item.value,
                       let volume = Int(volumeStr),
                       (0...100).contains(volume) else {
-                    logger.warning("set-volumes: invalid volume '\(item.value ?? "nil")' for app \(app) (valid range: 0-100)")
-                    currentApp = nil
+                    logger.warning("set-volumes: invalid volume '\(item.value ?? "nil")' (valid range: 0-100)")
+                    current = nil
                     continue
                 }
-                pairs.append((app, volume))
-                currentApp = nil
+                pairs.append((target, volume))
+                current = nil
             default:
                 continue
             }
         }
 
-        // Warn about trailing app without volume
-        if let trailing = currentApp {
-            logger.warning("set-volumes: trailing app '\(trailing)' without volume parameter")
+        if let trailing = current {
+            switch trailing {
+            case .app(let id):
+                logger.warning("set-volumes: trailing app '\(id)' without volume parameter")
+            case .group(let id):
+                logger.warning("set-volumes: trailing group '\(id)' without volume parameter")
+            }
         }
 
         guard !pairs.isEmpty else {
-            logger.error("set-volumes: No valid app/volume pairs found")
+            logger.error("set-volumes: No valid app/group volume pairs found")
             return
         }
 
-        for (identifier, volumePercent) in pairs {
-            // Linear conversion: volume=100 → gain 1.0
+        for (target, volumePercent) in pairs {
             let gain = Float(volumePercent) / 100.0
-
-            if let app = findApp(by: identifier) {
-                audioEngine.setVolume(for: app, to: gain)
-                logger.info("Set volume for \(app.name) to \(volumePercent)%")
-            } else {
-                // App not active - persist for when it launches
-                audioEngine.setVolumeForInactive(identifier: identifier, to: gain)
-                logger.info("Set volume for inactive app \(identifier) to \(volumePercent)%")
+            switch target {
+            case .app(let identifier):
+                if let app = findApp(by: identifier) {
+                    audioEngine.setVolume(for: app, to: gain)
+                    logger.info("Set volume for \(app.name) to \(volumePercent)%")
+                } else {
+                    audioEngine.setVolumeForInactive(identifier: identifier, to: gain)
+                    logger.info("Set volume for inactive app \(identifier) to \(volumePercent)%")
+                }
+            case .group(let identifier):
+                guard let group = findGroup(by: identifier) else {
+                    logger.warning("set-volumes: group not found '\(identifier)'")
+                    continue
+                }
+                audioEngine.setGroupVolume(id: group.id, to: gain)
+                logger.info("Set volume for group \(group.name) to \(volumePercent)%")
             }
         }
     }
 
-    /// Step volume up or down for an app
-    /// URL format: finetune://step-volume?app=com.a&direction=up (or down)
-    /// Steps by 5% slider position
+    /// Step volume up or down for an app or group.
+    /// URL format: finetune://step-volume?app=com.a&direction=up
+    ///             finetune://step-volume?group=Voice&direction=down
     private func handleStepVolume(queryItems: [URLQueryItem]) {
-        guard let appIdentifier = queryItems.first(where: { $0.name == "app" })?.value else {
-            logger.error("step-volume: missing app parameter")
+        let appIdentifier = queryItems.first(where: { $0.name.lowercased() == "app" })?.value
+        let groupIdentifier = queryItems.first(where: { $0.name.lowercased() == "group" })?.value
+
+        guard appIdentifier != nil || groupIdentifier != nil else {
+            logger.error("step-volume: missing app or group parameter")
             return
         }
 
-        guard let direction = queryItems.first(where: { $0.name == "direction" })?.value else {
+        guard let direction = queryItems.first(where: { $0.name.lowercased() == "direction" })?.value else {
             logger.error("step-volume: missing direction parameter (use 'up' or 'down')")
             return
         }
 
-        guard let app = findApp(by: appIdentifier) else {
-            logger.warning("step-volume: app not found '\(appIdentifier)'")
-            return
+        let stepAmount: Double = 0.05
+        let applyStep: (Float) -> Float = { currentGain in
+            var sliderPosition = VolumeMapping.gainToSlider(currentGain)
+            switch direction.lowercased() {
+            case "up", "+":
+                sliderPosition = min(1.0, sliderPosition + stepAmount)
+            case "down", "-":
+                sliderPosition = max(0.0, sliderPosition - stepAmount)
+            default:
+                return currentGain
+            }
+            return VolumeMapping.sliderToGain(sliderPosition)
         }
 
-        let currentGain = audioEngine.getVolume(for: app)
-        let stepAmount: Double = 0.05 // 5% slider position
-        var sliderPosition = VolumeMapping.gainToSlider(currentGain)
-
         switch direction.lowercased() {
-        case "up", "+":
-            sliderPosition = min(1.0, sliderPosition + stepAmount)
-        case "down", "-":
-            sliderPosition = max(0.0, sliderPosition - stepAmount)
+        case "up", "+", "down", "-":
+            break
         default:
             logger.error("step-volume: invalid direction '\(direction)'. Use 'up' or 'down'")
             return
         }
 
-        let newGain = VolumeMapping.sliderToGain(sliderPosition)
-        audioEngine.setVolume(for: app, to: newGain)
-        let newPercent = Int(round(newGain * 100))
-        logger.info("Stepped volume \(direction) for \(app.name) to \(newPercent)%")
+        if let groupIdentifier {
+            guard let group = findGroup(by: groupIdentifier) else {
+                logger.warning("step-volume: group not found '\(groupIdentifier)'")
+                return
+            }
+            let newGain = applyStep(group.volume)
+            audioEngine.setGroupVolume(id: group.id, to: newGain)
+            let newPercent = Int(round(VolumeMapping.gainToSlider(newGain) * 100))
+            logger.info("Stepped volume \(direction) for group \(group.name) to \(newPercent)%")
+            return
+        }
+
+        if let appIdentifier {
+            guard let app = findApp(by: appIdentifier) else {
+                logger.warning("step-volume: app not found '\(appIdentifier)'")
+                return
+            }
+            let newGain = applyStep(audioEngine.getVolume(for: app))
+            audioEngine.setVolume(for: app, to: newGain)
+            let newPercent = Int(round(newGain * 100))
+            logger.info("Stepped volume \(direction) for \(app.name) to \(newPercent)%")
+        }
     }
 
     // MARK: - Mute Actions
 
-    /// Set mute state for one or more apps
-    /// URL format: finetune://set-mute?app=com.a&muted=true&app=com.b&muted=false
+    /// Set mute state for one or more apps and/or groups.
+    /// URL format: finetune://set-mute?app=com.a&muted=true&group=Voice&muted=false
     private func handleSetMute(queryItems: [URLQueryItem]) {
-        var pairs: [(identifier: String, muted: Bool)] = []
-        var currentApp: String?
+        enum Target {
+            case app(String)
+            case group(String)
+        }
+
+        var pairs: [(target: Target, muted: Bool)] = []
+        var current: Target?
 
         for item in queryItems {
             switch item.name.lowercased() {
             case "app":
-                currentApp = item.value
+                if let value = item.value { current = .app(value) }
+            case "group":
+                if let value = item.value { current = .group(value) }
             case "muted":
-                guard let app = currentApp else {
-                    logger.warning("set-mute: muted parameter without preceding app")
+                guard let target = current else {
+                    logger.warning("set-mute: muted parameter without preceding app/group")
                     continue
                 }
                 guard let mutedStr = item.value,
                       let muted = parseBool(mutedStr) else {
-                    logger.warning("set-mute: invalid muted value '\(item.value ?? "nil")' for app \(app)")
-                    currentApp = nil
+                    logger.warning("set-mute: invalid muted value '\(item.value ?? "nil")'")
+                    current = nil
                     continue
                 }
-                pairs.append((app, muted))
-                currentApp = nil
+                pairs.append((target, muted))
+                current = nil
             default:
                 continue
             }
         }
 
-        // Warn about trailing app without muted value
-        if let trailing = currentApp {
-            logger.warning("set-mute: trailing app '\(trailing)' without muted parameter")
+        if current != nil {
+            logger.warning("set-mute: trailing app/group without muted parameter")
         }
 
         guard !pairs.isEmpty else {
-            logger.error("set-mute: No valid app/muted pairs found")
+            logger.error("set-mute: No valid app/group muted pairs found")
             return
         }
 
-        for (identifier, muted) in pairs {
-            if let app = findApp(by: identifier) {
-                audioEngine.setMute(for: app, to: muted)
-                logger.info("Set mute for \(app.name) to \(muted)")
-            } else {
-                audioEngine.setMuteForInactive(identifier: identifier, to: muted)
-                logger.info("Set mute for inactive app \(identifier) to \(muted)")
+        for (target, muted) in pairs {
+            switch target {
+            case .app(let identifier):
+                if let app = findApp(by: identifier) {
+                    audioEngine.setMute(for: app, to: muted)
+                    logger.info("Set mute for \(app.name) to \(muted)")
+                } else {
+                    audioEngine.setMuteForInactive(identifier: identifier, to: muted)
+                    logger.info("Set mute for inactive app \(identifier) to \(muted)")
+                }
+            case .group(let identifier):
+                guard let group = findGroup(by: identifier) else {
+                    logger.warning("set-mute: group not found '\(identifier)'")
+                    continue
+                }
+                audioEngine.setGroupMute(id: group.id, to: muted)
+                logger.info("Set mute for group \(group.name) to \(muted)")
             }
         }
     }
 
-    /// Toggle mute state for apps
-    /// URL format: finetune://toggle-mute?app=com.a&app=com.b
+    /// Toggle mute for apps and/or groups.
+    /// URL format: finetune://toggle-mute?app=com.a&group=Voice
     private func handleToggleMute(queryItems: [URLQueryItem]) {
-        let identifiers = queryItems
+        let appIdentifiers = queryItems
             .filter { $0.name.lowercased() == "app" }
-            .compactMap { $0.value }
+            .compactMap(\.value)
+        let groupIdentifiers = queryItems
+            .filter { $0.name.lowercased() == "group" }
+            .compactMap(\.value)
 
-        guard !identifiers.isEmpty else {
-            logger.error("toggle-mute: No app identifiers provided")
+        guard !appIdentifiers.isEmpty || !groupIdentifiers.isEmpty else {
+            logger.error("toggle-mute: No app or group identifiers provided")
             return
         }
 
-        for identifier in identifiers {
+        for identifier in appIdentifiers {
             if let app = findApp(by: identifier) {
                 let current = audioEngine.getMute(for: app)
                 audioEngine.setMute(for: app, to: !current)
@@ -232,59 +294,112 @@ final class URLHandler {
                 logger.info("Toggled mute for inactive app \(identifier) to \(!current)")
             }
         }
+
+        for identifier in groupIdentifiers {
+            guard let group = findGroup(by: identifier) else {
+                logger.warning("toggle-mute: group not found '\(identifier)'")
+                continue
+            }
+            audioEngine.toggleGroupMute(id: group.id)
+            logger.info("Toggled mute for group \(group.name)")
+        }
     }
 
     // MARK: - Other Actions
 
-    /// Set output device for an app
+    /// Set output device for an app or group.
     /// URL format: finetune://set-device?app=com.a&device=<deviceUID>
+    ///             finetune://set-device?group=Voice&device=<deviceUID>
+    ///             finetune://set-device?group=Voice&device=default  (follow system default)
     private func handleSetDevice(queryItems: [URLQueryItem]) {
-        guard let appIdentifier = queryItems.first(where: { $0.name == "app" })?.value else {
-            logger.error("set-device: missing app parameter")
+        let appIdentifier = queryItems.first(where: { $0.name.lowercased() == "app" })?.value
+        let groupIdentifier = queryItems.first(where: { $0.name.lowercased() == "group" })?.value
+
+        guard appIdentifier != nil || groupIdentifier != nil else {
+            logger.error("set-device: missing app or group parameter")
             return
         }
 
-        guard let deviceUID = queryItems.first(where: { $0.name == "device" })?.value else {
+        guard let deviceUID = queryItems.first(where: { $0.name.lowercased() == "device" })?.value else {
             logger.error("set-device: missing device parameter")
             return
         }
 
-        guard let app = findApp(by: appIdentifier) else {
-            logger.warning("set-device: app not found '\(appIdentifier)'")
+        let resolvedUID: String? = {
+            switch deviceUID.lowercased() {
+            case "default", "system", "follow":
+                return nil
+            default:
+                return deviceUID
+            }
+        }()
+
+        if let groupIdentifier {
+            guard let group = findGroup(by: groupIdentifier) else {
+                logger.warning("set-device: group not found '\(groupIdentifier)'")
+                return
+            }
+            audioEngine.setGroupDevice(id: group.id, deviceUID: resolvedUID)
+            logger.info("Routed group \(group.name) to \(resolvedUID ?? "system default")")
             return
         }
 
-        audioEngine.setDevice(for: app, deviceUID: deviceUID)
-        logger.info("Routed \(app.name) to device \(deviceUID)")
+        if let appIdentifier {
+            guard let app = findApp(by: appIdentifier) else {
+                logger.warning("set-device: app not found '\(appIdentifier)'")
+                return
+            }
+            audioEngine.setDevice(for: app, deviceUID: resolvedUID)
+            logger.info("Routed \(app.name) to \(resolvedUID ?? "system default")")
+        }
     }
 
-    /// Reset apps to 100% volume and unmute
-    /// URL format: finetune://reset?app=com.a&app=com.b or finetune://reset (all apps)
+    /// Reset apps/groups to 100% volume and unmute.
+    /// URL format: finetune://reset
+    ///             finetune://reset?app=com.a&group=Voice
     private func handleReset(queryItems: [URLQueryItem]) {
-        let identifiers = queryItems
+        let appIdentifiers = queryItems
             .filter { $0.name.lowercased() == "app" }
-            .compactMap { $0.value }
+            .compactMap(\.value)
+        let groupIdentifiers = queryItems
+            .filter { $0.name.lowercased() == "group" }
+            .compactMap(\.value)
 
-        if identifiers.isEmpty {
-            // Reset all active apps to 100% and unmute
+        if appIdentifiers.isEmpty && groupIdentifiers.isEmpty {
             let apps = audioEngine.apps
+            let groups = audioEngine.settingsManager.appGroups
             for app in apps {
                 audioEngine.setVolume(for: app, to: 1.0)
                 audioEngine.setMute(for: app, to: false)
             }
-            logger.info("Reset all \(apps.count) apps to 100% (unmuted)")
-        } else {
-            for identifier in identifiers {
-                if let app = findApp(by: identifier) {
-                    audioEngine.setVolume(for: app, to: 1.0)
-                    audioEngine.setMute(for: app, to: false)
-                    logger.info("Reset \(app.name) to 100% (unmuted)")
-                } else {
-                    audioEngine.setVolumeForInactive(identifier: identifier, to: 1.0)
-                    audioEngine.setMuteForInactive(identifier: identifier, to: false)
-                    logger.info("Reset inactive app \(identifier) to 100% (unmuted)")
-                }
+            for group in groups {
+                audioEngine.setGroupVolume(id: group.id, to: 1.0)
+                audioEngine.setGroupMute(id: group.id, to: false)
             }
+            logger.info("Reset all \(apps.count) apps and \(groups.count) groups to 100% (unmuted)")
+            return
+        }
+
+        for identifier in appIdentifiers {
+            if let app = findApp(by: identifier) {
+                audioEngine.setVolume(for: app, to: 1.0)
+                audioEngine.setMute(for: app, to: false)
+                logger.info("Reset \(app.name) to 100% (unmuted)")
+            } else {
+                audioEngine.setVolumeForInactive(identifier: identifier, to: 1.0)
+                audioEngine.setMuteForInactive(identifier: identifier, to: false)
+                logger.info("Reset inactive app \(identifier) to 100% (unmuted)")
+            }
+        }
+
+        for identifier in groupIdentifiers {
+            guard let group = findGroup(by: identifier) else {
+                logger.warning("reset: group not found '\(identifier)'")
+                continue
+            }
+            audioEngine.setGroupVolume(id: group.id, to: 1.0)
+            audioEngine.setGroupMute(id: group.id, to: false)
+            logger.info("Reset group \(group.name) to 100% (unmuted)")
         }
     }
 
@@ -293,6 +408,17 @@ final class URLHandler {
     /// Find an app by bundle ID or persistence identifier
     private func findApp(by identifier: String) -> AudioApp? {
         audioEngine.apps.first { $0.persistenceIdentifier == identifier }
+    }
+
+    /// Find a group by UUID string or case-insensitive name.
+    private func findGroup(by identifier: String) -> AppGroup? {
+        let groups = audioEngine.settingsManager.appGroups
+        if let uuid = UUID(uuidString: identifier) {
+            return groups.first { $0.id == uuid }
+        }
+        return groups.first {
+            $0.name.caseInsensitiveCompare(identifier) == .orderedSame
+        }
     }
 
     /// Parse boolean from string (supports true/false, 1/0, yes/no)

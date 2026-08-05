@@ -39,10 +39,9 @@ struct MenuBarPopupView: View {
     /// Which device tab is selected (false = output, true = input)
     @State private var showingInputDevices = false
 
-    /// Track which app has its EQ panel expanded (only one at a time)
-    /// Uses DisplayableApp.id (String) to work with both active and inactive apps
+    /// Track which app/group has its EQ panel expanded (only one at a time).
+    /// Uses DisplayableApp.id or `group:<uuid>` so groups and apps share one accordion.
     @State private var expandedRowID: String?
-
     /// Debounce EQ toggle to prevent rapid clicks during animation
     @State private var isEQAnimating = false
 
@@ -756,14 +755,14 @@ struct MenuBarPopupView: View {
             PermissionBannerView(permission: permission)
         } else if isEditingDevicePriority {
             appEditModeContent
-        } else if audioEngine.displayableApps.isEmpty {
+        } else if audioEngine.popupAppItems.isEmpty {
             emptyStateView
         } else {
             appsContent(scrollProxy: scrollProxy)
         }
     }
 
-    /// Edit mode content for apps: simplified rows with eye toggle + hidden section at bottom.
+    /// Edit mode content for apps: ungrouped apps first (drag into groups), then groups, then ignored.
     private let appEditColumns = [
         GridItem(.flexible(), spacing: DesignTokens.Spacing.xs),
         GridItem(.flexible(), spacing: DesignTokens.Spacing.xs)
@@ -771,47 +770,52 @@ struct MenuBarPopupView: View {
 
     @ViewBuilder
     private var appEditModeContent: some View {
+        let groupedIDs = audioEngine.settingsManager.groupedAppIdentifiers
+        let ungroupedApps = audioEngine.displayableApps.filter { !groupedIDs.contains($0.id) }
+        let groups = audioEngine.settingsManager.appGroups
+            .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+
         VStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {
-            // Visible apps in 2-column grid
-            LazyVGrid(columns: appEditColumns, spacing: DesignTokens.Spacing.xs) {
-                ForEach(audioEngine.displayableApps) { displayableApp in
-                    switch displayableApp {
-                    case .active(let app):
-                        AppEditRow(
-                            icon: app.icon,
-                            name: app.name,
-                            isIgnored: false,
-                            isPinned: audioEngine.isPinned(app),
-                            onToggleVisibility: { audioEngine.ignoreApp(app) },
-                            onTogglePin: {
-                                if audioEngine.isPinned(app) {
-                                    audioEngine.unpinApp(app.persistenceIdentifier)
-                                } else {
-                                    audioEngine.pinApp(app)
-                                }
-                            }
-                        )
-                    case .pinnedInactive(let info):
-                        AppEditRow(
-                            icon: displayableApp.icon,
-                            name: info.displayName,
-                            isIgnored: false,
-                            isPinned: true,
-                            onToggleVisibility: {
-                                let hiddenInfo = IgnoredAppInfo(
-                                    persistenceIdentifier: info.persistenceIdentifier,
-                                    displayName: info.displayName,
-                                    bundleID: info.bundleID
-                                )
-                                audioEngine.settingsManager.ignoreApp(info.persistenceIdentifier, info: hiddenInfo)
-                            },
-                            onTogglePin: {
-                                audioEngine.unpinApp(info.persistenceIdentifier)
-                            }
-                        )
+            if !ungroupedApps.isEmpty {
+                LazyVGrid(columns: appEditColumns, spacing: DesignTokens.Spacing.xs) {
+                    ForEach(ungroupedApps) { displayableApp in
+                        ungroupedEditRow(displayableApp)
                     }
                 }
+            } else if !groups.isEmpty {
+                Text("Drag apps onto a group below")
+                    .font(DesignTokens.Typography.caption)
+                    .foregroundStyle(DesignTokens.Colors.textTertiary)
+                    .padding(.bottom, 2)
             }
+
+            Text("Groups")
+                .sectionHeaderStyle()
+                .padding(.top, ungroupedApps.isEmpty ? 0 : DesignTokens.Spacing.xs)
+                .padding(.bottom, 2)
+
+            ForEach(groups) { group in
+                groupEditBlock(group)
+            }
+
+            Button {
+                _ = audioEngine.createAppGroup(name: "New Group")
+            } label: {
+                HStack(spacing: DesignTokens.Spacing.sm) {
+                    Image(systemName: "plus.circle.fill")
+                        .font(.system(size: 14))
+                        .foregroundStyle(DesignTokens.Colors.accentPrimary)
+                    Text("New Group")
+                        .font(DesignTokens.Typography.rowName)
+                        .foregroundStyle(DesignTokens.Colors.textPrimary)
+                    Spacer(minLength: 0)
+                }
+                .frame(height: DesignTokens.Dimensions.rowContentHeight)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .hoverableRow()
+            .help("Create a new app group")
 
             // Ignored apps section
             let ignoredApps = audioEngine.settingsManager.getIgnoredAppInfo()
@@ -841,20 +845,216 @@ struct MenuBarPopupView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
+    @ViewBuilder
+    private func ungroupedEditRow(_ displayableApp: DisplayableApp) -> some View {
+        switch displayableApp {
+        case .active(let app):
+            AppEditRow(
+                icon: app.icon,
+                name: app.name,
+                isIgnored: false,
+                isPinned: audioEngine.isPinned(app),
+                onToggleVisibility: { audioEngine.ignoreApp(app) },
+                onTogglePin: {
+                    if audioEngine.isPinned(app) {
+                        audioEngine.unpinApp(app.persistenceIdentifier)
+                    } else {
+                        audioEngine.pinApp(app)
+                    }
+                },
+                dragIdentifier: app.persistenceIdentifier
+            )
+        case .pinnedInactive(let info):
+            AppEditRow(
+                icon: displayableApp.icon,
+                name: info.displayName,
+                isIgnored: false,
+                isPinned: true,
+                onToggleVisibility: {
+                    let hiddenInfo = IgnoredAppInfo(
+                        persistenceIdentifier: info.persistenceIdentifier,
+                        displayName: info.displayName,
+                        bundleID: info.bundleID
+                    )
+                    audioEngine.settingsManager.ignoreApp(info.persistenceIdentifier, info: hiddenInfo)
+                },
+                onTogglePin: {
+                    audioEngine.unpinApp(info.persistenceIdentifier)
+                },
+                dragIdentifier: info.persistenceIdentifier
+            )
+        }
+    }
+
+    @ViewBuilder
+    private func groupEditBlock(_ group: AppGroup) -> some View {
+        // Re-read latest so rename/drop updates stick.
+        let latest = audioEngine.settingsManager.appGroup(id: group.id) ?? group
+        VStack(alignment: .leading, spacing: 2) {
+            GroupEditDropHeader(
+                group: latest,
+                onRename: { audioEngine.renameAppGroup(id: latest.id, name: $0) },
+                onDelete: { audioEngine.deleteAppGroup(id: latest.id) },
+                onDropApp: { identifier in
+                    withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                        audioEngine.addAppToGroup(groupID: latest.id, identifier: identifier)
+                    }
+                }
+            )
+
+            ForEach(latest.members) { member in
+                HStack(spacing: DesignTokens.Spacing.sm) {
+                    Image(nsImage: DisplayableApp.loadIcon(bundleID: member.bundleID))
+                        .resizable()
+                        .aspectRatio(contentMode: .fit)
+                        .frame(width: 16, height: 16)
+
+                    Text(member.displayName)
+                        .font(DesignTokens.Typography.caption)
+                        .lineLimit(1)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+
+                    Button {
+                        withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                            audioEngine.removeAppFromGroup(
+                                groupID: latest.id,
+                                identifier: member.persistenceIdentifier
+                            )
+                        }
+                    } label: {
+                        Image(systemName: "minus.circle")
+                            .font(.system(size: 12))
+                            .foregroundStyle(DesignTokens.Colors.textSecondary)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Remove from group")
+                }
+                .padding(.leading, 28)
+                .frame(height: 22)
+                .draggable(member.persistenceIdentifier) {
+                    Text(member.displayName)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 6))
+                }
+            }
+
+            if latest.members.isEmpty {
+                Text("Drop apps here")
+                    .font(DesignTokens.Typography.caption)
+                    .foregroundStyle(DesignTokens.Colors.textTertiary)
+                    .padding(.leading, 28)
+                    .padding(.bottom, 2)
+            }
+        }
+        .padding(.vertical, 4)
+    }
+
     private func appsContent(scrollProxy: ScrollViewProxy) -> some View {
         let presets = audioEngine.settingsManager.getUserPresets()
         return VStack(alignment: .leading, spacing: 0) {
-            ForEach(audioEngine.displayableApps) { displayableApp in
-                switch displayableApp {
-                case .active(let app):
-                    activeAppRow(app: app, displayableApp: displayableApp, userPresets: presets, scrollProxy: scrollProxy)
+            ForEach(audioEngine.popupAppItems) { item in
+                switch item {
+                case .group(let group, let liveMembers, let inactiveMembers):
+                    groupRow(
+                        group: group,
+                        liveMembers: liveMembers,
+                        inactiveMembers: inactiveMembers,
+                        userPresets: presets,
+                        scrollProxy: scrollProxy
+                    )
 
-                case .pinnedInactive(let info):
-                    inactiveAppRow(info: info, displayableApp: displayableApp, userPresets: presets, scrollProxy: scrollProxy)
+                case .app(let displayableApp):
+                    switch displayableApp {
+                    case .active(let app):
+                        activeAppRow(app: app, displayableApp: displayableApp, userPresets: presets, scrollProxy: scrollProxy)
+
+                    case .pinnedInactive(let info):
+                        inactiveAppRow(info: info, displayableApp: displayableApp, userPresets: presets, scrollProxy: scrollProxy)
+                    }
                 }
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    @ViewBuilder
+    private func groupRow(
+        group: AppGroup,
+        liveMembers: [AudioApp],
+        inactiveMembers: [AppGroupMemberInfo],
+        userPresets: [UserEQPreset],
+        scrollProxy: ScrollViewProxy
+    ) -> some View {
+        let rowID = "group:\(group.id.uuidString)"
+        // Re-read latest group state so slider/EQ bind to persisted source of truth.
+        let latest = audioEngine.settingsManager.appGroup(id: group.id) ?? group
+        AppGroupRow(
+            group: latest,
+            liveMembers: liveMembers,
+            inactiveMembers: inactiveMembers,
+            devices: sortedDevices,
+            deviceIconOverrides: audioEngine.settingsManager.deviceIconOverrides,
+            defaultDeviceUID: deviceVolumeMonitor.defaultDeviceUID,
+            userPresets: userPresets,
+            isEQExpanded: expandedRowID == rowID,
+            isFocused: hasKeyboardEngaged && selectedRow == .group(id: group.id),
+            onVolumeChange: { volume in
+                audioEngine.setGroupVolume(id: group.id, to: volume)
+            },
+            onMuteChange: { muted in
+                audioEngine.setGroupMute(id: group.id, to: muted)
+            },
+            onBoostChange: { boost in
+                audioEngine.setGroupBoost(id: group.id, to: boost)
+            },
+            onDeviceSelected: { uid in
+                audioEngine.setGroupDevice(id: group.id, deviceUID: uid)
+            },
+            onDevicesSelected: { uids in
+                audioEngine.setGroupSelectedDeviceUIDs(id: group.id, to: uids)
+            },
+            onDeviceModeChange: { mode in
+                audioEngine.setGroupDeviceSelectionMode(id: group.id, to: mode)
+            },
+            onSelectFollowDefault: {
+                audioEngine.setGroupDevice(id: group.id, deviceUID: nil)
+            },
+            onEQChange: { settings in
+                audioEngine.setGroupEQSettings(settings, for: group.id)
+            },
+            onUserPresetSelected: { userPreset in
+                var current = latest.eqSettings
+                current.bandGains = userPreset.settings.bandGains
+                audioEngine.setGroupEQSettings(current, for: group.id)
+            },
+            onSavePreset: { name, settings in
+                audioEngine.settingsManager.createUserPreset(name: name, settings: settings)
+            },
+            onDeleteUserPreset: { id in
+                audioEngine.settingsManager.deleteUserPreset(id: id)
+            },
+            onRenameUserPreset: { id, newName in
+                audioEngine.settingsManager.updateUserPreset(id: id, name: newName)
+            },
+            onEQToggle: {
+                toggleEQ(for: rowID, scrollProxy: scrollProxy)
+            },
+            onToggleCollapsed: {
+                audioEngine.setGroupCollapsed(id: group.id, collapsed: !latest.isCollapsed)
+            },
+            getAudioLevel: {
+                liveMembers
+                    .map { audioEngine.getAudioLevel(for: $0) }
+                    .max() ?? 0
+            },
+            isPopupVisible: isPopupVisible,
+            onRemoveMember: { identifier in
+                audioEngine.removeAppFromGroup(groupID: group.id, identifier: identifier)
+            },
+            showsRemoveControls: false
+        )
+        .id(PopupKeyboardNavModel.RowID.group(id: group.id))
     }
 
     /// Row for an active app (currently producing audio)
@@ -996,20 +1196,25 @@ struct MenuBarPopupView: View {
         .id(PopupKeyboardNavModel.RowID.app(persistenceID: displayableApp.id))
     }
 
-    /// Toggle EQ panel for an app (shared between active and inactive rows)
-    private func toggleEQ(for appID: String, scrollProxy: ScrollViewProxy) {
+    /// Toggle EQ panel for an app or group (shared accordion).
+    private func toggleEQ(for rowID: String, scrollProxy: ScrollViewProxy) {
         guard !isEQAnimating else { return }
         isEQAnimating = true
 
-        let isExpanding = expandedRowID != appID
+        let isExpanding = expandedRowID != rowID
         withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
-            if expandedRowID == appID {
+            if expandedRowID == rowID {
                 expandedRowID = nil
             } else {
-                expandedRowID = appID
+                expandedRowID = rowID
             }
             if isExpanding {
-                scrollProxy.scrollTo(PopupKeyboardNavModel.RowID.app(persistenceID: appID), anchor: .top)
+                if rowID.hasPrefix("group:"),
+                   let uuid = UUID(uuidString: String(rowID.dropFirst("group:".count))) {
+                    scrollProxy.scrollTo(PopupKeyboardNavModel.RowID.group(id: uuid), anchor: .top)
+                } else {
+                    scrollProxy.scrollTo(PopupKeyboardNavModel.RowID.app(persistenceID: rowID), anchor: .top)
+                }
             }
         }
 
@@ -1194,9 +1399,17 @@ struct MenuBarPopupView: View {
 
     private func syncNavOrder() {
         let activeDevices = showingInputDevices ? sortedInputDevices : sortedDevices
+        let itemRowIDs: [PopupKeyboardNavModel.RowID] = audioEngine.popupAppItems.map { item in
+            switch item {
+            case .group(let group, _, _):
+                return .group(id: group.id)
+            case .app(let displayable):
+                return .app(persistenceID: displayable.id)
+            }
+        }
         navModel.syncOrder(
             activeDevices: activeDevices,
-            appPersistenceIDs: audioEngine.displayableApps.map(\.id),
+            itemRowIDs: itemRowIDs,
             isEditingPriority: isEditingDevicePriority
         )
     }
@@ -1336,6 +1549,19 @@ struct MenuBarPopupView: View {
                 setMute: { audioEngine.setMuteForInactive(identifier: persistenceID, to: $0) }
             )
             return .handled
+        case .group(let groupID):
+            guard let group = audioEngine.settingsManager.appGroup(id: groupID) else {
+                return .ignored
+            }
+            applyAppVolumeStep(
+                currentGain: group.volume,
+                currentMute: group.muted,
+                direction: direction,
+                delta: delta,
+                setGain: { audioEngine.setGroupVolume(id: groupID, to: $0) },
+                setMute: { audioEngine.setGroupMute(id: groupID, to: $0) }
+            )
+            return .handled
         case .device(let uid):
             if showingInputDevices {
                 guard let device = sortedInputDevices.first(where: { $0.uid == uid }) else {
@@ -1391,6 +1617,9 @@ struct MenuBarPopupView: View {
             let current = audioEngine.getMuteForInactive(identifier: persistenceID)
             audioEngine.setMuteForInactive(identifier: persistenceID, to: !current)
             return .handled
+        case .group(let groupID):
+            audioEngine.toggleGroupMute(id: groupID)
+            return .handled
         case .device(let uid):
             if showingInputDevices {
                 guard let device = sortedInputDevices.first(where: { $0.uid == uid }) else {
@@ -1429,6 +1658,12 @@ struct MenuBarPopupView: View {
         case .app(let persistenceID):
             withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
                 expandedRowID = (expandedRowID == persistenceID) ? nil : persistenceID
+            }
+            return .handled
+        case .group(let groupID):
+            let rowID = "group:\(groupID.uuidString)"
+            withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+                expandedRowID = (expandedRowID == rowID) ? nil : rowID
             }
             return .handled
         }
