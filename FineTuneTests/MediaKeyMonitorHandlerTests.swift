@@ -18,6 +18,26 @@ final class StubMediaKeyDecoder: MediaKeyEventDecoding, @unchecked Sendable {
     func decode(data1: Int) -> MediaKeyEvent? { nextEvent }
 }
 
+// MARK: - Spy HUD controller
+
+/// Test-only HUD that records what `handleCore` shows. The real `HUDWindowController`
+/// exposes only `showCallCount` — not the shown slider fraction — so a spy conforming to
+/// `MediaKeyHUDPresenting` is the only way to assert on the fraction the mute-toggle path passes.
+@MainActor
+final class SpyMediaKeyHUD: MediaKeyHUDPresenting {
+    private(set) var lastSliderFraction: Double?
+    private(set) var lastMute: Bool?
+    private(set) var showCallCount: Int = 0
+
+    func show(sliderFraction: Double, mute: Bool, deviceName: String) {
+        lastSliderFraction = sliderFraction
+        lastMute = mute
+        showCallCount += 1
+    }
+
+    func swallowObserved() {}
+}
+
 // MARK: - Test suite
 
 @Suite("MediaKeyMonitor — handleCore() volume/mute logic")
@@ -65,6 +85,45 @@ struct MediaKeyMonitorHandlerTests {
             mediaKeyStatus: mediaKeyStatus
         )
         return (monitor, hud, popup, settings)
+    }
+
+    /// Builds a monitor wired to a spy HUD (instead of the real `HUDWindowController`)
+    /// so tests can assert on the slider fraction `handleCore` shows. Mirrors `makeMonitor()`
+    /// but injects the spy and keeps the popup hidden so the HUD show path fires.
+    private func makeMonitorWithSpyHUD() -> (monitor: MediaKeyMonitor, spy: SpyMediaKeyHUD) {
+        let tempDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+        let settings = SettingsManager(directory: tempDir)
+        var appSettings = settings.appSettings
+        appSettings.mediaKeyControlEnabled = true
+        settings.updateAppSettings(appSettings)
+
+        let deviceMonitor = MockAudioDeviceMonitor()
+        let mockVolume = MockDeviceVolumeProviding(deviceMonitor: deviceMonitor)
+        let engine = AudioEngine(
+            permission: AudioRecordingPermission(),
+            settingsManager: settings,
+            autoEQProfileManager: AutoEQProfileManager(),
+            deviceProvider: deviceMonitor,
+            deviceVolumeMonitor: mockVolume,
+            startMonitorsAutomatically: false
+        )
+
+        let mediaKeyStatus = MediaKeyStatus()
+        let popup = PopupVisibilityService()
+        popup.isVisible = false
+        let spy = SpyMediaKeyHUD()
+
+        let monitor = MediaKeyMonitor(
+            decoder: StubMediaKeyDecoder(),
+            audioEngine: engine,
+            settingsManager: settings,
+            accessibility: MockAccessibilityTrustProviding(isTrusted: true),
+            hudController: spy,
+            popupVisibility: popup,
+            mediaKeyStatus: mediaKeyStatus
+        )
+        return (monitor, spy)
     }
 
     // MARK: - Volume step arithmetic
@@ -422,6 +481,47 @@ struct MediaKeyMonitorHandlerTests {
             setMute: { _, m in writtenMute = m }
         )
         #expect(writtenMute == false)
+    }
+
+    // MARK: - Mute toggle HUD slider (unmute shows restored volume)
+
+    @Test("mute toggle unmute shows restored volume on software tier")
+    func muteToggleUnmuteShowsRestoredVolumeOnSoftwareTier() {
+        let (monitor, spy) = makeMonitorWithSpyHUD()
+        monitor.handleCore(
+            event: .muteToggle,
+            deviceID: 1,
+            tier: .software,
+            deviceName: "Dell",
+            currentVolume: 0.0,      // the muted zero captured pre-toggle
+            currentMute: true,       // unmuting
+            setVolume: { _, _ in },
+            setMute: { _, _ in },
+            getVolume: { _ in 0.6 }  // the restored volume, as volumeMonitor.volumes[id] holds AFTER setMute(id,false)
+        )
+        let expected = VolumeMapping.sliderFraction(forSystemGain: 0.6, tier: .software)
+        #expect(spy.lastMute == false)
+        #expect(abs((spy.lastSliderFraction ?? -1) - expected) < 1e-9)
+        #expect(spy.lastSliderFraction != 0.0)
+    }
+
+    @Test("mute toggle direction keeps pre mute level")
+    func muteToggleDirectionKeepsPreMuteLevel() {
+        let (monitor, spy) = makeMonitorWithSpyHUD()
+        monitor.handleCore(
+            event: .muteToggle,
+            deviceID: 1,
+            tier: .software,
+            deviceName: "Dell",
+            currentVolume: 0.5,      // the pre-mute level
+            currentMute: false,      // muting direction
+            setVolume: { _, _ in },
+            setMute: { _, _ in },
+            getVolume: { _ in 0.6 }  // ignored on mute direction
+        )
+        let expected = VolumeMapping.sliderFraction(forSystemGain: 0.5, tier: .software)
+        #expect(spy.lastMute == true)
+        #expect(abs((spy.lastSliderFraction ?? -1) - expected) < 1e-9)
     }
 
     // MARK: - HUD show count
