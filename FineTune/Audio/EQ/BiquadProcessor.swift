@@ -220,9 +220,15 @@ class BiquadProcessor: @unchecked Sendable, BiquadProcessable {
         vDSP_biquad(setup, delayBufferL, output, 2, output, 2, vDSP_Length(frameCount))
         vDSP_biquad(setup, delayBufferR, output.advanced(by: 1), 2, output.advanced(by: 1), 2, vDSP_Length(frameCount))
 
-        // NaN safety net — pathological coefficients can produce NaN that
-        // propagates through the entire downstream chain
-        if output[0].isNaN || output[1].isNaN {
+        // NaN safety net — pathological coefficients or upstream garbage can produce
+        // NaN that propagates through the entire downstream chain. Because the biquad
+        // is a recursive IIR, a NaN entering mid-buffer (frame N>0) reaches the last
+        // stereo frame of this same buffer, so inspecting the last frame in addition
+        // to the first catches it in-call — instead of letting it poison the delay
+        // buffers and every subsequent frame until the next process() call.
+        // The `frameCount > 0` guard short-circuits the indexed reads on an empty buffer.
+        if frameCount > 0, output[0].isNaN || output[1].isNaN
+            || output[(frameCount - 1) * 2].isNaN || output[(frameCount - 1) * 2 + 1].isNaN {
             memset(delayBufferL, 0, delayBufferSize * MemoryLayout<Float>.size)
             memset(delayBufferR, 0, delayBufferSize * MemoryLayout<Float>.size)
             memset(output, 0, frameCount * 2 * MemoryLayout<Float>.size)

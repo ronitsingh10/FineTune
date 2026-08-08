@@ -3,7 +3,7 @@
 //
 // Targets failure modes the integration tests (BiquadProcessorSignalTests.swift) don't cover:
 // - Boundary frame counts (0, 1)
-// - NaN mid-buffer propagation (safety net limitation)
+// - NaN mid-buffer detection (safety net inspects last stereo frame)
 // - Delay buffer state carryover between process() calls
 // - Enable/disable cycling with signal verification
 // - Extreme input amplitudes
@@ -165,11 +165,13 @@ struct BoundaryFrameCountTests {
 @Suite("Adversarial — NaN Mid-Buffer Propagation")
 struct NaNMidBufferTests {
 
-    @Test("NaN injected mid-buffer: safety net only checks output[0..1], mid-buffer NaN propagates uncaught")
-    func nanMidBufferNotCaughtBySafetyNet() {
-        // The production NaN safety net checks output[0].isNaN || output[1].isNaN.
-        // If NaN appears only at frame N>0, it is NOT caught on the current call.
-        // This test documents that limitation.
+    @Test("NaN injected mid-buffer: safety net inspects last stereo frame and catches it in-call")
+    func midBufferNaNCaughtInCallBySafetyNet() {
+        // The production NaN safety net inspects the first AND last stereo frames.
+        // Because the biquad is a recursive IIR, a NaN entering at frame N>0
+        // propagates to the last frame of this same buffer, so the check catches
+        // it in the current call — instead of letting it poison the delay buffers
+        // and every subsequent frame until the next process() call.
         let processor = EQProcessor(sampleRate: 48000)
         var settings = EQSettings.flat
         settings.bandGains[5] = 6
@@ -195,18 +197,7 @@ struct NaNMidBufferTests {
 
         processor.process(input: input, output: output, frameCount: frameCount)
 
-        // Frames before the NaN injection point should be finite
-        var earlyFramesFinite = true
-        for i in 0..<490 { // well before injection point
-            if !output[i * 2].isFinite || !output[i * 2 + 1].isFinite {
-                earlyFramesFinite = false
-                break
-            }
-        }
-        #expect(earlyFramesFinite, "Frames before NaN injection should be finite")
-
-        // Check if any frames after injection contain NaN — this is the
-        // documented limitation of the safety net
+        // The safety net catches the mid-buffer NaN in-call: no NaN survives.
         var hasNaNAfterInjection = false
         for i in 500..<frameCount {
             if output[i * 2].isNaN || output[i * 2 + 1].isNaN {
@@ -214,14 +205,20 @@ struct NaNMidBufferTests {
                 break
             }
         }
-        // The safety net does NOT catch mid-buffer NaN. This documents the behavior.
-        // If the safety net is ever improved, this test should be updated.
-        #expect(hasNaNAfterInjection,
-                "Mid-buffer NaN should propagate uncaught (safety net only checks output[0..1])")
+        #expect(!hasNaNAfterInjection,
+                "Mid-buffer NaN should be caught in-call by the safety net")
+
+        // Because the safety net triggered, the entire buffer is zeroed.
+        var allZeroed = true
+        for i in 0..<sampleCount {
+            if output[i] != 0 { allZeroed = false; break }
+        }
+        #expect(allZeroed,
+                "Safety net should zero the entire buffer when it catches the mid-buffer NaN")
     }
 
-    @Test("After mid-buffer NaN, delay state is corrupted: next process() call catches NaN at frame 0")
-    func nanPropagatesViaDelayStateToNextCall() {
+    @Test("Mid-buffer NaN caught in-call: delay state reset same call, next call is clean")
+    func midBufferNaNCaughtDelayStateResetSameCall() {
         let processor = EQProcessor(sampleRate: 48000)
         var settings = EQSettings.flat
         settings.bandGains[5] = 6
@@ -234,7 +231,7 @@ struct NaNMidBufferTests {
         let output1 = UnsafeMutablePointer<Float>.allocate(capacity: sampleCount)
         defer { input1.deallocate(); output1.deallocate() }
 
-        // First call: inject NaN mid-buffer to corrupt delay state
+        // First call: inject NaN mid-buffer
         let omega = 2.0 * Double.pi * 1000.0 / 48000.0
         for i in 0..<frameCount {
             let sample = Float(sin(omega * Double(i)))
@@ -246,7 +243,17 @@ struct NaNMidBufferTests {
 
         processor.process(input: input1, output: output1, frameCount: frameCount)
 
-        // Second call: clean input, but delay state has NaN from previous call
+        // The safety net catches the NaN in THIS call and resets the delay buffers,
+        // so the first call's output is fully zeroed and carries no NaN forward.
+        var firstCallHasNaN = false
+        for i in 0..<sampleCount {
+            if output1[i].isNaN { firstCallHasNaN = true; break }
+        }
+        #expect(!firstCallHasNaN, "First call should not leave any NaN (safety net caught it in-call)")
+
+        // Second call: clean input. Because the delay state was reset in the first
+        // call, the safety net does NOT trigger — output is a real, non-zeroed
+        // filtered signal (no NaN carried over from corrupted delay state).
         let input2 = AdversarialSignal.makeStereoSine(
             frequency: 1000, sampleRate: 48000, frameCount: frameCount
         )
@@ -255,19 +262,24 @@ struct NaNMidBufferTests {
 
         processor.process(input: input2, output: output2, frameCount: frameCount)
 
-        // Safety net should catch NaN at output[0] (from corrupted delay buffers)
-        // and zero the entire output + reset delay buffers
-        #expect(output2[0] == 0, "Second call output[0] should be zeroed by safety net")
-        #expect(output2[1] == 0, "Second call output[1] should be zeroed by safety net")
-
-        // Verify full output is zeroed (safety net behavior)
-        var allZero = true
+        var secondCallAllZero = true
         for i in 0..<sampleCount {
-            if output2[i] != 0 { allZero = false; break }
+            if output2[i] != 0 { secondCallAllZero = false; break }
         }
-        #expect(allZero, "Safety net should zero entire output after NaN propagation from delay state")
+        #expect(!secondCallAllZero, "Second call should produce real (non-zeroed) output")
 
-        // Third call: after safety net reset, processing should recover
+        var secondCallAllFinite = true
+        for i in 0..<sampleCount {
+            if !output2[i].isFinite { secondCallAllFinite = false; break }
+        }
+        #expect(secondCallAllFinite, "Second call output should be entirely finite")
+
+        let rms2 = AdversarialSignal.measureRMS(
+            buffer: output2, channel: 0, frameCount: frameCount, skipFrames: 256
+        )
+        #expect(rms2 > 0 && rms2.isFinite, "Second call should carry real signal energy (RMS=\(rms2))")
+
+        // Third call: processor remains stable and produces a clean signal.
         let input3 = AdversarialSignal.makeStereoSine(
             frequency: 1000, sampleRate: 48000, frameCount: frameCount
         )
@@ -276,11 +288,10 @@ struct NaNMidBufferTests {
 
         processor.process(input: input3, output: output3, frameCount: frameCount)
 
-        // Should produce valid output now (delay buffers were reset)
-        let rms = AdversarialSignal.measureRMS(
+        let rms3 = AdversarialSignal.measureRMS(
             buffer: output3, channel: 0, frameCount: frameCount, skipFrames: 256
         )
-        #expect(rms > 0 && rms.isFinite, "After safety net recovery, output should be valid (RMS=\(rms))")
+        #expect(rms3 > 0 && rms3.isFinite, "Third call should still produce valid output (RMS=\(rms3))")
     }
 }
 
@@ -565,13 +576,14 @@ struct ExtremeAmplitudeTests {
         }
     }
 
-    @Test("Infinity input at frame 0: safety net does NOT catch it (checks isNaN, not isInfinite)")
-    func infinityInputBypassesSafetyNet() {
-        // PRODUCTION FINDING: The NaN safety net checks output[0].isNaN but infinity
-        // passes through biquad as infinity (not NaN). The safety net does not catch
-        // infinite values. Additionally, infinity in delay buffers will produce NaN
-        // on subsequent samples (inf - inf = NaN), but the safety net only checks
-        // output[0] and output[1].
+    @Test("Infinity input at frame 0: widened safety net contains the inf-induced NaN at the last frame")
+    func infinityInputContainedByWidenedSafetyNet() {
+        // The NaN safety net checks isNaN (not isInfinite), so a pure infinity at frame 0
+        // is not itself NaN and is not caught by the first-frame isNaN check. But infinity
+        // in a recursive biquad cascade produces NaN within a few samples (inf - inf = NaN),
+        // and that NaN reaches the last stereo frame — so the widened safety net (which also
+        // inspects the last frame) now contains the corruption in-call instead of letting
+        // infinity/NaN propagate as sustained distortion.
         let processor = EQProcessor(sampleRate: 48000)
         var settings = EQSettings.flat
         settings.bandGains[5] = 6
@@ -591,24 +603,21 @@ struct ExtremeAmplitudeTests {
 
         processor.process(input: input, output: output, frameCount: frameCount)
 
-        // Safety net checks isNaN, not isInfinite — infinity passes through uncaught
-        let firstFrameIsInfOrNaN = output[0].isInfinite || output[0].isNaN
-        #expect(firstFrameIsInfOrNaN,
-                "Infinity input: output[0] should be inf or NaN, got \(output[0])")
-
-        // Check if later frames contain non-finite values (inf → NaN propagation via delay state)
-        var hasNonFiniteAfterFrame0 = false
-        for i in 2..<sampleCount {
-            if !output[i].isFinite { hasNonFiniteAfterFrame0 = true; break }
+        // The inf-induced NaN reaches the last frame and triggers the widened safety net,
+        // which zeroes the entire buffer — no non-finite value survives.
+        var hasNonFinite = false
+        for i in 0..<sampleCount {
+            if !output[i].isFinite { hasNonFinite = true; break }
         }
-        #expect(hasNonFiniteAfterFrame0,
-                "Infinity in delay buffers should propagate non-finite values to later frames")
+        #expect(!hasNonFinite,
+                "Infinity input: widened safety net should contain the inf-induced NaN (no non-finite output)")
 
-        // Verify safety net did NOT trigger (output NOT zeroed)
-        // This documents the limitation: safety net misses infinity
-        let outputNotZeroed = output[0] != 0
-        #expect(outputNotZeroed,
-                "Safety net should NOT have triggered (it only checks isNaN, not isInfinite)")
+        var allZeroed = true
+        for i in 0..<sampleCount {
+            if output[i] != 0 { allZeroed = false; break }
+        }
+        #expect(allZeroed,
+                "Infinity input: safety net should zero the entire buffer once the last frame is NaN")
     }
 }
 
