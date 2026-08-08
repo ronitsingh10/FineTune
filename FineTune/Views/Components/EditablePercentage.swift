@@ -130,7 +130,7 @@ struct EditablePercentage: View {
         coordinator.install(
             excludingFrame: componentFrame,
             onClickOutside: { [self] in
-                cancel()
+                commit()
             }
         )
 
@@ -140,11 +140,18 @@ struct EditablePercentage: View {
         }
     }
 
-    private func commit() {
+    /// Parses a typed percentage string into a validated value, or nil if it should be
+    /// discarded (non-integer, out of range). Shared by the Return-key commit and the
+    /// click-outside / app-deactivation commit so every dismissal applies the same rule.
+    static func committedValue(from inputText: String, in range: ClosedRange<Int>) -> Int? {
         let cleaned = inputText.replacing("%", with: "")
-                               .trimmingCharacters(in: .whitespaces)
+                              .trimmingCharacters(in: .whitespaces)
+        guard let value = Int(cleaned), range.contains(value) else { return nil }
+        return value
+    }
 
-        if let value = Int(cleaned), range.contains(value) {
+    private func commit() {
+        if let value = EditablePercentage.committedValue(from: inputText, in: range) {
             percentage = value
             onCommit?(value)
         }
