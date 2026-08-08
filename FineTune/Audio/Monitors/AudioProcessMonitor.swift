@@ -4,9 +4,12 @@ import AudioToolbox
 import os
 
 /// Lightweight value for detecting process list changes without comparing icons/names.
+/// Includes `hasRunningProcess` so streaming state transitions (e.g. play/pause)
+/// trigger onAppsChanged, allowing tap creation/destruction to follow playback.
 private struct AppFingerprint: Hashable {
     let pid: pid_t
     let objectIDs: [AudioObjectID]
+    let hasRunningProcess: Bool
 }
 
 @Observable
@@ -14,6 +17,11 @@ private struct AppFingerprint: Hashable {
 final class AudioProcessMonitor: AudioProcessMonitoring {
     private(set) var activeApps: [AudioApp] = []
     var onAppsChanged: (([AudioApp]) -> Void)?
+
+    /// Snapshot of the last fingerprint set — compared against the fresh set to detect changes.
+    /// Stored separately because recomputing from `activeApps` would read the current
+    /// `isRunning` state, making old == new and defeating the change detection.
+    private var previousFingerprints: Set<AppFingerprint> = []
 
     private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "FineTune", category: "AudioProcessMonitor")
 
@@ -215,7 +223,8 @@ final class AudioProcessMonitor: AudioProcessMonitoring {
 
             for objectID in processIDs {
                 guard let pid = try? objectID.readProcessPID(), pid != myPID else { continue }
-                guard objectID.readProcessIsRunning() else { continue }
+                // Keep non-streaming Core Audio process objects visible so AudioEngine
+                // can create process taps before the first audible buffer.
 
                 // Try to find the parent app (for helper processes like Safari Graphics and Media)
                 let directApp = runningAppsByPID[pid]
@@ -270,12 +279,14 @@ final class AudioProcessMonitor: AudioProcessMonitoring {
 
             let sorted = appsByPID.values.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
 
-            // Only fire callback if the app list actually changed (avoids churn from periodic refresh)
-            let oldSet = Set(activeApps.map { AppFingerprint(pid: $0.id, objectIDs: $0.processObjectIDs) })
-            let newSet = Set(sorted.map { AppFingerprint(pid: $0.id, objectIDs: $0.processObjectIDs) })
+            // Only fire callback if the app list actually changed (avoids churn from periodic refresh).
+            // Must snapshot the previous fingerprint set — recomputing hasRunningProcess from the
+            // old activeApps list would read the CURRENT isRunning state, making old == new always.
+            let newSet = Set(sorted.map { AppFingerprint(pid: $0.id, objectIDs: $0.processObjectIDs, hasRunningProcess: $0.processObjectIDs.contains { $0.readProcessIsRunning() }) })
 
             activeApps = sorted
-            if oldSet != newSet {
+            if previousFingerprints != newSet {
+                previousFingerprints = newSet
                 onAppsChanged?(activeApps)
             }
 

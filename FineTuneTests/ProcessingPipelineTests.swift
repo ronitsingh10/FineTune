@@ -687,8 +687,8 @@ struct ProcessingChainTests {
             currentVol: &vol, eqProc: eq
         )
 
-        // Flat EQ should produce output ~ input within Float32 tolerance.
-        // 10 cascaded biquad sections at 0dB still introduce ~1e-4 error (L-043).
+        // Flat EQ skips biquad processing entirely when all bands are at 0 dB
+        // (isFlat → setEnabled(false)), so output is bit-exact passthrough (#245).
         let outData = output.data(at: 0)
         var maxError: Float = 0
         for i in 0..<(frames * 2) {

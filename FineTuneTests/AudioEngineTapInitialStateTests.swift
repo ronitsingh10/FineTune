@@ -92,11 +92,11 @@ final class RecordingProcessTapController: ProcessTapControlling {
         events.append(.updateLoudnessEqualization(settings))
     }
 
-    func switchDevice(to newDeviceUID: String, preferredTapSourceDeviceUID: String?, sourceDeviceDead: Bool) async throws {
+    func switchDevice(to newDeviceUID: String, preferredTapSourceDeviceUID: String?, sourceDeviceDead: Bool, autoEQProfile: AutoEQProfile?) async throws {
         currentDeviceUIDs = [newDeviceUID]
     }
 
-    func updateDevices(to newDeviceUIDs: [String], preferredTapSourceDeviceUID: String?, sourceDeviceDead: Bool) async throws {
+    func updateDevices(to newDeviceUIDs: [String], preferredTapSourceDeviceUID: String?, sourceDeviceDead: Bool, autoEQProfile: AutoEQProfile?) async throws {
         currentDeviceUIDs = newDeviceUIDs
     }
 
@@ -334,6 +334,17 @@ struct AudioEngineTapInitialStateTests {
 
         let snap = try #require(capturedInitial(fix))
         #expect(snap.autoEQProfileID == nil)
+    }
+
+    @Test("non-streaming monitor-reported app is excluded from apps and not pre-tapped")
+    func silentAppIsNotTappedBeforePlayback() throws {
+        let fix = makeFixture()
+        fix.deviceVolume.defaultDeviceUID = fix.device.uid
+
+        fix.engine.applyPersistedSettings()
+
+        #expect(fix.lastTap() == nil)
+        #expect(fix.engine.displayableApps.isEmpty)
     }
 
     // MARK: Ordering / post-activation behaviour

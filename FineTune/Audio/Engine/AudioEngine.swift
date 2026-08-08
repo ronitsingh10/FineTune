@@ -401,8 +401,12 @@ final class AudioEngine {
         }
     }
 
+    /// Active audio apps that are actively streaming (isRunning=true).
+    /// Non-streaming apps are excluded to avoid creating unnecessary taps
+    /// that waste CPU on silent identity-processed audio (#245).
     var apps: [AudioApp] {
         processMonitor.activeApps
+            .filter { $0.processObjectIDs.contains { $0.readProcessIsRunning() } }
     }
 
     // MARK: - Displayable Apps (Active + Pinned Inactive)
@@ -940,11 +944,13 @@ final class AudioEngine {
         guard let targetUID = appDeviceRouting[app.id] else { return }
         let preferredTapSourceUID = preferredTapSourceDeviceUID(forOutputUIDs: [targetUID], isFollowsDefault: followsDefault.contains(app.id))
         if let tap = taps[app.id] {
-            Task {
+            Task { [weak self] in
+                guard let self else { return }
                 do {
-                    try await tap.switchDevice(to: targetUID, preferredTapSourceDeviceUID: preferredTapSourceUID)
+                    let profile = self.autoEQProfileForActivation(deviceUID: targetUID)
+                    try await tap.switchDevice(to: targetUID, preferredTapSourceDeviceUID: preferredTapSourceUID, autoEQProfile: profile)
                     self.applyTapOutputState(to: tap, for: app.id, deviceUIDs: [targetUID])
-                    self.applyAutoEQToTap(tap)
+                    if profile == nil { self.applyAutoEQToTap(tap) }
                     self.logger.debug("Switched \(app.name) to device: \(targetUID)")
                 } catch {
                     self.logger.error("Failed to switch device for \(app.name): \(error.localizedDescription)")
@@ -1035,11 +1041,12 @@ final class AudioEngine {
             if tap.currentDeviceUIDs != deviceUIDs {
                 do {
                     let preferredTapSourceUID = preferredTapSourceDeviceUID(forOutputUIDs: deviceUIDs, isFollowsDefault: followsDefault.contains(app.id))
-                    try await tap.updateDevices(to: deviceUIDs, preferredTapSourceDeviceUID: preferredTapSourceUID)
+                    let profile = autoEQProfileForActivation(deviceUID: deviceUIDs.first ?? "")
+                    try await tap.updateDevices(to: deviceUIDs, preferredTapSourceDeviceUID: preferredTapSourceUID, autoEQProfile: profile)
                     applyTapOutputState(to: tap, for: app.id, deviceUIDs: deviceUIDs)
+                    if profile == nil { applyAutoEQToTap(tap) }
                     logger.debug("Updated \(app.name) to \(deviceUIDs.count) device(s)")
                 } catch {
-                    logger.error("Failed to update devices for \(app.name): \(error.localizedDescription)")
                 }
             }
         } else {
@@ -1176,11 +1183,13 @@ final class AudioEngine {
             // after the default changed while it was absent), switch it.
             if let existingTap = taps[app.id], existingTap.currentDeviceUIDs != [deviceUID] {
                 let preferredSource = preferredTapSourceDeviceUID(forOutputUIDs: [deviceUID], isFollowsDefault: followsDefault.contains(app.id))
-                Task {
+                Task { [weak self] in
+                    guard let self else { return }
                     do {
-                        try await existingTap.switchDevice(to: deviceUID, preferredTapSourceDeviceUID: preferredSource)
+                        let profile = self.autoEQProfileForActivation(deviceUID: deviceUID)
+                        try await existingTap.switchDevice(to: deviceUID, preferredTapSourceDeviceUID: preferredSource, autoEQProfile: profile)
                         self.applyTapOutputState(to: existingTap, for: app.id, deviceUIDs: [deviceUID])
-                        self.applyAutoEQToTap(existingTap)
+                        if profile == nil { self.applyAutoEQToTap(existingTap) }
                     } catch {
                         self.logger.error("Failed to re-route \(app.name) to \(deviceUID): \(error.localizedDescription)")
                     }
@@ -1319,13 +1328,15 @@ final class AudioEngine {
         }
         guard !tapsToSwitch.isEmpty else { return }
 
-        Task {
+        Task { [weak self] in
+            guard let self else { return }
+            let profile = self.autoEQProfileForActivation(deviceUID: targetUID)
             for (app, tap) in tapsToSwitch {
                 do {
                     let preferredTapSourceUID = self.preferredTapSourceDeviceUID(forOutputUIDs: [targetUID], isFollowsDefault: true)
-                    try await tap.switchDevice(to: targetUID, preferredTapSourceDeviceUID: preferredTapSourceUID)
+                    try await tap.switchDevice(to: targetUID, preferredTapSourceDeviceUID: preferredTapSourceUID, autoEQProfile: profile)
                     self.applyTapOutputState(to: tap, for: app.id, deviceUIDs: [targetUID])
-                    self.applyAutoEQToTap(tap)
+                    if profile == nil { self.applyAutoEQToTap(tap) }
                 } catch {
                     self.logger.error("Failed to switch \(app.name) to \(targetUID): \(error.localizedDescription)")
                 }
@@ -1398,14 +1409,16 @@ final class AudioEngine {
 
         // Execute device switches
         if !singleModeTapsToSwitch.isEmpty || !multiModeTapsToUpdate.isEmpty {
-            Task {
+            Task { [weak self] in
+                guard let self else { return }
                 // Handle single-mode switches — source device is dead, skip crossfade
                 for (tap, fallbackUID) in singleModeTapsToSwitch {
                     do {
                         let preferredTapSourceUID = self.preferredTapSourceDeviceUID(forOutputUIDs: [fallbackUID], isFollowsDefault: true)
-                        try await tap.switchDevice(to: fallbackUID, preferredTapSourceDeviceUID: preferredTapSourceUID, sourceDeviceDead: true)
+                        let profile = self.autoEQProfileForActivation(deviceUID: fallbackUID)
+                        try await tap.switchDevice(to: fallbackUID, preferredTapSourceDeviceUID: preferredTapSourceUID, sourceDeviceDead: true, autoEQProfile: profile)
                         self.applyTapOutputState(to: tap, for: tap.app.id, deviceUIDs: [fallbackUID])
-                        self.applyAutoEQToTap(tap)
+                        if profile == nil { self.applyAutoEQToTap(tap) }
                     } catch {
                         self.logger.error("Failed to switch \(tap.app.name) to fallback: \(error.localizedDescription)")
                     }
@@ -1416,11 +1429,12 @@ final class AudioEngine {
                 for (tap, remainingUIDs) in multiModeTapsToUpdate {
                     do {
                         let preferredTapSourceUID = self.preferredTapSourceDeviceUID(forOutputUIDs: remainingUIDs, isFollowsDefault: self.followsDefault.contains(tap.app.id))
-                        try await tap.updateDevices(to: remainingUIDs, preferredTapSourceDeviceUID: preferredTapSourceUID, sourceDeviceDead: true)
+                        let profile = self.autoEQProfileForActivation(deviceUID: remainingUIDs.first ?? "")
+                        try await tap.updateDevices(to: remainingUIDs, preferredTapSourceDeviceUID: preferredTapSourceUID, sourceDeviceDead: true, autoEQProfile: profile)
                         self.applyTapOutputState(to: tap, for: tap.app.id, deviceUIDs: remainingUIDs)
+                        if profile == nil { self.applyAutoEQToTap(tap) }
                         self.logger.debug("Removed \(deviceName) from \(tap.app.name) multi-device output")
                     } catch {
-                        self.logger.error("Failed to update \(tap.app.name) devices: \(error.localizedDescription)")
                     }
                 }
             }
@@ -1471,13 +1485,15 @@ final class AudioEngine {
         }
 
         if !tapsToSwitch.isEmpty {
-            Task {
+            Task { [weak self] in
+                guard let self else { return }
+                let profile = self.autoEQProfileForActivation(deviceUID: deviceUID)
                 for tap in tapsToSwitch {
                     do {
                         let preferredTapSourceUID = self.preferredTapSourceDeviceUID(forOutputUIDs: [deviceUID], isFollowsDefault: false)
-                        try await tap.switchDevice(to: deviceUID, preferredTapSourceDeviceUID: preferredTapSourceUID)
+                        try await tap.switchDevice(to: deviceUID, preferredTapSourceDeviceUID: preferredTapSourceUID, autoEQProfile: profile)
                         self.applyTapOutputState(to: tap, for: tap.app.id, deviceUIDs: [deviceUID])
-                        self.applyAutoEQToTap(tap)
+                        if profile == nil { self.applyAutoEQToTap(tap) }
                     } catch {
                         self.logger.error("Failed to switch \(tap.app.name) back to \(deviceName): \(error.localizedDescription)")
                     }
@@ -1905,8 +1921,10 @@ final class AudioEngine {
                     guard tap.isHealthCheckEligible(minActiveSeconds: 5.0) else { continue }
 
                     // Only health-check apps that are actively streaming (isRunning=true).
-                    // Paused apps have no callbacks, which is normal — not a health signal.
-                    let isActivelyStreaming = self.processMonitor.activeApps.contains { $0.id == pid }
+                    // Paused apps can still be present in activeApps for proactive tap setup,
+                    // but no callbacks while paused is normal — not a health signal.
+                    let isActivelyStreaming = self.apps.first { $0.id == pid }?
+                        .processObjectIDs.contains { $0.readProcessIsRunning() } ?? false
                     guard isActivelyStreaming else {
                         consecutiveMisses[pid] = 0
                         continue

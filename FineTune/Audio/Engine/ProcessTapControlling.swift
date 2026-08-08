@@ -24,8 +24,8 @@ protocol ProcessTapControlling: AnyObject, Sendable {
     func setAutoEQPreampEnabled(_ enabled: Bool)
     func updateLoudnessCompensation(volume: Float, enabled: Bool)
     func updateLoudnessEqualization(_ settings: LoudnessEqualizerSettings)
-    func switchDevice(to newDeviceUID: String, preferredTapSourceDeviceUID: String?, sourceDeviceDead: Bool) async throws
-    func updateDevices(to newDeviceUIDs: [String], preferredTapSourceDeviceUID: String?, sourceDeviceDead: Bool) async throws
+    func switchDevice(to newDeviceUID: String, preferredTapSourceDeviceUID: String?, sourceDeviceDead: Bool, autoEQProfile: AutoEQProfile?) async throws
+    func updateDevices(to newDeviceUIDs: [String], preferredTapSourceDeviceUID: String?, sourceDeviceDead: Bool, autoEQProfile: AutoEQProfile?) async throws
     func hasRecentAudioCallback(within seconds: Double) -> Bool
     func isHealthCheckEligible(minActiveSeconds: Double) -> Bool
 
@@ -42,14 +42,14 @@ extension ProcessTapControlling {
         try activate(initial: TapInitialState())
     }
 
-    /// Convenience: defaults sourceDeviceDead to false.
-    func switchDevice(to newDeviceUID: String, preferredTapSourceDeviceUID: String?) async throws {
-        try await switchDevice(to: newDeviceUID, preferredTapSourceDeviceUID: preferredTapSourceDeviceUID, sourceDeviceDead: false)
+    /// Convenience: defaults sourceDeviceDead to false, autoEQProfile to nil.
+    func switchDevice(to newDeviceUID: String, preferredTapSourceDeviceUID: String?, autoEQProfile: AutoEQProfile?) async throws {
+        try await switchDevice(to: newDeviceUID, preferredTapSourceDeviceUID: preferredTapSourceDeviceUID, sourceDeviceDead: false, autoEQProfile: autoEQProfile)
     }
 
-    /// Convenience: defaults sourceDeviceDead to false.
-    func updateDevices(to newDeviceUIDs: [String], preferredTapSourceDeviceUID: String?) async throws {
-        try await updateDevices(to: newDeviceUIDs, preferredTapSourceDeviceUID: preferredTapSourceDeviceUID, sourceDeviceDead: false)
+    /// Convenience: defaults sourceDeviceDead to false, autoEQProfile to nil.
+    func updateDevices(to newDeviceUIDs: [String], preferredTapSourceDeviceUID: String?, autoEQProfile: AutoEQProfile?) async throws {
+        try await updateDevices(to: newDeviceUIDs, preferredTapSourceDeviceUID: preferredTapSourceDeviceUID, sourceDeviceDead: false, autoEQProfile: autoEQProfile)
     }
 
     func invalidateAsync() async {

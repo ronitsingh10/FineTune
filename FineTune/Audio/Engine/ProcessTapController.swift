@@ -704,15 +704,13 @@ final class ProcessTapController: ProcessTapControlling {
 
     /// Switch to a single device (convenience for backward compatibility).
     /// - Parameter sourceDeviceDead: If true, skips crossfade (source has no audio to blend from).
-    func switchDevice(to newDeviceUID: String, preferredTapSourceDeviceUID: String? = nil, sourceDeviceDead: Bool = false) async throws {
-        try await updateDevices(to: [newDeviceUID], preferredTapSourceDeviceUID: preferredTapSourceDeviceUID, sourceDeviceDead: sourceDeviceDead)
+    func switchDevice(to newDeviceUID: String, preferredTapSourceDeviceUID: String? = nil, sourceDeviceDead: Bool = false, autoEQProfile: AutoEQProfile? = nil) async throws {
+        try await updateDevices(to: [newDeviceUID], preferredTapSourceDeviceUID: preferredTapSourceDeviceUID, sourceDeviceDead: sourceDeviceDead, autoEQProfile: autoEQProfile)
     }
 
-    /// Updates output devices using crossfade for seamless transition.
-    /// Creates a second tap+aggregate for the new device set, crossfades, then destroys the old one.
     /// - Parameter sourceDeviceDead: If true, skips crossfade and uses destructive switch
     ///   (the source device is disconnected, so there's no audio to blend from).
-    func updateDevices(to newDeviceUIDs: [String], preferredTapSourceDeviceUID: String? = nil, sourceDeviceDead: Bool = false) async throws {
+    func updateDevices(to newDeviceUIDs: [String], preferredTapSourceDeviceUID: String? = nil, sourceDeviceDead: Bool = false, autoEQProfile: AutoEQProfile? = nil) async throws {
         precondition(!newDeviceUIDs.isEmpty, "Must have at least one target device")
         self.preferredTapSourceDeviceUID = preferredTapSourceDeviceUID
 
@@ -740,7 +738,7 @@ final class ProcessTapController: ProcessTapControlling {
         } else {
             crossfadeTask?.cancel()
             crossfadeTask = Task {
-                try await performCrossfadeSwitch(to: primaryDeviceUID, allDeviceUIDs: newDeviceUIDs)
+                try await performCrossfadeSwitch(to: primaryDeviceUID, allDeviceUIDs: newDeviceUIDs, autoEQProfile: autoEQProfile)
             }
             do {
                 try await crossfadeTask!.value
@@ -752,7 +750,7 @@ final class ProcessTapController: ProcessTapControlling {
                 guard primaryResources.tapDescription != nil else {
                     throw CrossfadeError.noTapDescription
                 }
-                try await performDestructiveDeviceSwitch(to: primaryDeviceUID, allDeviceUIDs: newDeviceUIDs)
+                try await performDestructiveDeviceSwitch(to: primaryDeviceUID, allDeviceUIDs: newDeviceUIDs, autoEQProfile: autoEQProfile)
             }
             crossfadeTask = nil
         }
@@ -873,9 +871,8 @@ final class ProcessTapController: ProcessTapControlling {
 
     // MARK: - Crossfade Operations
 
-    private func performCrossfadeSwitch(to primaryDeviceUID: String, allDeviceUIDs: [String]? = nil) async throws {
+    private func performCrossfadeSwitch(to primaryDeviceUID: String, allDeviceUIDs: [String]? = nil, autoEQProfile: AutoEQProfile? = nil) async throws {
         let deviceUIDs = allDeviceUIDs ?? [primaryDeviceUID]
-
         // Re-entrant guard (ORCH-001): if already switching, tear down in-progress secondary
         if isSwitching {
             logger.warning("[CROSSFADE] Re-entrant switch detected — tearing down in-progress secondary")
@@ -901,7 +898,7 @@ final class ProcessTapController: ProcessTapControlling {
         crossfadeState.beginWarmup()
 
         logger.info("[CROSSFADE] Step 3: Creating secondary tap for \(deviceUIDs.count) device(s)")
-        try createSecondaryTap(for: deviceUIDs)
+        try createSecondaryTap(for: deviceUIDs, autoEQProfile: autoEQProfile)
 
         // LIFE-004/005: Ensure secondary tap is cleaned up if crossfade fails or is cancelled
         var crossfadeCompleted = false
@@ -961,7 +958,7 @@ final class ProcessTapController: ProcessTapControlling {
         logger.info("[CROSSFADE] Complete")
     }
 
-    private func createSecondaryTap(for outputUIDs: [String]) throws {
+    private func createSecondaryTap(for outputUIDs: [String], autoEQProfile: AutoEQProfile? = nil) throws {
         precondition(!outputUIDs.isEmpty, "Must have at least one output device")
 
         let (tapDesc, tapID) = try createProcessTap(preferredDeviceUID: preferredTapSourceDeviceUID)
@@ -1021,7 +1018,9 @@ final class ProcessTapController: ProcessTapControlling {
         secondaryEQProcessor = secEQ
 
         let secAutoEQ = AutoEQProcessor(sampleRate: sampleRate)
-        if let profile = autoEQProcessor?.currentProfile {
+        if let profile = autoEQProfile {
+            secAutoEQ.updateProfile(profile)
+        } else if let profile = autoEQProcessor?.currentProfile {
             secAutoEQ.updateProfile(profile)
         }
         secondaryAutoEQProcessor = secAutoEQ
@@ -1135,7 +1134,7 @@ final class ProcessTapController: ProcessTapControlling {
     /// Performs a destructive (non-crossfade) device switch with silence padding.
     /// - Parameter sourceAlreadySilent: If true (e.g. source device disconnected), skips the
     ///   pre-switch silence wait and uses a shorter post-switch settle time.
-    private func performDestructiveDeviceSwitch(to primaryDeviceUID: String, allDeviceUIDs: [String]? = nil, sourceAlreadySilent: Bool = false) async throws {
+    private func performDestructiveDeviceSwitch(to primaryDeviceUID: String, allDeviceUIDs: [String]? = nil, sourceAlreadySilent: Bool = false, autoEQProfile: AutoEQProfile? = nil) async throws {
         let deviceUIDs = allDeviceUIDs ?? [primaryDeviceUID]
         let originalVolume = _volume
 
@@ -1158,6 +1157,11 @@ final class ProcessTapController: ProcessTapControlling {
         // Post-switch settle: shorter when source was already silent (no old audio to drain)
         let settleMs = sourceAlreadySilent ? 80 : 150
         try await Task.sleep(for: .milliseconds(settleMs))
+        // Apply destination AutoEQ profile before unmuting output.
+        // _forceSilence is true so no audio leaks during profile application.
+        if let profile = autoEQProfile {
+            autoEQProcessor?.updateProfile(profile)
+        }
 
         _forceSilence = false
 

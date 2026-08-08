@@ -29,8 +29,11 @@ final class EQProcessor: BiquadProcessor, @unchecked Sendable {
     // MARK: - Settings Update
 
     /// Update EQ settings (call from main thread).
+    /// Disables biquad processing entirely when all bands are at 0 dB
+    /// to avoid wasting CPU on identity transforms (#245).
     func updateSettings(_ settings: EQSettings) {
-        setEnabled(settings.isEnabled)
+        let effective = settings.isEnabled && !settings.isFlat
+        setEnabled(effective)
         _currentSettings = settings
 
         let coefficients = BiquadMath.coefficientsForAllBands(
