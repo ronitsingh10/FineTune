@@ -83,7 +83,7 @@ enum ISO226Contours {
                 pow(referenceSoundPressureSquaredPa, referenceLoudnessExponent - alphaF) *
                 (pow(10.0, (referenceLoudnessExponent * clampedPhon) / 10.0) -
                  pow(10.0, (referenceLoudnessExponent * referenceThresholdDB) / 10.0)) +
-                pow(10.0, (referenceLoudnessExponent * (tf + lu)) / 10.0)
+                pow(10.0, (alphaF * (tf + lu)) / 10.0)
 
             return (10.0 / alphaF) * log10(excitation) - lu
         }

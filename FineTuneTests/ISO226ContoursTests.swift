@@ -28,22 +28,39 @@ struct ISO226ContoursReferenceTests {
     func contourReferenceValues20Phon() {
         let contour = ISO226Contours.contourSPL(atPhon: 20.0)
 
-        expectClose(contour[0], 88.167, tolerance: 0.01)
-        expectClose(contour[5], 58.197, tolerance: 0.01)
+        expectClose(contour[0], 89.544, tolerance: 0.01)
+        expectClose(contour[5], 58.760, tolerance: 0.01)
         expectClose(contour[17], 20.000, tolerance: 0.001)
-        expectClose(contour[23], 15.233, tolerance: 0.01)
-        expectClose(contour[28], 32.746, tolerance: 0.01)
+        expectClose(contour[23], 15.275, tolerance: 0.01)
+        expectClose(contour[28], 32.984, tolerance: 0.01)
     }
 
     @Test("Normative contour values at 40 phon match ISO 226:2023 equation")
     func contourReferenceValues40Phon() {
         let contour = ISO226Contours.contourSPL(atPhon: 40.0)
 
-        expectClose(contour[0], 99.456, tolerance: 0.01)
-        expectClose(contour[5], 72.849, tolerance: 0.01)
+        expectClose(contour[0], 99.743, tolerance: 0.01)
+        expectClose(contour[5], 72.963, tolerance: 0.01)
         expectClose(contour[17], 40.000, tolerance: 0.001)
-        expectClose(contour[23], 36.712, tolerance: 0.01)
-        expectClose(contour[28], 51.253, tolerance: 0.01)
+        expectClose(contour[23], 36.722, tolerance: 0.01)
+        expectClose(contour[28], 51.306, tolerance: 0.01)
+    }
+
+    @Test("Threshold term uses the frequency exponent αf, not the reference exponent (20 Hz + mid band)")
+    func contourThresholdExponentUsesFrequencyExponent() {
+        // ISO 226:2023 Formula (1) raises the per-frequency threshold/transducer term
+        // (Tf + Lu) to the *frequency* exponent αf — not the 1 kHz reference exponent
+        // αr (0.300). Where αf happens to equal αr (1 kHz) the values coincide; at
+        // every other band the wrong exponent shifts the contour. Expected SPL values
+        // hand-traced from the formula with the 2023 Table 1 coefficients at 20 phon:
+        //   20 Hz:  αf = 0.635, Lu = -31.5, Tf = 78.1 → 89.544 dB SPL
+        //   500 Hz: αf = 0.320, Lu =   0.0, Tf =  4.4 → 23.622 dB SPL
+        //   1 kHz:  αf = 0.300 (= αr)               → 20.000 dB SPL (identity anchor)
+        let contour = ISO226Contours.contourSPL(atPhon: 20.0)
+
+        expectClose(contour[0], 89.544, tolerance: 0.01)   // 20 Hz,  αf = 0.635 ≠ αr
+        expectClose(contour[14], 23.622, tolerance: 0.01)  // 500 Hz, αf = 0.320 ≠ αr
+        expectClose(contour[17], 20.000, tolerance: 0.001) // 1 kHz,  identity anchor
     }
 
     @Test("1 kHz reference contour remains identity in phon space",
@@ -67,10 +84,10 @@ struct ISO226ContoursReferenceTests {
         let gains = ISO226Contours.compensationGains(atPhon: 20.0, referencePhon: 80.0)
         let headroom = ISO226Contours.requiredHeadroomDB(forCompensationGains: gains)
 
-        expectClose(gains[0], 29.323, tolerance: 0.01)
+        expectClose(gains[0], 30.684, tolerance: 0.01)
         expectClose(gains[17], 0.0, tolerance: 0.001)
-        expectClose(gains[23], -3.220, tolerance: 0.01)
-        expectClose(headroom, 29.323, tolerance: 0.01)
+        expectClose(gains[23], -3.179, tolerance: 0.01)
+        expectClose(headroom, 30.684, tolerance: 0.01)
     }
 
     @Test("Compensation is normalized around 1 kHz instead of restoring overall loudness")
@@ -78,12 +95,12 @@ struct ISO226ContoursReferenceTests {
         let gains = ISO226Contours.compensationGains(atPhon: 52.5, referencePhon: 80.0)
         let headroom = ISO226Contours.requiredHeadroomDB(forCompensationGains: gains)
 
-        expectClose(gains[0], 14.325, tolerance: 0.01)
-        expectClose(gains[5], 10.161, tolerance: 0.01)
+        expectClose(gains[0], 14.425, tolerance: 0.01)
+        expectClose(gains[5], 10.200, tolerance: 0.01)
         expectClose(gains[17], 0.0, tolerance: 0.001)
-        expectClose(gains[23], -1.130, tolerance: 0.01)
-        expectClose(gains[28], 4.024, tolerance: 0.01)
-        expectClose(headroom, 14.325, tolerance: 0.01)
+        expectClose(gains[23], -1.126, tolerance: 0.01)
+        expectClose(gains[28], 4.043, tolerance: 0.01)
+        expectClose(headroom, 14.425, tolerance: 0.01)
     }
 
     @Test("Reference phon contour produces flat compensation")
@@ -101,9 +118,9 @@ struct ISO226ContoursReferenceTests {
         let half = ISO226Contours.compensationGains(atPhon: 20.0, referencePhon: 80.0, amount: 0.5)
         let flat = ISO226Contours.compensationGains(atPhon: 20.0, referencePhon: 80.0, amount: 0.0)
 
-        expectClose(full[0], 29.323, tolerance: 0.01)
-        expectClose(half[0], 14.6615, tolerance: 0.01)
-        expectClose(half[23], -1.610, tolerance: 0.01)
+        expectClose(full[0], 30.684, tolerance: 0.01)
+        expectClose(half[0], 15.342, tolerance: 0.01)
+        expectClose(half[23], -1.589, tolerance: 0.01)
         #expect(flat.allSatisfy { abs($0) < 1e-9 })
     }
 }
@@ -117,11 +134,11 @@ struct ISO226ContoursMigrationTests {
         let contour40 = ISO226Contours.contourSPL(atPhon: 40.0)
         let contour80 = ISO226Contours.contourSPL(atPhon: 80.0)
 
-        expectClose(contour20[0] - legacyContour20Phon[0], 13.867, tolerance: 0.01)
+        expectClose(contour20[0] - legacyContour20Phon[0], 15.244, tolerance: 0.01)
         expectClose(contour20[17] - legacyContour20Phon[17], 16.800, tolerance: 0.01)
-        expectClose(contour40[5] - legacyContour40Phon[5], 25.849, tolerance: 0.01)
-        expectClose(contour80[23] - legacyContour80Phon[23], 74.953, tolerance: 0.01)
-        expectClose(contour80[28] - legacyContour80Phon[28], 80.603, tolerance: 0.01)
+        expectClose(contour40[5] - legacyContour40Phon[5], 25.963, tolerance: 0.01)
+        expectClose(contour80[23] - legacyContour80Phon[23], 74.954, tolerance: 0.01)
+        expectClose(contour80[28] - legacyContour80Phon[28], 80.606, tolerance: 0.01)
     }
 
     private let legacyContour20Phon: [Double] = [
