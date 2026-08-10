@@ -33,6 +33,9 @@ nonisolated struct AppSettings: Codable, Equatable {
     // Input Device Lock
     var lockInputDevice: Bool = true          // Prevent auto-switching input device
 
+    // Output Device Auto-Switch
+    var autoSwitchToNewOutputDevices: Bool = true  // Make a newly-seen output device the default automatically
+
     // Notifications
     var showDeviceDisconnectAlerts: Bool = true
 
@@ -69,6 +72,7 @@ nonisolated struct AppSettings: Codable, Equatable {
         menuBarIconStyle = try c.decodeIfPresent(MenuBarIconStyle.self, forKey: .menuBarIconStyle) ?? .default
         defaultNewAppVolume = try c.decodeIfPresent(Float.self, forKey: .defaultNewAppVolume) ?? 1.0
         lockInputDevice = try c.decodeIfPresent(Bool.self, forKey: .lockInputDevice) ?? true
+        autoSwitchToNewOutputDevices = try c.decodeIfPresent(Bool.self, forKey: .autoSwitchToNewOutputDevices) ?? true
         showDeviceDisconnectAlerts = try c.decodeIfPresent(Bool.self, forKey: .showDeviceDisconnectAlerts) ?? true
         loudnessCompensationEnabled = try c.decodeIfPresent(Bool.self, forKey: .loudnessCompensationEnabled) ?? false
         loudnessEqualizationEnabled = try c.decodeIfPresent(Bool.self, forKey: .loudnessEqualizationEnabled) ?? false
@@ -483,7 +487,15 @@ final class SettingsManager {
 
     func ensureDeviceInPriority(_ uid: String) {
         guard !settings.outputDevicePriority.contains(uid) else { return }
-        settings.outputDevicePriority.append(uid)
+        // Auto-switch mode: a device we've never seen before goes to the front of the
+        // priority list, so AudioEngine's existing "connected + highest priority" check
+        // makes it the default. Otherwise new devices are lowest priority, matching prior
+        // behavior — the user picks it explicitly rather than being switched involuntarily.
+        if settings.appSettings.autoSwitchToNewOutputDevices {
+            settings.outputDevicePriority.insert(uid, at: 0)
+        } else {
+            settings.outputDevicePriority.append(uid)
+        }
         scheduleSave()
     }
 

@@ -286,10 +286,17 @@ final class DDCController {
                 for (deviceID, uid) in matchedUIDsSnapshot {
                     if let savedVolume = self.settingsManager.getDDCVolume(for: uid) {
                         self.cachedVolumes[deviceID] = savedVolume
-                        // Restore saved volume to the display
-                        let service = matchedSnapshot[deviceID]
-                        self.ddcQueue.async {
-                            try? service?.setAudioVolume(savedVolume)
+                        // Restore saved volume to the display — but never when the
+                        // user pinned a non-DDC backend for this device: a Set VCP
+                        // write pops the monitor's volume OSD on every probe (app
+                        // launch, display reconnect). Matching stays untouched so
+                        // isDDCBacked and the "Auto: DDC" badge remain accurate.
+                        let override = self.settingsManager.getDeviceVolumeTierOverride(for: uid)
+                        if override == nil || override == .ddc {
+                            let service = matchedSnapshot[deviceID]
+                            self.ddcQueue.async {
+                                try? service?.setAudioVolume(savedVolume)
+                            }
                         }
                     } else if let readVolume = volumesSnapshot[deviceID] {
                         self.cachedVolumes[deviceID] = readVolume

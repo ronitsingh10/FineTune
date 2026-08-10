@@ -350,6 +350,7 @@ final class AudioEngine {
         }
 
         processMonitor.onAppsChanged = { [weak self] apps in
+            self?.reconcileTapProcessObjects(with: apps)
             self?.applyPersistedSettings()
             self?.scheduleStaleCleanup()
         }
@@ -1936,6 +1937,34 @@ final class AudioEngine {
     private func stopHealthMonitor() {
         healthMonitorTask?.cancel()
         healthMonitorTask = nil
+    }
+
+    /// PIDs with a process-object-growth recreate in flight (prevents duplicate recreates
+    /// when onAppsChanged fires again before the async recreate finishes).
+    private var reconcilingPIDs: Set<pid_t> = []
+
+    /// Recreates the tap for any app whose CoreAudio process-object set gained members
+    /// after the tap was created. The tap description is a snapshot: `.mutedWhenTapped`
+    /// mutes only the objects listed in it, so an audio client that appears later (e.g.
+    /// Spotify spinning up its video pipeline in a helper process) is neither captured
+    /// nor muted — it plays raw at full device volume, bypassing per-app gain and EQ.
+    /// Shrinks are deliberately ignored: process objects flicker out on every pause
+    /// (the isRunning filter) and stale entries in a live tap description are harmless.
+    private func reconcileTapProcessObjects(with apps: [AudioApp]) {
+        for app in apps {
+            guard let tap = taps[app.id] else { continue }
+            // PID-reuse guard — same pattern as stale-tap cleanup.
+            guard tap.app.bundleID == app.bundleID else { continue }
+            guard !reconcilingPIDs.contains(app.id) else { continue }
+            let added = Set(app.processObjectIDs).subtracting(tap.app.processObjectIDs)
+            guard !added.isEmpty else { continue }
+            logger.info("Process objects grew for \(app.name, privacy: .public) (+\(added.count)) — recreating tap to capture the new audio client")
+            reconcilingPIDs.insert(app.id)
+            Task {
+                await self.recreateTap(for: app.id)
+                self.reconcilingPIDs.remove(app.id)
+            }
+        }
     }
 
     /// Tears down and recreates a tap for a given PID, preserving routing and settings.

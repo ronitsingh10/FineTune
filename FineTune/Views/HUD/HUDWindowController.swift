@@ -301,7 +301,12 @@ final class HUDWindowController: MediaKeyHUDPresenting {
             backing: .buffered,
             defer: false
         )
-        p.level = .floating
+        // `.floating` is too low to be composited into a fullscreen app's dedicated
+        // Space — `.fullScreenAuxiliary` below only makes the window *eligible* to
+        // join that space, the level still gates whether it actually renders above
+        // the fullscreen content. `.screenSaver` matches what "always on top, even
+        // over fullscreen" overlay/HUD windows need (issues #261, #289).
+        p.level = .screenSaver
         p.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .ignoresCycle, .transient]
         p.hasShadow = false
         p.isOpaque = false

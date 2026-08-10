@@ -130,7 +130,9 @@ struct EditablePercentage: View {
         coordinator.install(
             excludingFrame: componentFrame,
             onClickOutside: { [self] in
-                cancel()
+                // Losing focus by clicking elsewhere should behave like Return, not
+                // Escape — otherwise a typed value silently reverts (issue #358).
+                commit()
             }
         )
 

@@ -64,6 +64,46 @@ struct PopoverHost<Content: View>: NSViewRepresentable {
         var globalEventMonitor: Any?
         var appDeactivateObserver: NSObjectProtocol?
         weak var parentWindow: NSWindow?
+        /// Trigger button frame in screen coordinates, captured once when the
+        /// panel opens. Reused to keep the panel anchored to the trigger when
+        /// repositioning after a content resize.
+        var triggerFrame: NSRect = .zero
+
+        /// Computes a panel origin anchored below `triggerFrame`, flipping above
+        /// the trigger and/or clamping to the screen's `visibleFrame` so the
+        /// panel never renders off-screen (partially or fully) on any monitor,
+        /// including multi-monitor/ultrawide setups.
+        private func clampedOrigin(triggerFrame: NSRect, panelSize: NSSize) -> NSPoint {
+            let screen = NSScreen.screens.first {
+                $0.frame.contains(NSPoint(x: triggerFrame.midX, y: triggerFrame.midY))
+            } ?? NSScreen.main
+
+            guard let visibleFrame = screen?.visibleFrame else {
+                return NSPoint(x: triggerFrame.origin.x, y: triggerFrame.origin.y - panelSize.height - 4)
+            }
+
+            var x = triggerFrame.origin.x
+            var y = triggerFrame.origin.y - panelSize.height - 4
+
+            // Not enough room below the trigger: try flipping above it.
+            if y < visibleFrame.minY {
+                let aboveY = triggerFrame.maxY + 4
+                if aboveY + panelSize.height <= visibleFrame.maxY {
+                    y = aboveY
+                } else {
+                    y = visibleFrame.minY
+                }
+            }
+
+            if x + panelSize.width > visibleFrame.maxX {
+                x = visibleFrame.maxX - panelSize.width
+            }
+            if x < visibleFrame.minX {
+                x = visibleFrame.minX
+            }
+
+            return NSPoint(x: x, y: y)
+        }
 
         init(isPresented: Binding<Bool>) {
             self._isPresented = isPresented
@@ -104,14 +144,10 @@ struct PopoverHost<Content: View>: NSViewRepresentable {
             panel.setContentSize(hosting.fittingSize)
             self.hostingView = hosting
 
-            // Position below trigger
-            let parentFrame = parentView.convert(parentView.bounds, to: nil)
-            let screenFrame = parentWindow.convertToScreen(parentFrame)
-            let panelOrigin = NSPoint(
-                x: screenFrame.origin.x,
-                y: screenFrame.origin.y - panel.frame.height - 4
-            )
-            panel.setFrameOrigin(panelOrigin)
+            // Position below trigger, clamped to the trigger's screen bounds.
+            let screenFrame = parentWindow.convertToScreen(parentView.convert(parentView.bounds, to: nil))
+            self.triggerFrame = screenFrame
+            panel.setFrameOrigin(clampedOrigin(triggerFrame: screenFrame, panelSize: panel.frame.size))
 
             // Add as child window - links to parent's event stream
             parentWindow.addChildWindow(panel, ordered: .above)
@@ -126,15 +162,12 @@ struct PopoverHost<Content: View>: NSViewRepresentable {
 
             self.panel = panel
 
-            // Get trigger button frame in screen coordinates
-            let triggerFrame = parentWindow.convertToScreen(parentView.convert(parentView.bounds, to: nil))
-
             // Local monitor: clicks within our app (outside panel AND outside trigger)
             localEventMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] event in
                 guard let self = self, let panel = self.panel else { return event }
                 let mouseLocation = NSEvent.mouseLocation
                 let isInPanel = panel.frame.contains(mouseLocation)
-                let isInTrigger = triggerFrame.contains(mouseLocation)
+                let isInTrigger = self.triggerFrame.contains(mouseLocation)
                 // Only dismiss if click is outside both panel and trigger button
                 // Let the trigger button handle its own clicks (toggle behavior)
                 if !isInPanel && !isInTrigger {
@@ -172,10 +205,13 @@ struct PopoverHost<Content: View>: NSViewRepresentable {
             // Update existing hosting view's rootView instead of replacing it
             // This allows SwiftUI to perform efficient diffing without flickering
             hostingView.rootView = AnyView(content().preferredColorScheme(preferredColorScheme))
-            // Resize panel if content size changed
+            // Resize panel if content size changed, then re-clamp the origin —
+            // otherwise a growing/shrinking panel can drift off-screen since
+            // `setContentSize` keeps the frame's bottom-left corner fixed.
             let newSize = hostingView.fittingSize
             if let panel = panel, panel.frame.size != newSize {
                 panel.setContentSize(newSize)
+                panel.setFrameOrigin(clampedOrigin(triggerFrame: triggerFrame, panelSize: panel.frame.size))
             }
         }
 

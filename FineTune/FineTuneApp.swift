@@ -171,6 +171,10 @@ struct FineTuneApp: App {
         DispatchQueue.main.async { [coordinator] in coordinator.start() }
         _iconCoordinator = State(initialValue: coordinator)
 
+        // Correct a FluidMenuBarExtra cold-launch mispositioning race on some
+        // multi-monitor setups (see MenuBarPanelPositionFixup doc comment / GH #387).
+        DispatchQueue.main.async { MenuBarPanelPositionFixup.run() }
+
         // Render the scene's first frame with the user's chosen style instead of a generic
         // placeholder, so non-speaker styles don't briefly flash a speaker icon at launch.
         let launchVolumeMonitor = engine.deviceVolumeMonitor

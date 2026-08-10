@@ -240,6 +240,7 @@ final class MediaKeyMonitor {
             currentMute: volumeMonitor.muteStates[deviceID] ?? false,
             setVolume: { id, vol in volumeMonitor.setVolume(for: id, to: vol) },
             setMute:   { id, mute in volumeMonitor.setMute(for: id, to: mute) },
+            getVolume: { id in volumeMonitor.volumes[id] ?? 0 },
             playFeedback: { gain in
                 self.feedbackPlayer?.requestFeedback(
                     gain: gain,
@@ -262,6 +263,7 @@ final class MediaKeyMonitor {
         currentMute: Bool,
         setVolume: (AudioDeviceID, Float) -> Void,
         setMute: (AudioDeviceID, Bool) -> Void,
+        getVolume: ((AudioDeviceID) -> Float)? = nil,
         playFeedback: (Float) -> Void = { _ in }
     ) {
         let shouldShowHUD = !popupVisibility.isVisible
@@ -312,7 +314,16 @@ final class MediaKeyMonitor {
             let newMute = !currentMute
             setMute(deviceID, newMute)
             if shouldShowHUD {
-                hudController.show(sliderFraction: currentSlider, mute: newMute, deviceName: deviceName)
+                // Software-tier mute zeroes the visible volume and unmute restores
+                // the saved level inside setMute, so the pre-toggle snapshot reads
+                // 0% after unmuting — re-read to show the restored level.
+                let slider: Double
+                if !newMute, let getVolume {
+                    slider = VolumeMapping.sliderFraction(forSystemGain: getVolume(deviceID), tier: tier)
+                } else {
+                    slider = currentSlider
+                }
+                hudController.show(sliderFraction: slider, mute: newMute, deviceName: deviceName)
             }
             iconCoordinator?.flashDevice()
         }

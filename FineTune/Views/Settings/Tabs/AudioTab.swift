@@ -90,6 +90,16 @@ struct AudioTab: View {
             }
             SettingsRowDivider()
             SettingsRow(
+                "Switch to New Output Devices",
+                description: "Make a newly connected output device the default"
+            ) {
+                Toggle("", isOn: $settings.appSettings.autoSwitchToNewOutputDevices)
+                    .toggleStyle(.switch)
+                    .controlSize(.small)
+                    .labelsHidden()
+            }
+            SettingsRowDivider()
+            SettingsRow(
                 "System Sounds",
                 description: "Where alerts and effects play"
             ) {
