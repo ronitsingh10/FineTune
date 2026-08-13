@@ -42,6 +42,13 @@ nonisolated extension AudioObjectID {
         (try? readBool(kAudioProcessPropertyIsRunning)) ?? false
     }
 
+    /// True while the process has an active input (microphone) IOProc.
+    /// Used to detect call apps: a process playing audio while capturing
+    /// input is almost certainly running voice-processing I/O.
+    func readProcessIsRunningInput() -> Bool {
+        (try? readBool(kAudioProcessPropertyIsRunningInput)) ?? false
+    }
+
     func readProcessBundleID() -> String? {
         try? readString(kAudioProcessPropertyBundleID)
     }

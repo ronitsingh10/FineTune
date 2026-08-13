@@ -350,6 +350,7 @@ final class AudioEngine {
         }
 
         processMonitor.onAppsChanged = { [weak self] apps in
+            self?.releaseCallPassthroughTaps()
             self?.applyPersistedSettings()
             self?.scheduleStaleCleanup()
         }
@@ -473,6 +474,44 @@ final class AudioEngine {
         appDeviceRouting.removeValue(forKey: app.id)
         followsDefault.remove(app.id)
         appliedPIDs.remove(app.id)
+    }
+
+    // MARK: - Call Passthrough
+
+    /// True when this app should be left untapped because it is actively
+    /// capturing audio input (i.e. on a call) and call passthrough is enabled.
+    ///
+    /// Tapping a call app re-renders its output through the aggregate device
+    /// with added latency, so what reaches the speaker no longer matches the
+    /// reference signal macOS's acoustic echo canceller was handed. The AEC
+    /// can't subtract what it can't predict: the far end hears themselves and
+    /// the OS ducks the call output to contain feedback (#113, #404). Unlike
+    /// a bundle-ID exclusion list, `isRunningInput` detects any current or
+    /// future call app with no list to maintain.
+    private func isCallPassthrough(_ app: AudioApp) -> Bool {
+        settingsManager.appSettings.callPassthroughEnabled && app.isRunningInput
+    }
+
+    /// Releases live taps for apps that started capturing input, mirroring the
+    /// teardown in `ignoreApp()` minus persistence. Routing state is kept so
+    /// the app re-taps onto the same device after the call; clearing
+    /// `appliedPIDs` lets `applyPersistedSettings()` re-provision it.
+    private func releaseCallPassthroughTaps() {
+        guard settingsManager.appSettings.callPassthroughEnabled else { return }
+        for app in apps where app.isRunningInput {
+            guard let tap = taps.removeValue(forKey: app.id) else { continue }
+            tap.invalidate()
+            appliedPIDs.remove(app.id)
+            logger.info("Call passthrough: released tap for \(app.name) while it captures input")
+        }
+    }
+
+    /// Re-evaluates call passthrough after the user toggles the setting:
+    /// releases taps for in-call apps when enabling, or re-provisions them
+    /// when disabling.
+    func reconcileCallPassthrough() {
+        releaseCallPassthroughTaps()
+        applyPersistedSettings()
     }
 
     /// Unhide an app by its persistence identifier.
@@ -1053,6 +1092,7 @@ final class AudioEngine {
         guard !deviceUIDs.isEmpty else { return }
         guard taps[app.id] == nil else { return }
         guard permission.status == .authorized else { return }
+        guard !isCallPassthrough(app) else { return }
 
         let preferredTapSourceUID = preferredTapSourceDeviceUID(forOutputUIDs: deviceUIDs, isFollowsDefault: followsDefault.contains(app.id))
         do {
@@ -1100,6 +1140,10 @@ final class AudioEngine {
         for app in apps {
             guard !appliedPIDs.contains(app.id) else { continue }
             guard !settingsManager.isIgnored(app.persistenceIdentifier) else { continue }
+            // Call passthrough: leave apps capturing input untapped for the
+            // duration of the call. releaseCallPassthroughTaps() cleared
+            // appliedPIDs, so the tap is re-provisioned here once input stops.
+            guard !isCallPassthrough(app) else { continue }
 
             // Load saved device selection mode (single vs multi)
             let savedMode = volumeState.loadSavedDeviceSelectionMode(for: app.id, identifier: app.persistenceIdentifier)
@@ -1214,6 +1258,7 @@ final class AudioEngine {
     private func ensureTapExists(for app: AudioApp, deviceUID: String) {
         guard taps[app.id] == nil else { return }
         guard permission.status == .authorized else { return }
+        guard !isCallPassthrough(app) else { return }
 
         let preferredTapSourceUID = preferredTapSourceDeviceUID(forOutputUIDs: [deviceUID], isFollowsDefault: followsDefault.contains(app.id))
         do {

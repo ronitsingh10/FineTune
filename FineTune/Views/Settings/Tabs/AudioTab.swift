@@ -46,6 +46,9 @@ struct AudioTab: View {
         .onChange(of: settings.appSettings.loudnessEqualizationEnabled) { _, newValue in
             audioEngine.setLoudnessEqualizationEnabled(newValue)
         }
+        .onChange(of: settings.appSettings.callPassthroughEnabled) { _, _ in
+            audioEngine.reconcileCallPassthrough()
+        }
     }
 
     // MARK: - Volume
@@ -68,6 +71,16 @@ struct AudioTab: View {
                 description: "Boost low frequencies at low volume"
             ) {
                 Toggle("", isOn: unifiedLoudnessToggleBinding)
+                    .toggleStyle(.switch)
+                    .controlSize(.small)
+                    .labelsHidden()
+            }
+            SettingsRowDivider()
+            SettingsRow(
+                "Skip Apps on Calls",
+                description: "Leave apps untouched while they use the microphone — fixes quiet call audio and echo"
+            ) {
+                Toggle("", isOn: $settings.appSettings.callPassthroughEnabled)
                     .toggleStyle(.switch)
                     .controlSize(.small)
                     .labelsHidden()

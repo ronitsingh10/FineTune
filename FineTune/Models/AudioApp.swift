@@ -10,13 +10,18 @@ struct AudioApp: Identifiable, Hashable {
     let bundleID: String?
     let isHelperBacked: Bool
 
+    /// True while any of the app's processes has an active input (microphone)
+    /// IOProc — i.e. the app is on a call or otherwise capturing audio.
+    let isRunningInput: Bool
+
     init(
         id: pid_t,
         processObjectIDs: [AudioObjectID],
         name: String,
         icon: NSImage,
         bundleID: String?,
-        isHelperBacked: Bool = false
+        isHelperBacked: Bool = false,
+        isRunningInput: Bool = false
     ) {
         self.id = id
         self.processObjectIDs = processObjectIDs
@@ -24,6 +29,7 @@ struct AudioApp: Identifiable, Hashable {
         self.icon = icon
         self.bundleID = bundleID
         self.isHelperBacked = isHelperBacked
+        self.isRunningInput = isRunningInput
     }
 
     var persistenceIdentifier: String {
