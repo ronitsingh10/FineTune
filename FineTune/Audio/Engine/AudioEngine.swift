@@ -1639,8 +1639,8 @@ final class AudioEngine {
 
     private func showReconnectNotification(deviceName: String, affectedApps: [AudioApp]) {
         let content = UNMutableNotificationContent()
-        content.title = "Audio Device Reconnected"
-        content.body = "\"\(deviceName)\" is back. \(affectedApps.count) app(s) switched back."
+        content.title = String(localized: "Audio Device Reconnected")
+        content.body = String(format: String(localized: "\"%@\" is back. %lld app(s) switched back."), deviceName, Int64(affectedApps.count))
         content.sound = nil
 
         let request = UNNotificationRequest(
@@ -1658,8 +1658,8 @@ final class AudioEngine {
 
     private func showDisconnectNotification(deviceName: String, fallbackName: String, affectedApps: [AudioApp]) {
         let content = UNMutableNotificationContent()
-        content.title = "Audio Device Disconnected"
-        content.body = "\"\(deviceName)\" disconnected. \(affectedApps.count) app(s) switched to \(fallbackName)"
+        content.title = String(localized: "Audio Device Disconnected")
+        content.body = String(format: String(localized: "\"%@\" disconnected. %lld app(s) switched to %@"), deviceName, Int64(affectedApps.count), fallbackName)
         content.sound = nil
 
         let request = UNNotificationRequest(
@@ -1774,8 +1774,8 @@ final class AudioEngine {
 
     private func showDefaultChangedNotification(newDeviceName: String, affectedApps: [AudioApp]) {
         let content = UNMutableNotificationContent()
-        content.title = "Default Audio Device Changed"
-        content.body = "\(affectedApps.count) app(s) switched to \"\(newDeviceName)\""
+        content.title = String(localized: "Default Audio Device Changed")
+        content.body = String(format: String(localized: "%lld app(s) switched to \"%@\""), Int64(affectedApps.count), newDeviceName)
         content.sound = nil
 
         let request = UNNotificationRequest(
