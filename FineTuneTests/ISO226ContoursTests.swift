@@ -225,13 +225,13 @@ struct LoudnessCompensatorEnableStateTests {
     func sameVolumeReEnableRestoresProcessing() {
         let processor = LoudnessCompensator(sampleRate: 48_000)
 
-        processor.updateForVolume(0.25)
+        processor.update(listeningVolume: 0.25, digitalGain: 1.0)
         #expect(processor.isEnabled, "Processor should enable after an initial non-reference volume update")
 
         processor.setEnabled(false)
         #expect(!processor.isEnabled, "Test setup should disable the processor before re-enabling")
 
-        processor.updateForVolume(0.25)
+        processor.update(listeningVolume: 0.25, digitalGain: 1.0)
         #expect(processor.isEnabled, "Processor should re-enable immediately even if volume did not change")
     }
 }
