@@ -125,9 +125,11 @@ final class ProcessTapController: ProcessTapControlling {
     private nonisolated(unsafe) var autoEQProcessor: AutoEQProcessor?
     private nonisolated(unsafe) var loudnessCompensator: LoudnessCompensator?
     private nonisolated(unsafe) var loudnessEqualizerProcessor: LoudnessEqualizer?
-    /// Last effective loudness volume (device × app) passed to updateLoudnessCompensation.
-    /// Used by createSecondaryTap to initialize secondary compensator with the correct volume.
+    /// Last loudness inputs passed to updateLoudnessCompensation: listening volume
+    /// (device × app, for phon) and digital gain (for headroom). Used by
+    /// createSecondaryTap to initialize the secondary compensator identically.
     private var _lastLoudnessVolume: Float = 1.0
+    private var _lastLoudnessDigitalGain: Float = 1.0
     /// Independent EQ processors for secondary tap during crossfade.
     /// Each tap needs its own biquad delay buffers — sharing would corrupt filter state
     /// because both callbacks write concurrently from different HAL I/O threads.
@@ -256,11 +258,12 @@ final class ProcessTapController: ProcessTapControlling {
         secondaryAutoEQProcessor?.setPreampEnabled(enabled)
     }
 
-    func updateLoudnessCompensation(volume: Float, enabled: Bool) {
-        _lastLoudnessVolume = volume
+    func updateLoudnessCompensation(listeningVolume: Float, digitalGain: Float, enabled: Bool) {
+        _lastLoudnessVolume = listeningVolume
+        _lastLoudnessDigitalGain = digitalGain
         if enabled {
-            loudnessCompensator?.updateForVolume(volume)
-            secondaryLoudnessCompensator?.updateForVolume(volume)
+            loudnessCompensator?.update(listeningVolume: listeningVolume, digitalGain: digitalGain)
+            secondaryLoudnessCompensator?.update(listeningVolume: listeningVolume, digitalGain: digitalGain)
         } else {
             loudnessCompensator?.setEnabled(false)
             secondaryLoudnessCompensator?.setEnabled(false)
@@ -652,9 +655,13 @@ final class ProcessTapController: ProcessTapControlling {
         }
         loudnessCompensator?.setEnabled(initial.loudnessCompensationEnabled)
         if initial.loudnessCompensationEnabled {
-            loudnessCompensator?.updateForVolume(initial.loudnessVolume)
+            loudnessCompensator?.update(
+                listeningVolume: initial.loudnessVolume,
+                digitalGain: initial.loudnessDigitalGain
+            )
         }
         _lastLoudnessVolume = initial.loudnessVolume
+        _lastLoudnessDigitalGain = initial.loudnessDigitalGain
 
         // Create IO proc with gain processing
         nextCallbackID += 1
@@ -1030,7 +1037,7 @@ final class ProcessTapController: ProcessTapControlling {
         secondaryLoudnessEqualizerProcessor = secLoudnessEqualizer
 
         let secLoudness = LoudnessCompensator(sampleRate: sampleRate)
-        secLoudness.updateForVolume(_lastLoudnessVolume)
+        secLoudness.update(listeningVolume: _lastLoudnessVolume, digitalGain: _lastLoudnessDigitalGain)
         if !(loudnessCompensator?.isEnabled ?? false) { secLoudness.setEnabled(false) }
         secondaryLoudnessCompensator = secLoudness
 

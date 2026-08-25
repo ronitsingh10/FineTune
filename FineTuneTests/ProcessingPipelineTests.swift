@@ -1049,7 +1049,7 @@ struct LoudnessIntegrationTests {
 
         // With loudness compensator at 25% volume (will produce non-flat EQ)
         let compensator = LoudnessCompensator(sampleRate: sampleRate)
-        compensator.updateForVolume(0.25)
+        compensator.update(listeningVolume: 0.25, digitalGain: 1.0)
         #expect(compensator.isEnabled,
                 "Compensator should enable at non-reference volume")
 
@@ -1074,12 +1074,45 @@ struct LoudnessIntegrationTests {
         let baselineRMS = sqrt(baselineSquaredSum / Double((endSample - startSample) / 2))
         let compRMS = sqrt(compSquaredSum / Double((endSample - startSample) / 2))
 
-        // Compensator at low volume boosts bass — output RMS should differ from baseline
+        // Compensator at low volume reshapes the spectrum — output RMS should differ from baseline
         #expect(abs(compRMS - baselineRMS) > 0.001,
                 "Compensated RMS (\(compRMS)) should differ measurably from baseline (\(baselineRMS))")
-        // At low volume, 60 Hz bass should be boosted (ISO 226 shows increased bass sensitivity loss at low phon)
-        #expect(compRMS > baselineRMS,
-                "60 Hz bass should be boosted at low volume: compensated RMS=\\(compRMS) vs baseline=\\(baselineRMS)")
+
+        // With digitalGain = 1.0 there is no upstream headroom, so the compensator reserves
+        // it with a global preamp cut equal to its peak boost: absolute level never rises
+        // above the input, and bass is boosted *relative to* the mids. Run a 1 kHz reference
+        // through an identical compensator and compare the relative gains — 60 Hz must sit
+        // well above 1 kHz (≈ +11 dB at 25% volume).
+        let midInput = TestABL(buffers: [(channels: 2, frames: frames)])
+        let midData = midInput.data(at: 0)
+        for f in 0..<frames {
+            let phase = Float(2.0 * Double.pi * 1000.0 * Double(f) / sampleRate)
+            let sample = 0.3 * sin(phase)
+            midData[f * 2] = sample
+            midData[f * 2 + 1] = sample
+        }
+        let midCompensator = LoudnessCompensator(sampleRate: sampleRate)
+        midCompensator.update(listeningVolume: 0.25, digitalGain: 1.0)
+        let midOutput = TestABL(buffers: [(channels: 2, frames: frames)])
+        var midVol: Float = 1.0
+        processWithDefaults(
+            input: midInput,
+            output: midOutput,
+            currentVol: &midVol,
+            loudnessCompensatorProc: midCompensator
+        )
+        var midSquaredSum: Double = 0
+        for i in stride(from: startSample, to: endSample, by: 2) {
+            midSquaredSum += Double(midOutput.data(at: 0)[i] * midOutput.data(at: 0)[i])
+        }
+        let midRMS = sqrt(midSquaredSum / Double((endSample - startSample) / 2))
+
+        let bassRelativeDB = 20 * log10(compRMS / baselineRMS)
+        let midRelativeDB = 20 * log10(midRMS / baselineRMS)
+        #expect(bassRelativeDB - midRelativeDB > 6,
+                "60 Hz should be boosted relative to 1 kHz at low volume: bass=\(bassRelativeDB) dB, mid=\(midRelativeDB) dB")
+        #expect(compRMS <= baselineRMS * 1.0001,
+                "Without digital headroom the preamp must keep the compensator from raising absolute level above the input")
     }
 
     @Test("Loudness equalizer modifies output vs nil-processor baseline when enabled")
@@ -1149,7 +1182,7 @@ struct LoudnessIntegrationTests {
 
         // Compensator only
         let compensator = LoudnessCompensator(sampleRate: sampleRate)
-        compensator.updateForVolume(0.25)
+        compensator.update(listeningVolume: 0.25, digitalGain: 1.0)
         let compOnlyOutput = TestABL(buffers: [(channels: 2, frames: frames)])
         var compVol: Float = 1.0
         processWithDefaults(
@@ -1164,7 +1197,7 @@ struct LoudnessIntegrationTests {
         eqSettings.enabled = true
         let equalizer = LoudnessEqualizer(settings: eqSettings, sampleRate: Float(sampleRate))
         let compensator2 = LoudnessCompensator(sampleRate: sampleRate)
-        compensator2.updateForVolume(0.25)
+        compensator2.update(listeningVolume: 0.25, digitalGain: 1.0)
         let bothOutput = TestABL(buffers: [(channels: 2, frames: frames)])
         var bothVol: Float = 1.0
         processWithDefaults(
