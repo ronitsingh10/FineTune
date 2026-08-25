@@ -72,50 +72,68 @@ struct LoudnessCompensatorDynamicHeadroomTests {
         #expect(abs(compensator.currentPreampCutDB - compensator.currentPeakGainDB) < 1e-4)
     }
 
-    // MARK: 2. Shape invariance
+    // MARK: 2. Shape invariance (measured through the processor)
 
-    @Test("Preamp is a pure global offset: realized shape is identical for every digital gain", arguments: [Float(1.0), 0.5, 0.25, 0.1])
-    func shapeIsInvariant(digitalGain: Float) {
-        let phon = ISO226Contours.estimatedPhon(fromSystemVolume: listeningVolume)
+    private static let shapeProbeFrequencies: [Double] = [40, 100, 300, 1000, 3000, 10000]
+
+    /// Measured level (dB re: input) at each probe frequency through the real processing path.
+    private func measuredLevelsDB(_ compensator: LoudnessCompensator, digitalGain: Float) -> [Double] {
+        Self.shapeProbeFrequencies.map { frequency in
+            let peak = steadyPeak(compensator, frequency: frequency, digitalGain: digitalGain)
+            return Double(20 * log10f(peak / digitalGain))
+        }
+    }
+
+    private func fittedUncutDB(volume: Float, at frequency: Double) -> Double {
+        let phon = ISO226Contours.estimatedPhon(fromSystemVolume: volume)
         let gains = LoudnessCompensator.fittedSectionGains(forPhon: phon, sampleRate: sampleRate)
-        let uncut = LoudnessCompensator.realizedResponseDB(sectionGains: gains.map(Double.init), sampleRate: sampleRate)
+        let coefficients = LoudnessCompensator.coefficientsForBands(gains: gains, sampleRate: sampleRate)
+        // Direct cascade magnitude at the exact probe frequency (not the nearest grid point).
+        let omega = 2.0 * Double.pi * frequency / sampleRate
+        var magnitude = 1.0
+        for offset in stride(from: 0, to: LoudnessCompensator.bandCount * 5, by: 5) {
+            let nr = coefficients[offset] + coefficients[offset + 1] * cos(omega) + coefficients[offset + 2] * cos(2 * omega)
+            let ni = -(coefficients[offset + 1] * sin(omega) + coefficients[offset + 2] * sin(2 * omega))
+            let dr = 1.0 + coefficients[offset + 3] * cos(omega) + coefficients[offset + 4] * cos(2 * omega)
+            let di = -(coefficients[offset + 3] * sin(omega) + coefficients[offset + 4] * sin(2 * omega))
+            magnitude *= sqrt((nr * nr + ni * ni) / (dr * dr + di * di))
+        }
+        return 20.0 * log10(magnitude)
+    }
 
+    @Test("Preamp is a pure global offset: measured response + cut equals the fitted cascade at every probe", arguments: [Float(1.0), 0.5, 0.25, 0.1])
+    func shapeIsInvariant(digitalGain: Float) {
         let compensator = LoudnessCompensator(sampleRate: sampleRate)
         compensator.update(listeningVolume: listeningVolume, digitalGain: digitalGain)
         let cut = Double(compensator.currentPreampCutDB)
 
-        // The cascade coefficients are untouched, so realized − cut must equal the uncut
-        // fit at every grid point. (PR #351 subtracted the deficit from each section gain,
-        // which changes the shape — that is exactly what this test forbids.)
-        let grid = LoudnessCompensator.fitGridFrequencies()
-        let response = LoudnessCompensator.realizedResponseDB(sectionGains: gains.map(Double.init), sampleRate: sampleRate)
-        for (index, frequency) in grid.enumerated() {
-            let effective = response[index] - cut
-            #expect(abs((effective + cut) - uncut[index]) < 0.01, "\(frequency) Hz shape drifted")
+        // Measured through LoudnessCompensator.process: level + cut must land on the fitted
+        // (uncut) cascade at every probe frequency. A #351-style per-section subtraction
+        // would move 3 kHz by ~11 dB relative to 1 kHz and fail here.
+        let measured = measuredLevelsDB(compensator, digitalGain: digitalGain)
+        for (index, frequency) in Self.shapeProbeFrequencies.enumerated() {
+            let fitted = fittedUncutDB(volume: listeningVolume, at: frequency)
+            #expect(abs((measured[index] + cut) - fitted) < 0.3,
+                    "digitalGain \(digitalGain), \(frequency) Hz: measured \(measured[index]) + cut \(cut) vs fitted \(fitted)")
         }
-
-        // The 1 kHz-relative bass boost is the whole point of the feature and must survive.
-        func at(_ hz: Double) -> Double {
-            let i = grid.enumerated().min { abs($0.element - hz) < abs($1.element - hz) }!.offset
-            return uncut[i]
-        }
-        let bassRelative = at(40) - at(1000)
-        #expect(bassRelative > 12 && bassRelative < 16, "40 Hz should sit ≈ +13.6 dB above 1 kHz, got \(bassRelative)")
 
         // Peak after the cut never exceeds the headroom that was actually available.
         let available = Double(LoudnessCompensator.availableHeadroomDB(digitalGain: digitalGain))
-        #expect((uncut.max() ?? 0) - cut <= available + 1e-6)
+        #expect((measured.max() ?? 0) <= available + 0.05)
+    }
 
-        // Signal-domain check through the real processing path: the measured 40 Hz vs
-        // 1 kHz difference must match the fitted shape for every digital gain.
-        let bassPeak = steadyPeak(compensator, frequency: 40, digitalGain: digitalGain)
-        let midPeak = steadyPeak(compensator, frequency: 1000, digitalGain: digitalGain)
-        let measuredRelative = Double(20 * log10f(bassPeak / midPeak))
-        #expect(abs(measuredRelative - bassRelative) < 0.3,
-                "digitalGain \(digitalGain): measured 40 Hz rel. 1 kHz \(measuredRelative) dB vs fitted \(bassRelative) dB")
-        // …and the absolute 1 kHz level is the input scaled by exactly the cut.
-        let midLevelDB = Double(20 * log10f(midPeak / digitalGain))
-        #expect(abs(midLevelDB + cut) < 0.3, "digitalGain \(digitalGain): 1 kHz at \(midLevelDB) dB, expected \(-cut) dB")
+    @Test("40 Hz vs 1 kHz difference is identical for every digital gain")
+    func bassToMidDifferenceIsGainIndependent() {
+        var differences: [Double] = []
+        for digitalGain: Float in [1.0, 0.5, 0.25, 0.1] {
+            let compensator = LoudnessCompensator(sampleRate: sampleRate)
+            compensator.update(listeningVolume: listeningVolume, digitalGain: digitalGain)
+            let measured = measuredLevelsDB(compensator, digitalGain: digitalGain)
+            differences.append(measured[0] - measured[3])   // 40 Hz − 1 kHz
+        }
+        let spread = differences.max()! - differences.min()!
+        #expect(spread < 0.05, "40 Hz − 1 kHz must not depend on digital gain: \(differences)")
+        #expect(differences[0] > 12 && differences[0] < 16, "40 Hz should sit ≈ +13.5 dB above 1 kHz, got \(differences[0])")
     }
 
     // MARK: 3. Signal never exceeds unity

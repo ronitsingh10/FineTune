@@ -84,9 +84,12 @@ final class LoudnessCompensator: BiquadProcessor, @unchecked Sendable {
     /// Linear preamp gain applied before the biquad cascade. Written on the main
     /// thread; read by the RT thread in `preProcess`.
     ///
-    /// The preamp scalar and the biquad setup are two separate stores. At worst one RT
-    /// buffer sees the new preamp with the old cascade (or vice versa) — a momentary
-    /// level mismatch of a few dB for a few milliseconds, never an over-unity boost.
+    /// The preamp scalar and the biquad setup are independent stores, and the preamp
+    /// follows the tap's volume ramp *target* (`digitalGain`), not the ramped value the
+    /// RT path is applying at this instant. During volume, boost and routing changes the
+    /// three can therefore be momentarily mismatched; those transients are bounded by
+    /// the tap's ~150 ms volume ramp and land in the downstream SoftLimiter. The headroom
+    /// guarantee of this processor is a steady-state guarantee only.
     private nonisolated(unsafe) var _preampGain: Float = 1.0
 
     /// Peak realized gain (dB, ≥ 0) of the current cascade before the preamp. Main thread only.
@@ -160,8 +163,8 @@ final class LoudnessCompensator: BiquadProcessor, @unchecked Sendable {
             vDSP_biquad_CreateSetup(ptr.baseAddress!, vDSP_Length(Self.bandCount))
         }
         _currentPeakGainDB = Self.peakRealizedGainDB(sectionGains: gains, sampleRate: sampleRate)
-        // Store the preamp before the setup so no buffer ever runs the boosted cascade
-        // without its cut (see `_preampGain` for the benign mismatch window).
+        // Store the preamp before the setup swap so no buffer runs the new cascade
+        // without its cut (see `_preampGain` for the transient mismatch window).
         applyPreamp(cutDB: Self.preampCutDB(peakGainDB: _currentPeakGainDB, digitalGain: digitalGain))
         swapSetup(newSetup)
         setEnabled(true)
@@ -180,6 +183,12 @@ final class LoudnessCompensator: BiquadProcessor, @unchecked Sendable {
     /// Gain above unity (per-app boost) yields no headroom rather than negative headroom:
     /// the compensator only accounts for its own boost, and over-unity input remains the
     /// downstream limiter's responsibility exactly as before.
+    ///
+    /// Scope boundary: `digitalGain` is the tap's volume stage only. Manual EQ, AutoEQ
+    /// (without its preamp) and the loudness equalizer run between that stage and this
+    /// processor and can consume part of the credited headroom; the guarantee here is
+    /// that the compensator itself never adds boost beyond the headroom present at its
+    /// input from the volume stage. Upstream boost → SoftLimiter is unchanged from today.
     static func availableHeadroomDB(digitalGain: Float) -> Float {
         guard digitalGain > 0, digitalGain < 1.0 else { return 0.0 }
         return -20.0 * log10f(digitalGain)
