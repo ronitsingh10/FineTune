@@ -22,7 +22,9 @@ protocol ProcessTapControlling: AnyObject, Sendable {
     func updateEQSettings(_ settings: EQSettings)
     func updateAutoEQProfile(_ profile: AutoEQProfile?)
     func setAutoEQPreampEnabled(_ enabled: Bool)
-    func updateLoudnessCompensation(volume: Float, enabled: Bool)
+    /// - listeningVolume: device × app volume (phon estimation).
+    /// - digitalGain: gain already applied in the tap before the compensator (digital headroom).
+    func updateLoudnessCompensation(listeningVolume: Float, digitalGain: Float, enabled: Bool)
     func updateLoudnessEqualization(_ settings: LoudnessEqualizerSettings)
     func switchDevice(to newDeviceUID: String, preferredTapSourceDeviceUID: String?, sourceDeviceDead: Bool) async throws
     func updateDevices(to newDeviceUIDs: [String], preferredTapSourceDeviceUID: String?, sourceDeviceDead: Bool) async throws

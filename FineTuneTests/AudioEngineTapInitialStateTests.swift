@@ -20,7 +20,7 @@ final class RecordingProcessTapController: ProcessTapControlling {
         case updateEQSettings(EQSettings)
         case updateAutoEQProfile(profileID: String?)
         case setAutoEQPreampEnabled(Bool)
-        case updateLoudnessCompensation(volume: Float, enabled: Bool)
+        case updateLoudnessCompensation(listeningVolume: Float, digitalGain: Float, enabled: Bool)
         case updateLoudnessEqualization(LoudnessEqualizerSettings)
         case invalidate
     }
@@ -32,6 +32,7 @@ final class RecordingProcessTapController: ProcessTapControlling {
         var autoEQProfileID: String?
         var autoEQPreampEnabled: Bool
         var loudnessVolume: Float
+        var loudnessDigitalGain: Float
         var loudnessCompensationEnabled: Bool
         var loudnessEqualizerSettings: LoudnessEqualizerSettings
 
@@ -41,6 +42,7 @@ final class RecordingProcessTapController: ProcessTapControlling {
             self.autoEQProfileID = s.autoEQProfile?.id
             self.autoEQPreampEnabled = s.autoEQPreampEnabled
             self.loudnessVolume = s.loudnessVolume
+            self.loudnessDigitalGain = s.loudnessDigitalGain
             self.loudnessCompensationEnabled = s.loudnessCompensationEnabled
             self.loudnessEqualizerSettings = s.loudnessEqualizerSettings
         }
@@ -84,8 +86,8 @@ final class RecordingProcessTapController: ProcessTapControlling {
         events.append(.setAutoEQPreampEnabled(enabled))
     }
 
-    func updateLoudnessCompensation(volume: Float, enabled: Bool) {
-        events.append(.updateLoudnessCompensation(volume: volume, enabled: enabled))
+    func updateLoudnessCompensation(listeningVolume: Float, digitalGain: Float, enabled: Bool) {
+        events.append(.updateLoudnessCompensation(listeningVolume: listeningVolume, digitalGain: digitalGain, enabled: enabled))
     }
 
     func updateLoudnessEqualization(_ settings: LoudnessEqualizerSettings) {
@@ -275,6 +277,47 @@ struct AudioEngineTapInitialStateTests {
         // currentDeviceVolume is 0.5 (from MockDeviceVolumeProviding.volumes).
         // loudnessVolume should be deviceVolume (0.5) × appVolume (0.4) = 0.2.
         #expect(abs(snap.loudnessVolume - 0.2) < 1e-6)
+    }
+
+    @Test("loudnessDigitalGain = per-app volume × boost, excluding hardware device volume")
+    func loudnessDigitalGainIsTapGain() throws {
+        // The mock volume provider reports a hardware-backed device by default, so the
+        // 0.5 device volume acts after the DSP and must NOT count as digital headroom.
+        let fix = makeFixture(deviceVolume: 0.5)
+        fix.engine.volumeState.setVolume(for: fix.app.id, to: 0.4, identifier: fix.app.persistenceIdentifier)
+        fix.engine.volumeState.setBoost(for: fix.app.id, to: .x2, identifier: fix.app.persistenceIdentifier)
+
+        fix.engine.setDevice(for: fix.app, deviceUID: fix.device.uid)
+
+        let snap = try #require(capturedInitial(fix))
+        let tap = try #require(fix.lastTap())
+        // Listening level keeps the device volume (0.5 × 0.4) and ignores boost…
+        #expect(abs(snap.loudnessVolume - 0.2) < 1e-6)
+        // …while the digital gain is exactly what the tap multiplies by (0.4 × 2).
+        #expect(abs(snap.loudnessDigitalGain - 0.8) < 1e-6)
+        #expect(abs(snap.loudnessDigitalGain - tap.volume) < 1e-6)
+    }
+
+    @Test("Boost change re-syncs loudness compensation with the new digital gain")
+    func boostChangePropagatesDigitalGain() throws {
+        let fix = makeFixture(deviceVolume: 0.5)
+        var s = fix.settings.appSettings
+        s.loudnessCompensationEnabled = true
+        fix.settings.updateAppSettings(s)
+        fix.engine.volumeState.setVolume(for: fix.app.id, to: 0.4, identifier: fix.app.persistenceIdentifier)
+        fix.engine.setDevice(for: fix.app, deviceUID: fix.device.uid)
+        let tap = try #require(fix.lastTap())
+
+        fix.engine.setBoost(for: fix.app, to: .x3)
+
+        let last = try #require(tap.events.last)
+        guard case let .updateLoudnessCompensation(listeningVolume, digitalGain, enabled) = last else {
+            Issue.record("setBoost should push a loudness update, got \(last)")
+            return
+        }
+        #expect(enabled)
+        #expect(abs(listeningVolume - 0.2) < 1e-6, "boost must not change the listening level")
+        #expect(abs(digitalGain - 1.2) < 1e-6, "digital gain = 0.4 × 3")
     }
 
     // MARK: AutoEQ profile resolution
@@ -508,6 +551,7 @@ struct RecordingProcessTapControllerContractTests {
             #expect(snap.autoEQPreampEnabled == false)
             #expect(snap.eqSettings == EQSettings.flat)
             #expect(snap.loudnessVolume == 1.0)
+            #expect(snap.loudnessDigitalGain == 1.0)
         } else {
             Issue.record("activate() did not record an .activate event")
         }
