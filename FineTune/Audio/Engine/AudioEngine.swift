@@ -404,6 +404,10 @@ final class AudioEngine {
     var apps: [AudioApp] {
         processMonitor.activeApps
     }
+    
+    var audioDevices: [AudioDevice] {
+        deviceMonitor.outputDevices
+    }
 
     // MARK: - Displayable Apps (Active + Pinned Inactive)
 
