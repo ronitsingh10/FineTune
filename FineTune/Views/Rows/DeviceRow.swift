@@ -43,6 +43,23 @@ struct DeviceRow: View {
     let onAutoEQPreampToggle: (() -> Void)?
     let isFocused: Bool
     let iconOverrideSymbol: String?
+    let deviceAUEffectChain: [AUEffectChainEntry]
+    let isDeviceAUChainBypassed: Bool
+    let failedDeviceAUEntryIDs: Set<UUID>
+    let auPluginScanner: AUPluginScanner?
+    let getFavoriteAUPlugins: () -> Set<String>
+    let getAUCrashHistory: () -> Set<String>
+    let isFXExpanded: Bool
+    let onFXToggle: (() -> Void)?
+    let onAddDeviceAUEffect: ((AUPluginDescriptor) -> Void)?
+    let onRemoveDeviceAUEffect: ((UUID) -> Void)?
+    let onToggleDeviceAUEffect: ((UUID, Bool) -> Void)?
+    let onDeviceAUBypassToggle: (() -> Void)?
+    let onToggleAUFavorite: ((String) -> Void)?
+    let onOpenDeviceAUUI: ((UUID, Bool) -> Void)?
+    let onReorderDeviceAUEffects: (([AUEffectChainEntry]) -> Void)?
+    let getDeviceAUFactoryPresets: ((UUID) -> [(index: Int, name: String)])?
+    let onSelectDeviceAUFactoryPreset: ((UUID, Int) -> Void)?
 
     @State private var sliderValue: Double
     @State private var isEditing = false
@@ -94,7 +111,24 @@ struct DeviceRow: View {
         autoEQPreampEnabled: Bool = true,
         onAutoEQPreampToggle: (() -> Void)? = nil,
         isFocused: Bool = false,
-        iconOverrideSymbol: String? = nil
+        iconOverrideSymbol: String? = nil,
+        deviceAUEffectChain: [AUEffectChainEntry] = [],
+        isDeviceAUChainBypassed: Bool = false,
+        failedDeviceAUEntryIDs: Set<UUID> = [],
+        auPluginScanner: AUPluginScanner? = nil,
+        getFavoriteAUPlugins: @escaping () -> Set<String> = { [] },
+        getAUCrashHistory: @escaping () -> Set<String> = { [] },
+        isFXExpanded: Bool = false,
+        onFXToggle: (() -> Void)? = nil,
+        onAddDeviceAUEffect: ((AUPluginDescriptor) -> Void)? = nil,
+        onRemoveDeviceAUEffect: ((UUID) -> Void)? = nil,
+        onToggleDeviceAUEffect: ((UUID, Bool) -> Void)? = nil,
+        onDeviceAUBypassToggle: (() -> Void)? = nil,
+        onToggleAUFavorite: ((String) -> Void)? = nil,
+        onOpenDeviceAUUI: ((UUID, Bool) -> Void)? = nil,
+        onReorderDeviceAUEffects: (([AUEffectChainEntry]) -> Void)? = nil,
+        getDeviceAUFactoryPresets: ((UUID) -> [(index: Int, name: String)])? = nil,
+        onSelectDeviceAUFactoryPreset: ((UUID, Int) -> Void)? = nil
     ) {
         self.device = device
         self.isDefault = isDefault
@@ -118,11 +152,52 @@ struct DeviceRow: View {
         self.onAutoEQPreampToggle = onAutoEQPreampToggle
         self.isFocused = isFocused
         self.iconOverrideSymbol = iconOverrideSymbol
+        self.deviceAUEffectChain = deviceAUEffectChain
+        self.isDeviceAUChainBypassed = isDeviceAUChainBypassed
+        self.failedDeviceAUEntryIDs = failedDeviceAUEntryIDs
+        self.auPluginScanner = auPluginScanner
+        self.getFavoriteAUPlugins = getFavoriteAUPlugins
+        self.getAUCrashHistory = getAUCrashHistory
+        self.isFXExpanded = isFXExpanded
+        self.onFXToggle = onFXToggle
+        self.onAddDeviceAUEffect = onAddDeviceAUEffect
+        self.onRemoveDeviceAUEffect = onRemoveDeviceAUEffect
+        self.onToggleDeviceAUEffect = onToggleDeviceAUEffect
+        self.onDeviceAUBypassToggle = onDeviceAUBypassToggle
+        self.onToggleAUFavorite = onToggleAUFavorite
+        self.onOpenDeviceAUUI = onOpenDeviceAUUI
+        self.onReorderDeviceAUEffects = onReorderDeviceAUEffects
+        self.getDeviceAUFactoryPresets = getDeviceAUFactoryPresets
+        self.onSelectDeviceAUFactoryPreset = onSelectDeviceAUFactoryPreset
         self._sliderValue = State(initialValue: Self.volumeToSlider(volume, backend: volumeBackend))
     }
 
     var body: some View {
-        deviceHeader
+        Group {
+            if let scanner = auPluginScanner, let onAdd = onAddDeviceAUEffect,
+               let onRemove = onRemoveDeviceAUEffect, let onToggle = onToggleDeviceAUEffect,
+               let onBypass = onDeviceAUBypassToggle, let onFavorite = onToggleAUFavorite,
+               let onFXToggle {
+                ExpandableGlassRow(isExpanded: isFXExpanded, isFocused: isFocused) {
+                    deviceHeader
+                } expandedContent: {
+                    AUEffectChainView(entries: deviceAUEffectChain, isBypassed: isDeviceAUChainBypassed,
+                                      scanner: scanner, getFavoriteIDs: getFavoriteAUPlugins,
+                                      getCrashHistory: getAUCrashHistory, onToggle: onToggle,
+                                      onRemove: onRemove, onAddEffect: onAdd, onBypassToggle: onBypass,
+                                      onToggleFavorite: onFavorite,
+                                      onOpenUI: { onOpenDeviceAUUI?($0, false) },
+                                      onReorder: { onReorderDeviceAUEffects?($0) },
+                                      onOpenGenericUI: { onOpenDeviceAUUI?($0, true) },
+                                      failedEntryIDs: failedDeviceAUEntryIDs,
+                                      getFactoryPresets: getDeviceAUFactoryPresets,
+                                      onSelectFactoryPreset: onSelectDeviceAUFactoryPreset)
+                    .padding(.top, DesignTokens.Spacing.sm)
+                }
+            } else {
+                deviceHeader
+            }
+        }
             .contentShape(Rectangle())
             .onTapGesture {
                 // Whole-row tap sets this device as default. Inner controls
@@ -184,6 +259,14 @@ struct DeviceRow: View {
                         preampEnabled: autoEQPreampEnabled,
                         onPreampToggle: onAutoEQPreampToggle
                     )
+                }
+
+                if let onFXToggle {
+                    Button("FX", action: onFXToggle)
+                        .buttonStyle(.plain)
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(isFXExpanded || !deviceAUEffectChain.isEmpty ? DesignTokens.Colors.accentPrimary : DesignTokens.Colors.interactiveDefault)
+                        .help(isFXExpanded ? "Close Audio Unit effects" : "Audio Unit effects")
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)

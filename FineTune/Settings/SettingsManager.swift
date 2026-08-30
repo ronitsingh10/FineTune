@@ -98,6 +98,12 @@ final class SettingsManager {
         var appMutes: [String: Bool] = [:]  // bundleID → isMuted
         var appBoosts: [String: Float] = [:]  // bundleID → boost rawValue (1.0, 2.0, 3.0, 4.0)
         var appEQSettings: [String: EQSettings] = [:]  // bundleID → EQ settings
+        var appAUEffectChains: [String: [AUEffectChainEntry]] = [:]
+        var deviceAUEffectChains: [String: [AUEffectChainEntry]] = [:]
+        var favoriteAUPlugins: Set<String> = []
+        var auPluginCrashHistory: Set<String> = []
+        var appAUBypassed: [String: Bool] = [:]
+        var deviceAUBypassed: [String: Bool] = [:]
         var appSettings: AppSettings = AppSettings()  // App-wide settings
         var systemSoundsFollowsDefault: Bool = true  // Whether system sounds follows macOS default
         var appDeviceSelectionMode: [String: DeviceSelectionMode] = [:]  // bundleID → selection mode
@@ -153,6 +159,12 @@ final class SettingsManager {
             appMutes = try c.decodeIfPresent([String: Bool].self, forKey: .appMutes) ?? [:]
             appBoosts = try c.decodeIfPresent([String: Float].self, forKey: .appBoosts) ?? [:]
             appEQSettings = try c.decodeIfPresent([String: EQSettings].self, forKey: .appEQSettings) ?? [:]
+            appAUEffectChains = try c.decodeIfPresent([String: [AUEffectChainEntry]].self, forKey: .appAUEffectChains) ?? [:]
+            deviceAUEffectChains = try c.decodeIfPresent([String: [AUEffectChainEntry]].self, forKey: .deviceAUEffectChains) ?? [:]
+            favoriteAUPlugins = try c.decodeIfPresent(Set<String>.self, forKey: .favoriteAUPlugins) ?? []
+            auPluginCrashHistory = try c.decodeIfPresent(Set<String>.self, forKey: .auPluginCrashHistory) ?? []
+            appAUBypassed = try c.decodeIfPresent([String: Bool].self, forKey: .appAUBypassed) ?? [:]
+            deviceAUBypassed = try c.decodeIfPresent([String: Bool].self, forKey: .deviceAUBypassed) ?? [:]
             var decodedAppSettings = try c.decodeIfPresent(AppSettings.self, forKey: .appSettings) ?? AppSettings()
             if !decodedAppSettings.defaultNewAppVolume.isFinite || decodedAppSettings.defaultNewAppVolume < 0 {
                 decodedAppSettings.defaultNewAppVolume = 1.0
@@ -269,6 +281,85 @@ final class SettingsManager {
         settings.appEQSettings[appIdentifier] = eqSettings
         scheduleSave()
     }
+
+    // MARK: - Audio Unit effects
+
+    func getAUEffectChain(for appIdentifier: String) -> [AUEffectChainEntry] {
+        settings.appAUEffectChains[appIdentifier] ?? []
+    }
+
+    func setAUEffectChain(_ chain: [AUEffectChainEntry], for appIdentifier: String) {
+        if chain.isEmpty { settings.appAUEffectChains.removeValue(forKey: appIdentifier) }
+        else { settings.appAUEffectChains[appIdentifier] = chain }
+        scheduleSave()
+    }
+
+    func getDeviceAUEffectChain(for deviceUID: String) -> [AUEffectChainEntry] {
+        settings.deviceAUEffectChains[deviceUID] ?? []
+    }
+
+    func setDeviceAUEffectChain(_ chain: [AUEffectChainEntry], for deviceUID: String) {
+        if chain.isEmpty { settings.deviceAUEffectChains.removeValue(forKey: deviceUID) }
+        else { settings.deviceAUEffectChains[deviceUID] = chain }
+        scheduleSave()
+    }
+
+    var favoriteAUPlugins: Set<String> { settings.favoriteAUPlugins }
+    var auPluginCrashHistory: Set<String> { settings.auPluginCrashHistory }
+
+    func isAUPluginFavorite(_ pluginID: String) -> Bool { settings.favoriteAUPlugins.contains(pluginID) }
+
+    func toggleAUPluginFavorite(_ pluginID: String) {
+        if settings.favoriteAUPlugins.contains(pluginID) { settings.favoriteAUPlugins.remove(pluginID) }
+        else { settings.favoriteAUPlugins.insert(pluginID) }
+        scheduleSave()
+    }
+
+    func markAUPluginsActiveAtCrash(_ pluginIDs: Set<String>) {
+        settings.auPluginCrashHistory.formUnion(pluginIDs)
+        scheduleSave()
+    }
+
+    func wasAUPluginInvolvedInCrash(_ pluginID: String) -> Bool { settings.auPluginCrashHistory.contains(pluginID) }
+
+    func clearAUPluginCrashHistory() {
+        settings.auPluginCrashHistory.removeAll()
+        scheduleSave()
+    }
+
+    func disableCrashedAUPlugins(_ pluginIDs: Set<String>) {
+        for (key, chain) in settings.appAUEffectChains {
+            settings.appAUEffectChains[key] = chain.map { entry in
+                var entry = entry
+                if pluginIDs.contains(entry.pluginDescriptor.id) { entry.isEnabled = false }
+                return entry
+            }
+        }
+        for (key, chain) in settings.deviceAUEffectChains {
+            settings.deviceAUEffectChains[key] = chain.map { entry in
+                var entry = entry
+                if pluginIDs.contains(entry.pluginDescriptor.id) { entry.isEnabled = false }
+                return entry
+            }
+        }
+        scheduleSave()
+    }
+
+    func setAppAUBypassed(_ bypassed: Bool, for appIdentifier: String) {
+        if bypassed { settings.appAUBypassed[appIdentifier] = true }
+        else { settings.appAUBypassed.removeValue(forKey: appIdentifier) }
+        scheduleSave()
+    }
+
+    func getAppAUBypassed(for appIdentifier: String) -> Bool { settings.appAUBypassed[appIdentifier] ?? false }
+
+    func setDeviceAUBypassed(_ bypassed: Bool, for deviceUID: String) {
+        if bypassed { settings.deviceAUBypassed[deviceUID] = true }
+        else { settings.deviceAUBypassed.removeValue(forKey: deviceUID) }
+        scheduleSave()
+    }
+
+    func getDeviceAUBypassed(for deviceUID: String) -> Bool { settings.deviceAUBypassed[deviceUID] ?? false }
 
     // MARK: - Device Selection Mode
 
@@ -836,6 +927,12 @@ final class SettingsManager {
         settings.appDeviceRouting.removeAll()
         settings.appMutes.removeAll()
         settings.appEQSettings.removeAll()
+        settings.appAUEffectChains.removeAll()
+        settings.deviceAUEffectChains.removeAll()
+        settings.favoriteAUPlugins.removeAll()
+        settings.auPluginCrashHistory.removeAll()
+        settings.appAUBypassed.removeAll()
+        settings.deviceAUBypassed.removeAll()
         settings.pinnedApps.removeAll()
         settings.pinnedAppInfo.removeAll()
         settings.ignoredApps.removeAll()

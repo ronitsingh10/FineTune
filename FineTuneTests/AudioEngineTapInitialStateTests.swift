@@ -22,6 +22,10 @@ final class RecordingProcessTapController: ProcessTapControlling {
         case setAutoEQPreampEnabled(Bool)
         case updateLoudnessCompensation(volume: Float, enabled: Bool)
         case updateLoudnessEqualization(LoudnessEqualizerSettings)
+        case updateAUEffectChain([AUEffectChainEntry])
+        case updateDeviceAUEffectChain([AUEffectChainEntry])
+        case setAUChainBypassed(Bool)
+        case setDeviceAUChainBypassed(Bool)
         case invalidate
     }
 
@@ -34,6 +38,10 @@ final class RecordingProcessTapController: ProcessTapControlling {
         var loudnessVolume: Float
         var loudnessCompensationEnabled: Bool
         var loudnessEqualizerSettings: LoudnessEqualizerSettings
+        var appAUEffectChain: [AUEffectChainEntry]
+        var deviceAUEffectChain: [AUEffectChainEntry]
+        var appAUBypassed: Bool
+        var deviceAUBypassed: Bool
 
         @MainActor
         init(_ s: TapInitialState) {
@@ -43,6 +51,10 @@ final class RecordingProcessTapController: ProcessTapControlling {
             self.loudnessVolume = s.loudnessVolume
             self.loudnessCompensationEnabled = s.loudnessCompensationEnabled
             self.loudnessEqualizerSettings = s.loudnessEqualizerSettings
+            self.appAUEffectChain = s.appAUEffectChain
+            self.deviceAUEffectChain = s.deviceAUEffectChain
+            self.appAUBypassed = s.appAUBypassed
+            self.deviceAUBypassed = s.deviceAUBypassed
         }
     }
 
@@ -58,6 +70,8 @@ final class RecordingProcessTapController: ProcessTapControlling {
     private(set) var currentDeviceUIDs: [String]
     var currentDeviceUID: String? { currentDeviceUIDs.first }
     var tapSourceDeviceUID: String? = nil
+    var failedAppAUEntryIDs: Set<UUID> = []
+    var failedDeviceAUEntryIDs: Set<UUID> = []
 
     init(app: AudioApp, deviceUIDs: [String]) {
         self.app = app
@@ -91,6 +105,13 @@ final class RecordingProcessTapController: ProcessTapControlling {
     func updateLoudnessEqualization(_ settings: LoudnessEqualizerSettings) {
         events.append(.updateLoudnessEqualization(settings))
     }
+
+    func updateAUEffectChain(_ entries: [AUEffectChainEntry]) { events.append(.updateAUEffectChain(entries)) }
+    func updateDeviceAUEffectChain(_ entries: [AUEffectChainEntry]) { events.append(.updateDeviceAUEffectChain(entries)) }
+    func setAUChainBypassed(_ bypassed: Bool) { events.append(.setAUChainBypassed(bypassed)) }
+    func setDeviceAUChainBypassed(_ bypassed: Bool) { events.append(.setDeviceAUChainBypassed(bypassed)) }
+    func failedAUEffectEntryIDs() -> Set<UUID> { failedAppAUEntryIDs }
+    func failedDeviceAUEffectEntryIDs() -> Set<UUID> { failedDeviceAUEntryIDs }
 
     func switchDevice(to newDeviceUID: String, preferredTapSourceDeviceUID: String?, sourceDeviceDead: Bool) async throws {
         currentDeviceUIDs = [newDeviceUID]
@@ -132,7 +153,8 @@ private struct Fixture {
 @MainActor
 private func makeFixture(
     supportsAutoEQ: Bool = true,
-    deviceVolume: Float = 0.75
+    deviceVolume: Float = 0.75,
+    editorInvalidator: (@MainActor (Set<UUID>, Bool) -> Void)? = nil
 ) -> Fixture {
     let tempDir = FileManager.default.temporaryDirectory
         .appendingPathComponent(UUID().uuidString)
@@ -184,6 +206,7 @@ private func makeFixture(
             box.last = tap
             return tap
         },
+        editorInvalidator: editorInvalidator,
         startMonitorsAutomatically: false
     )
 
@@ -203,11 +226,70 @@ private final class TapBox {
     var last: RecordingProcessTapController?
 }
 
+@MainActor
+private func waitForTapEvent(
+    _ tap: RecordingProcessTapController,
+    matching predicate: @escaping (RecordingProcessTapController.Event) -> Bool
+) async -> Bool {
+    for _ in 0..<32 {
+        if tap.events.contains(where: predicate) { return true }
+        await Task.yield()
+    }
+    return false
+}
+
 // MARK: - Suite
 
 @Suite("AudioEngine.tapInitialState — first-sound fix (PR-1)")
 @MainActor
 struct AudioEngineTapInitialStateTests {
+
+    @Test("App chain mutation invalidates exactly its outgoing editor IDs")
+    func appChainInvalidationScope() {
+        var recorded: [Set<UUID>] = []
+        let fix = makeFixture(editorInvalidator: { ids, _ in recorded.append(ids) })
+        let first = AUEffectChainEntry(plugin: testAUPlugin(name: "First"))
+        let second = AUEffectChainEntry(plugin: testAUPlugin(name: "Second", subtype: 2))
+        let unrelated = AUEffectChainEntry(plugin: testAUPlugin(name: "Other", subtype: 3))
+        fix.settings.setAUEffectChain([first, second], for: fix.app.persistenceIdentifier)
+        fix.engine.reorderAUEffects(for: fix.app, entries: [second, first])
+        #expect(recorded == [Set([first.id, second.id])])
+        #expect(!recorded[0].contains(unrelated.id))
+    }
+
+    @Test("Device chain mutation invalidates exactly its outgoing editor IDs")
+    func deviceChainInvalidationScope() {
+        var recorded: [Set<UUID>] = []
+        let fix = makeFixture(editorInvalidator: { ids, _ in recorded.append(ids) })
+        let first = AUEffectChainEntry(plugin: testAUPlugin(name: "First"))
+        let second = AUEffectChainEntry(plugin: testAUPlugin(name: "Second", subtype: 4))
+        let unrelated = AUEffectChainEntry(plugin: testAUPlugin(name: "Other", subtype: 5))
+        fix.settings.setDeviceAUEffectChain([first, second], for: fix.device.uid)
+        fix.engine.reorderDeviceAUEffects(deviceUID: fix.device.uid, entries: [second, first])
+        #expect(recorded == [Set([first.id, second.id])])
+        #expect(!recorded[0].contains(unrelated.id))
+    }
+
+    @Test("Successful destination adoption invalidates destination editors only")
+    func destinationAdoptionInvalidationScope() {
+        var recorded: [Set<UUID>] = []
+        let fix = makeFixture(editorInvalidator: { ids, _ in recorded.append(ids) })
+        let destination = AUEffectChainEntry(plugin: testAUPlugin(name: "Destination", subtype: 7))
+        fix.settings.setDeviceAUEffectChain([destination], for: fix.device.uid)
+        fix.engine.invalidateDestinationEditorAfterSuccessfulRoute(deviceUID: fix.device.uid)
+        #expect(recorded == [Set([destination.id])])
+    }
+
+    @Test("Failed route leaves source editors and state untouched")
+    func failedRouteDoesNotInvalidateEditors() {
+        var recorded: [Set<UUID>] = []
+        let fix = makeFixture(editorInvalidator: { ids, _ in recorded.append(ids) })
+        let source = AUEffectChainEntry(plugin: testAUPlugin(name: "Source", subtype: 8))
+        fix.settings.setDeviceAUEffectChain([source], for: fix.device.uid)
+        fix.engine.handleRouteEditorInvalidation(success: false, destinationUID: fix.device.uid)
+        #expect(recorded.isEmpty)
+        #expect(fix.settings.getDeviceAUEffectChain(for: fix.device.uid) == [source])
+    }
 
     // MARK: Single-knob derivation
 
@@ -388,7 +470,9 @@ struct AudioEngineTapInitialStateTests {
         for event in tap.events.prefix(activateIndex) {
             switch event {
             case .updateEQSettings, .updateAutoEQProfile, .setAutoEQPreampEnabled,
-                 .updateLoudnessCompensation, .updateLoudnessEqualization:
+                 .updateLoudnessCompensation, .updateLoudnessEqualization,
+                 .updateAUEffectChain, .updateDeviceAUEffectChain,
+                 .setAUChainBypassed, .setDeviceAUChainBypassed:
                 Issue.record("Pre-activate mutation breaks the apply-initial-state contract: \(event)")
             case .activate, .invalidate:
                 break
@@ -426,6 +510,131 @@ struct AudioEngineTapInitialStateTests {
         }
         #expect(postActivateAutoEQ.contains(where: { $0 == nil }))
     }
+
+    @Test("Persisted app and device AU state is captured before the first tap callback")
+    func auStateIsCarriedBeforeActivation() throws {
+        let fix = makeFixture()
+        let appEntry = AUEffectChainEntry(plugin: testAUPlugin(name: "App FX"))
+        let deviceEntry = AUEffectChainEntry(plugin: testAUPlugin(name: "Device FX", subtype: 0x64657631))
+        fix.settings.setAUEffectChain([appEntry], for: fix.app.persistenceIdentifier)
+        fix.settings.setDeviceAUEffectChain([deviceEntry], for: fix.device.uid)
+        fix.settings.setAppAUBypassed(true, for: fix.app.persistenceIdentifier)
+        fix.settings.setDeviceAUBypassed(true, for: fix.device.uid)
+
+        fix.engine.setDevice(for: fix.app, deviceUID: fix.device.uid)
+
+        let tap = try #require(fix.lastTap())
+        let snap = try #require(capturedInitial(fix))
+        #expect(snap.appAUEffectChain == [appEntry])
+        #expect(snap.deviceAUEffectChain == [deviceEntry])
+        #expect(snap.appAUBypassed)
+        #expect(snap.deviceAUBypassed)
+        #expect(tap.events.first == .activate(snap))
+    }
+
+    @Test("Reordering an active app AU chain persists and rebuilds the live chain")
+    func appAUReorderPersistsAndUpdatesTap() throws {
+        let fix = makeFixture()
+        let first = AUEffectChainEntry(plugin: testAUPlugin(name: "First"))
+        let second = AUEffectChainEntry(plugin: testAUPlugin(name: "Second", subtype: 0x61707032))
+        fix.settings.setAUEffectChain([first, second], for: fix.app.persistenceIdentifier)
+        fix.engine.setDevice(for: fix.app, deviceUID: fix.device.uid)
+        let reordered = [second, first]
+
+        fix.engine.reorderAUEffects(for: fix.app, entries: reordered)
+
+        #expect(fix.settings.getAUEffectChain(for: fix.app.persistenceIdentifier) == reordered)
+        let tap = try #require(fix.lastTap())
+        #expect(tap.events.contains(.updateAUEffectChain(reordered)))
+    }
+
+    @Test("Reordering an active device AU chain persists and rebuilds affected taps")
+    func deviceAUReorderPersistsAndUpdatesTap() throws {
+        let fix = makeFixture()
+        let first = AUEffectChainEntry(plugin: testAUPlugin(name: "First"))
+        let second = AUEffectChainEntry(plugin: testAUPlugin(name: "Second", subtype: 0x64657632))
+        fix.engine.setDevice(for: fix.app, deviceUID: fix.device.uid)
+        let reordered = [second, first]
+
+        fix.engine.reorderDeviceAUEffects(deviceUID: fix.device.uid, entries: reordered)
+
+        #expect(fix.settings.getDeviceAUEffectChain(for: fix.device.uid) == reordered)
+        let tap = try #require(fix.lastTap())
+        #expect(tap.events.contains(.updateDeviceAUEffectChain(reordered)))
+    }
+
+    @Test("Lazy AU state hydration preserves persisted bypass while mutating chains")
+    func lazyAUStatePreservesPersistedBypass() {
+        let fix = makeFixture()
+        let entry = AUEffectChainEntry(plugin: testAUPlugin(name: "Persisted FX"))
+        fix.settings.setAUEffectChain([entry], for: fix.app.persistenceIdentifier)
+        fix.settings.setAppAUBypassed(true, for: fix.app.persistenceIdentifier)
+        fix.settings.setDeviceAUEffectChain([entry], for: fix.device.uid)
+        fix.settings.setDeviceAUBypassed(true, for: fix.device.uid)
+
+        fix.engine.reorderAUEffects(for: fix.app, entries: [entry])
+        fix.engine.reorderDeviceAUEffects(deviceUID: fix.device.uid, entries: [entry])
+
+        #expect(fix.engine.appAU[fix.app.persistenceIdentifier]?.isBypassed == true)
+        #expect(fix.engine.deviceAU[fix.device.uid]?.isBypassed == true)
+        #expect(fix.settings.getAppAUBypassed(for: fix.app.persistenceIdentifier))
+        #expect(fix.settings.getDeviceAUBypassed(for: fix.device.uid))
+    }
+
+    @Test("AU host failures are reflected into app and device live chain state")
+    func failedAUEntriesArePublishedToLiveState() throws {
+        let fix = makeFixture()
+        let entry = AUEffectChainEntry(plugin: testAUPlugin(name: "Unavailable FX"))
+        fix.settings.setAUEffectChain([entry], for: fix.app.persistenceIdentifier)
+        fix.settings.setDeviceAUEffectChain([entry], for: fix.device.uid)
+        fix.engine.setDevice(for: fix.app, deviceUID: fix.device.uid)
+        let tap = try #require(fix.lastTap())
+        tap.failedAppAUEntryIDs = [entry.id]
+        tap.failedDeviceAUEntryIDs = [entry.id]
+
+        fix.engine.reorderAUEffects(for: fix.app, entries: [entry])
+        fix.engine.reorderDeviceAUEffects(deviceUID: fix.device.uid, entries: [entry])
+
+        #expect(fix.engine.appAU[fix.app.persistenceIdentifier]?.failedEntryIDs == [entry.id])
+        #expect(fix.engine.deviceAU[fix.device.uid]?.failedEntryIDs == [entry.id])
+    }
+
+    @Test("A single-device switch applies the destination AU chain and bypass")
+    func deviceSwitchAppliesDestinationAUState() async throws {
+        let fix = makeFixture()
+        let destination = AudioDevice(id: 100, uid: "uid-destination", name: "Destination", icon: nil, supportsAutoEQ: false)
+        fix.deviceMonitor.addOutputDevice(destination)
+        fix.deviceVolume.volumes[destination.id] = 0.8
+        let destinationEntry = AUEffectChainEntry(plugin: testAUPlugin(name: "Destination FX"))
+        fix.settings.setDeviceAUEffectChain([destinationEntry], for: destination.uid)
+        fix.settings.setDeviceAUBypassed(true, for: destination.uid)
+        fix.engine.setDevice(for: fix.app, deviceUID: fix.device.uid)
+        let tap = try #require(fix.lastTap())
+
+        fix.engine.setDevice(for: fix.app, deviceUID: destination.uid)
+
+        #expect(await waitForTapEvent(tap) { $0 == .updateDeviceAUEffectChain([destinationEntry]) })
+        #expect(tap.events.contains(.setDeviceAUChainBypassed(true)))
+    }
+
+    @Test("A multi-device update applies the primary destination AU chain and bypass")
+    func multiDeviceUpdateAppliesDestinationAUState() async throws {
+        let fix = makeFixture()
+        let destination = AudioDevice(id: 101, uid: "uid-multi", name: "Multi Destination", icon: nil, supportsAutoEQ: false)
+        fix.deviceMonitor.addOutputDevice(destination)
+        fix.deviceVolume.volumes[destination.id] = 0.8
+        let destinationEntry = AUEffectChainEntry(plugin: testAUPlugin(name: "Multi FX"))
+        fix.settings.setDeviceAUEffectChain([destinationEntry], for: destination.uid)
+        fix.settings.setDeviceAUBypassed(true, for: destination.uid)
+        fix.engine.setDevice(for: fix.app, deviceUID: fix.device.uid)
+        let tap = try #require(fix.lastTap())
+
+        fix.engine.setDeviceSelectionMode(for: fix.app, to: .multi)
+        fix.engine.setSelectedDeviceUIDs(for: fix.app, to: [destination.uid])
+
+        #expect(await waitForTapEvent(tap) { $0 == .updateDeviceAUEffectChain([destinationEntry]) })
+        #expect(tap.events.contains(.setDeviceAUChainBypassed(true)))
+    }
 }
 
 // MARK: - Helpers
@@ -437,6 +646,17 @@ private func capturedInitial(_ fix: Fixture) -> RecordingProcessTapController.Ta
         if case let .activate(snapshot) = event { return snapshot }
     }
     return nil
+}
+
+private func testAUPlugin(name: String, subtype: UInt32 = 0x61707031) -> AUPluginDescriptor {
+    AUPluginDescriptor(
+        componentType: kAudioUnitType_Effect,
+        componentSubType: subtype,
+        componentManufacturer: 0x74657374,
+        name: name,
+        manufacturer: "Test",
+        version: 1
+    )
 }
 
 // MARK: - Mock contract
