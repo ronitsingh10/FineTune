@@ -50,6 +50,8 @@ struct FineTuneApp: App {
     @State private var menuBarPopupController: MenuBarPopupController
     @State private var shortcutsRegistry: ShortcutsRegistry
     @State private var resolver: TargetAppResolver
+    /// Process-lifetime scanner keeps Audio Component registration notifications alive.
+    @State private var auPluginScanner: AUPluginScanner
     @StateObject private var updateManager = UpdateManager()
     @State private var showMenuBarExtra = true
 
@@ -87,6 +89,7 @@ struct FineTuneApp: App {
             audioEngine: audioEngine,
             deviceVolumeMonitor: audioEngine.deviceVolumeMonitor as! DeviceVolumeMonitor,
             updateManager: updateManager,
+            auPluginScanner: auPluginScanner,
             permission: audioEngine.permission,
             accessibility: accessibility,
             mediaKeyStatus: mediaKeyStatus,
@@ -107,6 +110,13 @@ struct FineTuneApp: App {
         OrphanedTapCleanup.destroyOrphanedDevices()
 
         let settings = SettingsManager()
+        let scanner = AUPluginScanner()
+        let crashedPluginIDs = CrashGuard.readAndClearCrashPlugins(knownPluginIDs: scanner.plugins.map(\.id))
+        if !crashedPluginIDs.isEmpty {
+            settings.markAUPluginsActiveAtCrash(crashedPluginIDs)
+            settings.disableCrashedAUPlugins(crashedPluginIDs)
+        }
+        _auPluginScanner = State(initialValue: scanner)
         let profileManager = AutoEQProfileManager()
         let permission = AudioRecordingPermission()
         let engine = AudioEngine(permission: permission, settingsManager: settings, autoEQProfileManager: profileManager)
@@ -254,6 +264,7 @@ struct FineTuneApp: App {
                 monitor.stop()
                 accessibilityService.stop()
                 hud.shutdown()
+                AUPluginWindowManager.shared.saveAllOpenWindows()
                 settings.flushSync()
             }
         }

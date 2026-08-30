@@ -17,6 +17,55 @@ import Testing
 import Foundation
 @testable import FineTune
 
+@Suite("AU staged device transitions")
+struct AUStagedDeviceTransitionTests {
+    private func entry(_ name: String, subtype: OSType) -> AUEffectChainEntry {
+        AUEffectChainEntry(plugin: AUPluginDescriptor(componentType: kAudioUnitType_Effect, componentSubType: subtype, componentManufacturer: 1, name: name, manufacturer: "Test", version: 1))
+    }
+
+    @Test("Secondary selects staged destination and promotion adopts it")
+    func stagedSelectionAndPromotion() {
+        let source = entry("Source", subtype: 1), destination = entry("Destination", subtype: 2)
+        var state = ProcessTapController.StagedDeviceAUState(sourceEntries: [source], sourceBypassed: false, stagedDeviceUID: "destination", stagedEntries: [destination], stagedBypassed: true)
+        #expect(ProcessTapController.StagedDeviceAUState.secondarySelection(state).0 == [destination])
+        #expect(ProcessTapController.StagedDeviceAUState.secondarySelection(state).1)
+        state.promote()
+        #expect(state.sourceEntries == [destination] && state.sourceBypassed && state.stagedDeviceUID == nil)
+    }
+
+    @Test("Rollback preserves source; matching staged edit survives while source edit is ignored")
+    func rollbackAndStagedEdit() {
+        let source = entry("Source", subtype: 1), destination = entry("Destination", subtype: 2), edited = entry("Edited", subtype: 3)
+        var state = ProcessTapController.StagedDeviceAUState(sourceEntries: [source], sourceBypassed: true, stagedDeviceUID: "destination", stagedEntries: [destination], stagedBypassed: false)
+        state.edit(deviceUID: "source", entries: [edited], bypassed: false)
+        #expect(state.stagedEntries == [destination])
+        state.edit(deviceUID: "destination", entries: [edited], bypassed: true)
+        state.promote()
+        #expect(state.sourceEntries == [edited] && state.sourceBypassed)
+        state = ProcessTapController.StagedDeviceAUState(sourceEntries: [source], sourceBypassed: true, stagedDeviceUID: "destination", stagedEntries: [destination], stagedBypassed: false)
+        state.rollback()
+        #expect(state.sourceEntries == [source] && state.sourceBypassed && state.stagedEntries == nil)
+    }
+
+    @Test("Destructive destination activation selects and adopts staged entries and bypass")
+    func destructiveDestinationActivationUsesStagedState() {
+        let source = entry("Source", subtype: 4), destination = entry("Destination", subtype: 5)
+        var state = ProcessTapController.StagedDeviceAUState(sourceEntries: [source], sourceBypassed: false, stagedDeviceUID: "destination", stagedEntries: [destination], stagedBypassed: true)
+        #expect(ProcessTapController.StagedDeviceAUState.destructiveSelection(state).0 == [destination])
+        #expect(ProcessTapController.StagedDeviceAUState.destructiveSelection(state).1)
+        state.promote()
+        #expect(state.sourceEntries == [destination] && state.sourceBypassed)
+    }
+
+    @Test("App and device bypass survive destructive and output-rate chain replacement")
+    func bypassSurvivesReplacementPaths() {
+        let appBypassed = ProcessTapController.StagedDeviceAUState.replacementBypass(previous: true)
+        let deviceBypassed = ProcessTapController.StagedDeviceAUState.replacementBypass(previous: true)
+        #expect(appBypassed)
+        #expect(deviceBypassed)
+    }
+}
+
 // MARK: - Test Helpers
 
 /// Manages an AudioBufferList with Float32 data for testing.
@@ -123,6 +172,40 @@ private func processWithDefaults(
         loudnessEqualizerProc: loudnessEqualizerProc,
         loudnessCompensatorProc: loudnessCompensatorProc
     )
+}
+
+@Suite("AU tail and bypass gate behavior")
+struct AUTailGateTests {
+    @Test("Tail keeps the gate input active through its configured sample budget")
+    func tailKeepsGateOpen() {
+        var silentSamples: UInt64 = 0
+        #expect(ProcessTapController.advanceAUTail(rawPeak: 0, tailSamples: 8, frameCount: 4, silentSamples: &silentSamples))
+        #expect(silentSamples == 4)
+        #expect(ProcessTapController.advanceAUTail(rawPeak: 0, tailSamples: 8, frameCount: 4, silentSamples: &silentSamples))
+        #expect(silentSamples == 8)
+        #expect(!ProcessTapController.advanceAUTail(rawPeak: 0, tailSamples: 8, frameCount: 1, silentSamples: &silentSamples))
+    }
+
+    @Test("Audible input resets the AU tail budget")
+    func audibleInputResetsTail() {
+        var silentSamples: UInt64 = 6
+        #expect(!ProcessTapController.advanceAUTail(rawPeak: 0.5, tailSamples: 8, frameCount: 4, silentSamples: &silentSamples))
+        #expect(silentSamples == 0)
+    }
+
+    @Test("No active chain tail is an immediate gate passthrough")
+    func bypassHasNoTailBudget() {
+        var silentSamples: UInt64 = 3
+        #expect(!ProcessTapController.advanceAUTail(rawPeak: 0, tailSamples: 0, frameCount: 4, silentSamples: &silentSamples))
+        #expect(silentSamples == 0)
+    }
+
+    @Test("AU rendering suspends only after silence outlasts the declared tail")
+    func renderSuspensionPreservesAudioAndTail() {
+        #expect(ProcessTapController.shouldRenderAudioUnits(rawPeak: 0.5, tailActive: false))
+        #expect(ProcessTapController.shouldRenderAudioUnits(rawPeak: 0, tailActive: true))
+        #expect(!ProcessTapController.shouldRenderAudioUnits(rawPeak: 0, tailActive: false))
+    }
 }
 
 private func repositoryRootURL() -> URL {

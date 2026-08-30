@@ -1,3 +1,5 @@
+import Foundation
+
 /// Abstraction over process tap controllers for testability.
 ///
 /// **Threading:** The protocol surface is `@MainActor` — AudioEngine and tests
@@ -24,6 +26,14 @@ protocol ProcessTapControlling: AnyObject, Sendable {
     func setAutoEQPreampEnabled(_ enabled: Bool)
     func updateLoudnessCompensation(volume: Float, enabled: Bool)
     func updateLoudnessEqualization(_ settings: LoudnessEqualizerSettings)
+    func updateAUEffectChain(_ entries: [AUEffectChainEntry])
+    func updateDeviceAUEffectChain(_ entries: [AUEffectChainEntry])
+    func setAUChainBypassed(_ bypassed: Bool)
+    func setDeviceAUChainBypassed(_ bypassed: Bool)
+    func stageDestinationDeviceAUEffectChain(deviceUID: String, entries: [AUEffectChainEntry], bypassed: Bool)
+    func updateStagedDestinationDeviceAUEffectChain(deviceUID: String, entries: [AUEffectChainEntry], bypassed: Bool)
+    func failedAUEffectEntryIDs() -> Set<UUID>
+    func failedDeviceAUEffectEntryIDs() -> Set<UUID>
     func switchDevice(to newDeviceUID: String, preferredTapSourceDeviceUID: String?, sourceDeviceDead: Bool) async throws
     func updateDevices(to newDeviceUIDs: [String], preferredTapSourceDeviceUID: String?, sourceDeviceDead: Bool) async throws
     func hasRecentAudioCallback(within seconds: Double) -> Bool
@@ -63,4 +73,13 @@ extension ProcessTapControlling {
     func recreateForOutputRateChange() async throws {
         // Default no-op for mocks that don't override
     }
+
+    func updateAUEffectChain(_ entries: [AUEffectChainEntry]) {}
+    func updateDeviceAUEffectChain(_ entries: [AUEffectChainEntry]) {}
+    func setAUChainBypassed(_ bypassed: Bool) {}
+    func setDeviceAUChainBypassed(_ bypassed: Bool) {}
+    func stageDestinationDeviceAUEffectChain(deviceUID: String, entries: [AUEffectChainEntry], bypassed: Bool) {}
+    func updateStagedDestinationDeviceAUEffectChain(deviceUID: String, entries: [AUEffectChainEntry], bypassed: Bool) {}
+    func failedAUEffectEntryIDs() -> Set<UUID> { [] }
+    func failedDeviceAUEffectEntryIDs() -> Set<UUID> { [] }
 }
