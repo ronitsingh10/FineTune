@@ -393,10 +393,13 @@ enum DesignTokens {
         // MARK: Corner Radii (rounded style - 10pt)
 
         /// Corner radius for popup
-        static let cornerRadius: CGFloat = 12
+        static let cornerRadius: CGFloat = 16
+
+        /// Corner radius for the inset toolbar/header glass surface
+        static let headerRadius: CGFloat = 13
 
         /// Corner radius for row cards (glass bars)
-        static let rowRadius: CGFloat = 10
+        static let rowRadius: CGFloat = 12
 
         /// Corner radius for buttons/pickers
         static let buttonRadius: CGFloat = 6

@@ -107,19 +107,46 @@ struct MenuBarPopupView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: DesignTokens.Spacing.sm) {
-            HStack(alignment: .top) {
-                deviceTabsHeader
-                Spacer()
+            ZStack {
                 if isEditingDevicePriority {
                     Text("Drag or type a number to set priority")
                         .font(.system(size: 11))
                         .foregroundStyle(DesignTokens.Colors.textSecondary)
+                        .allowsHitTesting(false)
                 } else {
                     defaultDevicesStatus
+                        .allowsHitTesting(false)
                 }
-                Spacer()
-                editPriorityButton
-                settingsButton
+
+                HStack(spacing: 0) {
+                    deviceTabsHeader
+                    Spacer(minLength: 0)
+                    editPriorityButton
+                    settingsButton
+                }
+            }
+            .padding(.horizontal, DesignTokens.Spacing.xs)
+            .padding(.vertical, DesignTokens.Spacing.xs)
+            .background {
+                NativeGlassBackground(
+                    cornerRadius: DesignTokens.Dimensions.headerRadius,
+                    style: .clear,
+                    interactive: true
+                )
+            }
+            .clipShape(
+                RoundedRectangle(
+                    cornerRadius: DesignTokens.Dimensions.headerRadius,
+                    style: .continuous
+                )
+            )
+            .overlay {
+                RoundedRectangle(
+                    cornerRadius: DesignTokens.Dimensions.headerRadius,
+                    style: .continuous
+                )
+                .strokeBorder(DesignTokens.Colors.glassBorder, lineWidth: 0.5)
+                .allowsHitTesting(false)
             }
             .padding(.bottom, DesignTokens.Spacing.xs)
 
@@ -404,32 +431,40 @@ struct MenuBarPopupView: View {
         return device.name
     }
 
-    /// Subtle display of both default devices in header
+    /// Centered display of both default devices, independent of the active tab.
     private var defaultDevicesStatus: some View {
-        HStack(spacing: DesignTokens.Spacing.xs) {
-            // Output device
-            HStack(spacing: 3) {
-                Image(systemName: "speaker.wave.2.fill")
-                    .font(.system(size: 9))
-                Text(defaultOutputDeviceName)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-            }
+        HStack(spacing: DesignTokens.Spacing.sm) {
+            defaultDeviceStatusItem(
+                icon: "speaker.wave.2.fill",
+                name: defaultOutputDeviceName
+            )
 
-            // Separator
             Text("·")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(DesignTokens.Colors.textTertiary)
+                .baselineOffset(-0.5)
 
-            // Input device
-            HStack(spacing: 3) {
-                Image(systemName: "mic.fill")
-                    .font(.system(size: 9))
-                Text(defaultInputDeviceName)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-            }
+            defaultDeviceStatusItem(
+                icon: "mic.fill",
+                name: defaultInputDeviceName
+            )
         }
-        .font(.system(size: 11))
+        .font(.system(size: 11, weight: .medium))
         .foregroundStyle(DesignTokens.Colors.textSecondary)
+        .frame(maxWidth: 240)
+        .accessibilityLabel("Default output: \(defaultOutputDeviceName). Default input: \(defaultInputDeviceName)")
+    }
+
+    private func defaultDeviceStatusItem(icon: String, name: String) -> some View {
+        HStack(spacing: 5) {
+            Image(systemName: icon)
+                .font(.system(size: 9, weight: .medium))
+                .symbolRenderingMode(.hierarchical)
+            Text(name)
+                .lineLimit(1)
+                .truncationMode(.middle)
+        }
+        .frame(maxWidth: 110)
     }
 
     // MARK: - Device Toggle
