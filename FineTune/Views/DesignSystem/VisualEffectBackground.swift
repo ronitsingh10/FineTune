@@ -2,6 +2,54 @@
 import SwiftUI
 import AppKit
 
+/// Native macOS 26+ glass surface with a visual-effect fallback for older
+/// supported releases. Keeping this as an AppKit bridge lets the popup use
+/// the real Liquid Glass implementation without raising the app's deployment
+/// target from macOS 15.4.
+struct NativeGlassBackground: NSViewRepresentable {
+    enum Style: Equatable {
+        case regular
+        case clear
+    }
+
+    var cornerRadius: CGFloat = 16
+    var style: Style = .regular
+    var interactive = false
+
+    func makeNSView(context: Context) -> NSView {
+        if #available(macOS 26.0, *) {
+            let view = NSGlassEffectView()
+            apply(to: view)
+            return view
+        }
+
+        let view = NSVisualEffectView()
+        apply(to: view)
+        return view
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        apply(to: nsView)
+    }
+
+    private func apply(to nsView: NSView) {
+        if #available(macOS 26.0, *), let glassView = nsView as? NSGlassEffectView {
+            glassView.cornerRadius = cornerRadius
+            glassView.style = style == .regular ? .regular : .clear
+
+            if #available(macOS 27.0, *) {
+                glassView.effectIsInteractive = interactive
+            }
+            return
+        }
+
+        guard let visualEffectView = nsView as? NSVisualEffectView else { return }
+        visualEffectView.material = style == .regular ? .popover : .hudWindow
+        visualEffectView.blendingMode = .behindWindow
+        visualEffectView.state = .active
+    }
+}
+
 /// A frosted glass background using NSVisualEffectView, Apple's documented
 /// translucent material primitive. The default `.popover` material renders
 /// as proper light/dark glass and matches the platform Control Center and
@@ -40,13 +88,27 @@ extension Color {
 
 extension View {
     /// Applies the popup's translucent glass background. Adapts to light and
-    /// dark via DesignTokens; the underlying NSVisualEffectView uses the
-    /// `.popover` material so it tracks system appearance natively.
+    /// dark via the host window's appearance. On macOS 26+, the underlying
+    /// NSGlassEffectView supplies the platform Liquid Glass surface; older
+    /// releases keep the documented `.popover` material fallback.
     /// Name kept for source compatibility; rename pending a follow-up sweep.
     func darkGlassBackground() -> some View {
         self
-            .background(Color.popupBackgroundOverlay)
-            .background(VisualEffectBackground(material: .popover, blendingMode: .behindWindow))
+            .background {
+                NativeGlassBackground(
+                    cornerRadius: DesignTokens.Dimensions.cornerRadius,
+                    style: .regular,
+                    interactive: true
+                )
+            }
+            .overlay {
+                RoundedRectangle(
+                    cornerRadius: DesignTokens.Dimensions.cornerRadius,
+                    style: .continuous
+                )
+                .strokeBorder(DesignTokens.Colors.glassBorder, lineWidth: 0.5)
+                .allowsHitTesting(false)
+            }
     }
 
     /// Applies the lifted-card background used by the EQ panel.
@@ -60,11 +122,10 @@ extension View {
 
 // MARK: - Lifted Card Background Modifier (EQ panel)
 
-/// Lifted-card background used by the EQ panel.
-/// Light: opaque-ish white card on the popup glass with a hairline edge
-/// and a soft shadow that lifts the card off the surface. Dark: translucent
-/// white on the dark glass with a slightly stronger hairline. Tokens come
-/// from `DesignTokens.Colors.eqCardBackground` and `eqCardBorder`.
+/// Native inset glass card used by the EQ panel.
+/// macOS 26+ gets a clear Liquid Glass surface; older releases fall back to
+/// the closest AppKit HUD material. The hairline and shadow preserve the
+/// card's separation from the surrounding row glass.
 ///
 /// The shadow uses a literal `Color.black.opacity(0.06)`. Shadows are a
 /// depth cue, not a chromatic surface, and remain readable in both modes
@@ -73,11 +134,23 @@ struct LiftedCardBackgroundModifier: ViewModifier {
     func body(content: Content) -> some View {
         content
             .background {
-                RoundedRectangle(cornerRadius: DesignTokens.Dimensions.rowRadius)
-                    .fill(DesignTokens.Colors.eqCardBackground)
+                NativeGlassBackground(
+                    cornerRadius: DesignTokens.Dimensions.rowRadius,
+                    style: .clear,
+                    interactive: true
+                )
             }
+            .clipShape(
+                RoundedRectangle(
+                    cornerRadius: DesignTokens.Dimensions.rowRadius,
+                    style: .continuous
+                )
+            )
             .overlay {
-                RoundedRectangle(cornerRadius: DesignTokens.Dimensions.rowRadius)
+                RoundedRectangle(
+                    cornerRadius: DesignTokens.Dimensions.rowRadius,
+                    style: .continuous
+                )
                     .strokeBorder(DesignTokens.Colors.eqCardBorder, lineWidth: 0.5)
             }
             .shadow(
