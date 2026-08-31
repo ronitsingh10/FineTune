@@ -70,6 +70,10 @@ final class ProcessTapController: ProcessTapControlling {
     private nonisolated(unsafe) var _primaryPreferredStereoRightChannel: Int = 1
     private nonisolated(unsafe) var _secondaryPreferredStereoLeftChannel: Int = 0
     private nonisolated(unsafe) var _secondaryPreferredStereoRightChannel: Int = 1
+    /// DSP stereo balance gains (macOS-style attenuate quieter side). Default center = (1, 1).
+    /// Used for software/DDC-backed devices; hardware uses VirtualMainBalance instead.
+    private nonisolated(unsafe) var _balanceLeftGain: Float = 1.0
+    private nonisolated(unsafe) var _balanceRightGain: Float = 1.0
     /// Monotonic host tick of the last audio callback execution.
     private nonisolated(unsafe) var _lastRenderHostTime: UInt64 = 0
     /// Monotonic host tick of successful activation.
@@ -204,6 +208,14 @@ final class ProcessTapController: ProcessTapControlling {
     var isMuted: Bool {
         get { _isMuted }
         set { _isMuted = newValue }
+    }
+
+    /// Sets DSP stereo balance gains from a macOS-style balance value.
+    /// Pass `StereoBalance.center` (or call with hardware-backed devices) for unity gains.
+    func setStereoBalance(_ balance: Float) {
+        let gains = StereoBalance.channelGains(for: balance)
+        _balanceLeftGain = gains.left
+        _balanceRightGain = gains.right
     }
 
     // MARK: - Initialization
@@ -1264,6 +1276,23 @@ final class ProcessTapController: ProcessTapControlling {
         primaryResources.destroy()
     }
 
+    /// Peak magnitude across every sample in an interleaved input buffer. RT-safe:
+    /// no allocations, no locks, no Foundation. One `abs`+compare per sample.
+    /// Evaluates the whole frame (all channels) so a signal present on any channel
+    /// — including mono content panned to a non-zero channel — is detected.
+    @inline(__always)
+    nonisolated static func maxSamplePeak(
+        samples: UnsafePointer<Float>,
+        count: Int
+    ) -> Float {
+        var peak: Float = 0
+        for i in 0..<count {
+            let absSample = abs(samples[i])
+            if absSample > peak { peak = absSample }
+        }
+        return peak
+    }
+
     /// Advance the output-gate state machine for one buffer and return the multiplier
     /// to apply to this buffer's output. Pure function; no class state. RT-safe:
     /// no allocations, no locks, no Foundation. One `cos` per buffer (not per sample).
@@ -1324,6 +1353,8 @@ final class ProcessTapController: ProcessTapControlling {
         rampCoefficient: Float,
         preferredStereoLeft: Int,
         preferredStereoRight: Int,
+        balanceLeftGain: Float,
+        balanceRightGain: Float,
         currentVol: inout Float,
         eqProc: EQProcessor?,
         autoEQProc: AutoEQProcessor?,
@@ -1383,7 +1414,13 @@ final class ProcessTapController: ProcessTapControlling {
                     let gain = currentVol * crossfadeMultiplier * outputGateMultiplier
                     let base = frame * inputChannels
                     for ch in 0..<inputChannels {
-                        outputSamples[base + ch] = inputSamples[base + ch] * gain
+                        var sample = inputSamples[base + ch] * gain
+                        if ch == safeLeft {
+                            sample *= balanceLeftGain
+                        } else if ch == safeRight {
+                            sample *= balanceRightGain
+                        }
+                        outputSamples[base + ch] = sample
                     }
                 }
                 if sampleCount < outputSampleCount {
@@ -1395,8 +1432,8 @@ final class ProcessTapController: ProcessTapControlling {
                     let gain = currentVol * crossfadeMultiplier * outputGateMultiplier
                     let inBase = frame * 2
                     let outBase = frame * outputChannels
-                    let left = inputSamples[inBase] * gain
-                    let right = inputSamples[inBase + 1] * gain
+                    let left = inputSamples[inBase] * gain * balanceLeftGain
+                    let right = inputSamples[inBase + 1] * gain * balanceRightGain
 
                     for ch in 0..<outputChannels {
                         outputSamples[outBase + ch] = 0
@@ -1418,8 +1455,8 @@ final class ProcessTapController: ProcessTapControlling {
                     for ch in 0..<outputChannels {
                         outputSamples[outBase + ch] = 0
                     }
-                    outputSamples[outBase + safeLeft] = sample
-                    outputSamples[outBase + safeRight] = sample
+                    outputSamples[outBase + safeLeft] = sample * balanceLeftGain
+                    outputSamples[outBase + safeRight] = sample * balanceRightGain
                 }
                 let writtenSamples = frameCount * outputChannels
                 if writtenSamples < outputSampleCount {
@@ -1433,7 +1470,13 @@ final class ProcessTapController: ProcessTapControlling {
                     let outBase = frame * outputChannels
                     let copiedChannels = min(inputChannels, outputChannels)
                     for ch in 0..<copiedChannels {
-                        outputSamples[outBase + ch] = inputSamples[inBase + ch] * gain
+                        var sample = inputSamples[inBase + ch] * gain
+                        if ch == safeLeft {
+                            sample *= balanceLeftGain
+                        } else if ch == safeRight {
+                            sample *= balanceRightGain
+                        }
+                        outputSamples[outBase + ch] = sample
                     }
                     if copiedChannels < outputChannels {
                         for ch in copiedChannels..<outputChannels {
@@ -1535,10 +1578,8 @@ final class ProcessTapController: ProcessTapControlling {
             if totalSamplesThisBuffer == 0 {
                 totalSamplesThisBuffer = sampleCount / channels
             }
-            for i in stride(from: 0, to: sampleCount, by: channels) {
-                let absSample = abs(inputSamples[i])
-                if absSample > maxPeak { maxPeak = absSample }
-            }
+            let bufferPeak = Self.maxSamplePeak(samples: inputSamples, count: sampleCount)
+            if bufferPeak > maxPeak { maxPeak = bufferPeak }
         }
         let rawPeak = min(maxPeak, 1.0)
 
@@ -1626,6 +1667,8 @@ final class ProcessTapController: ProcessTapControlling {
             rampCoefficient: rampCoeff,
             preferredStereoLeft: stereoLeft,
             preferredStereoRight: stereoRight,
+            balanceLeftGain: _balanceLeftGain,
+            balanceRightGain: _balanceRightGain,
             currentVol: &currentVol,
             eqProc: eqProc,
             autoEQProc: autoEQProc,

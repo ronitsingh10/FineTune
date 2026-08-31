@@ -367,3 +367,38 @@ struct OutputGateCycleTests {
         #expect(promoted, "must have reached open phase")
     }
 }
+
+// MARK: - Peak detection across all channels (regression #429)
+
+@Suite("OutputGate — peak detection (#429)")
+struct OutputGatePeakDetectionTests {
+
+    /// #429: hard-panning the source to a non-zero channel left only that channel
+    /// with content. The previous loop only sampled channel 0, so it saw zeros and
+    /// the gate re-armed, muting the entire output. The peak helper must look at
+    /// every sample in the interleaved frame.
+    @Test("maxSamplePeak detects signal panned to channel 1 only")
+    func maxSamplePeakDetectsHardPannedSignal() {
+        // Stereo frame: 4 frames × 2 channels = 8 samples interleaved [L, R, L, R, ...].
+        // Channel 0 carries silence; channel 1 carries the signal.
+        let samples: [Float] = [
+            0.0, 0.5,
+            0.0, 0.7,
+            0.0, 0.6,
+            0.0, -0.4,
+        ]
+        let peak = samples.withUnsafeBufferPointer { ptr in
+            ProcessTapController.maxSamplePeak(samples: ptr.baseAddress!, count: samples.count)
+        }
+        #expect(abs(peak - 0.7) < cosineTolerance, "must read the loud channel, not just channel 0")
+    }
+
+    @Test("maxSamplePeak returns 0 for an all-zero buffer")
+    func maxSamplePeakReturnsZeroForSilence() {
+        let samples: [Float] = [0.0, 0.0, 0.0, 0.0]
+        let peak = samples.withUnsafeBufferPointer { ptr in
+            ProcessTapController.maxSamplePeak(samples: ptr.baseAddress!, count: samples.count)
+        }
+        #expect(peak == 0)
+    }
+}

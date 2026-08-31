@@ -592,6 +592,11 @@ struct MenuBarPopupView: View {
                             let currentMute = deviceVolumeMonitor.muteStates[device.id] ?? false
                             deviceVolumeMonitor.setMute(for: device.id, to: !currentMute)
                         },
+                        supportsBalance: deviceVolumeMonitor.supportsBalance(for: device.id),
+                        balance: deviceVolumeMonitor.balances[device.id] ?? StereoBalance.center,
+                        onBalanceChange: { balance in
+                            deviceVolumeMonitor.setBalance(for: device.id, to: balance)
+                        },
                         autoEQProfileName: profileName,
                         autoEQEnabled: selection?.isEnabled ?? false,
                         onAutoEQToggle: { enabled in

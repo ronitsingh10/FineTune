@@ -13,9 +13,11 @@ protocol DeviceVolumeProviding: AnyObject {
     var defaultInputDeviceUID: String? { get }
     var volumes: [AudioDeviceID: Float] { get }
     var muteStates: [AudioDeviceID: Bool] { get }
+    var balances: [AudioDeviceID: Float] { get }
 
     var onVolumeChanged: ((AudioDeviceID, Float) -> Void)? { get set }
     var onMuteChanged: ((AudioDeviceID, Bool) -> Void)? { get set }
+    var onBalanceChanged: ((AudioDeviceID, Float) -> Void)? { get set }
     var onDefaultDeviceChanged: ((String) -> Void)? { get set }
     var onDefaultInputDeviceChanged: ((String) -> Void)? { get set }
 
@@ -29,6 +31,12 @@ protocol DeviceVolumeProviding: AnyObject {
 
     /// Writes a mute state through whichever backend this device uses.
     func setMute(for deviceID: AudioDeviceID, to muted: Bool)
+
+    /// Writes stereo balance (0.0 = full left, 0.5 = center, 1.0 = full right).
+    func setBalance(for deviceID: AudioDeviceID, to balance: Float)
+
+    /// Whether FineTune can expose a balance control for this device.
+    func supportsBalance(for deviceID: AudioDeviceID) -> Bool
 
     func outputVolumeBackend(for deviceID: AudioDeviceID) -> VolumeControlTier
 
@@ -52,6 +60,17 @@ protocol DeviceVolumeProviding: AnyObject {
 }
 
 extension DeviceVolumeProviding {
+    var balances: [AudioDeviceID: Float] { [:] }
+
+    var onBalanceChanged: ((AudioDeviceID, Float) -> Void)? {
+        get { nil }
+        set {}
+    }
+
+    func setBalance(for deviceID: AudioDeviceID, to balance: Float) {}
+
+    func supportsBalance(for deviceID: AudioDeviceID) -> Bool { false }
+
     func outputProcessingGain(for deviceID: AudioDeviceID) -> Float {
         1.0
     }

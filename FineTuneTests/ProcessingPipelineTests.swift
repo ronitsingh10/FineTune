@@ -102,6 +102,8 @@ private func processWithDefaults(
     rampCoefficient: Float = 1.0,
     preferredStereoLeft: Int = 0,
     preferredStereoRight: Int = 1,
+    balanceLeftGain: Float = 1.0,
+    balanceRightGain: Float = 1.0,
     currentVol: inout Float,
     eqProc: EQProcessor? = nil,
     autoEQProc: AutoEQProcessor? = nil,
@@ -117,6 +119,8 @@ private func processWithDefaults(
         rampCoefficient: rampCoefficient,
         preferredStereoLeft: preferredStereoLeft,
         preferredStereoRight: preferredStereoRight,
+        balanceLeftGain: balanceLeftGain,
+        balanceRightGain: balanceRightGain,
         currentVol: &currentVol,
         eqProc: eqProc,
         autoEQProc: autoEQProc,
@@ -396,6 +400,52 @@ struct BufferMappingTests {
         var vol: Float = 1.0
         // Should not crash.
         processWithDefaults(input: input, output: output, currentVol: &vol)
+    }
+
+    @Test("Left-full balance zeroes the right stereo channel")
+    func leftFullBalanceAttenuatesRight() {
+        let frames = 4
+        let input = TestABL(buffers: [(channels: 2, frames: frames)])
+        let output = TestABL(buffers: [(channels: 2, frames: frames)])
+        fill(input, bufferIndex: 0, value: 0.5)
+
+        var vol: Float = 1.0
+        processWithDefaults(
+            input: input,
+            output: output,
+            balanceLeftGain: 1.0,
+            balanceRightGain: 0.0,
+            currentVol: &vol
+        )
+
+        let outData = output.data(at: 0)
+        for f in 0..<frames {
+            #expect(abs(outData[f * 2] - 0.5) < 1e-5)
+            #expect(abs(outData[f * 2 + 1] - 0.0) < 1e-5)
+        }
+    }
+
+    @Test("Right-full balance zeroes the left stereo channel")
+    func rightFullBalanceAttenuatesLeft() {
+        let frames = 4
+        let input = TestABL(buffers: [(channels: 2, frames: frames)])
+        let output = TestABL(buffers: [(channels: 2, frames: frames)])
+        fill(input, bufferIndex: 0, value: 0.5)
+
+        var vol: Float = 1.0
+        processWithDefaults(
+            input: input,
+            output: output,
+            balanceLeftGain: 0.0,
+            balanceRightGain: 1.0,
+            currentVol: &vol
+        )
+
+        let outData = output.data(at: 0)
+        for f in 0..<frames {
+            #expect(abs(outData[f * 2] - 0.0) < 1e-5)
+            #expect(abs(outData[f * 2 + 1] - 0.5) < 1e-5)
+        }
     }
 }
 

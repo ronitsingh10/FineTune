@@ -28,6 +28,11 @@ struct DeviceRow: View {
     let onVolumeChange: (Float) -> Void
     let onMuteToggle: () -> Void
 
+    /// When true, shows a secondary L/R balance slider under the volume row.
+    let supportsBalance: Bool
+    let balance: Float
+    let onBalanceChange: ((Float) -> Void)?
+
     // AutoEQ (all optional — existing call sites work without them)
     let autoEQProfileName: String?
     let autoEQEnabled: Bool
@@ -45,11 +50,14 @@ struct DeviceRow: View {
     let iconOverrideSymbol: String?
 
     @State private var sliderValue: Double
+    @State private var balanceValue: Double
     @State private var isEditing = false
+    @State private var isEditingBalance = false
     @State private var suppressSliderAutoUnmute = false
     /// Suppresses write-back when slider is being synced from a device volume change.
     /// Breaks the quantization feedback loop on USB DACs with discrete dB steps.
     @State private var isUpdatingSliderFromDevice = false
+    @State private var isUpdatingBalanceFromDevice = false
 
     /// The displayed percentage value, matching EditablePercentage's formula.
     /// Used for icon and unmute logic so visual state stays consistent with the label.
@@ -81,6 +89,9 @@ struct DeviceRow: View {
         onSetDefault: @escaping () -> Void,
         onVolumeChange: @escaping (Float) -> Void,
         onMuteToggle: @escaping () -> Void,
+        supportsBalance: Bool = false,
+        balance: Float = StereoBalance.center,
+        onBalanceChange: ((Float) -> Void)? = nil,
         autoEQProfileName: String? = nil,
         autoEQEnabled: Bool = false,
         onAutoEQToggle: ((Bool) -> Void)? = nil,
@@ -104,6 +115,9 @@ struct DeviceRow: View {
         self.onSetDefault = onSetDefault
         self.onVolumeChange = onVolumeChange
         self.onMuteToggle = onMuteToggle
+        self.supportsBalance = supportsBalance
+        self.balance = balance
+        self.onBalanceChange = onBalanceChange
         self.autoEQProfileName = autoEQProfileName
         self.autoEQEnabled = autoEQEnabled
         self.onAutoEQToggle = onAutoEQToggle
@@ -119,22 +133,62 @@ struct DeviceRow: View {
         self.isFocused = isFocused
         self.iconOverrideSymbol = iconOverrideSymbol
         self._sliderValue = State(initialValue: Self.volumeToSlider(volume, backend: volumeBackend))
+        self._balanceValue = State(initialValue: Double(StereoBalance.clamp(balance)))
     }
 
     var body: some View {
-        deviceHeader
-            .contentShape(Rectangle())
-            .onTapGesture {
-                // Whole-row tap sets this device as default. Inner controls
-                // (volume slider, mute button, AutoEQ picker, percent field)
-                // are Button/Slider/TextField subviews that capture their
-                // own gestures, so they do not propagate to this handler.
-                // Mirrors the macOS Sound submenu pattern.
-                if !isDefault {
-                    onSetDefault()
+        VStack(alignment: .leading, spacing: DesignTokens.Spacing.xxs) {
+            deviceHeader
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    // Whole-row tap sets this device as default. Inner controls
+                    // (volume slider, mute button, AutoEQ picker, percent field)
+                    // are Button/Slider/TextField subviews that capture their
+                    // own gestures, so they do not propagate to this handler.
+                    // Mirrors the macOS Sound submenu pattern.
+                    if !isDefault {
+                        onSetDefault()
+                    }
                 }
+
+            if supportsBalance, onBalanceChange != nil {
+                balanceRow
             }
-            .hoverableRow(isFocused: isFocused)
+        }
+        .hoverableRow(isFocused: isFocused)
+    }
+
+    // MARK: - Balance
+
+    private var balanceRow: some View {
+        HStack(spacing: DesignTokens.Spacing.sm) {
+            // Align under the name/slider area (badge width matches DeviceBadge)
+            Color.clear
+                .frame(width: 28)
+
+            BalanceSlider(
+                balance: $balanceValue,
+                onEditingChanged: { editing in
+                    isEditingBalance = editing
+                }
+            )
+            .onChange(of: balanceValue) { _, newValue in
+                if isUpdatingBalanceFromDevice {
+                    isUpdatingBalanceFromDevice = false
+                    return
+                }
+                onBalanceChange?(Float(newValue))
+            }
+            .scrollWheelStep($balanceValue, in: 0.0...1.0)
+        }
+        .padding(.leading, DesignTokens.Spacing.sm)
+        .onChange(of: balance) { _, newValue in
+            guard !isEditingBalance else { return }
+            let clamped = Double(StereoBalance.clamp(newValue))
+            guard abs(clamped - balanceValue) > 1e-5 else { return }
+            isUpdatingBalanceFromDevice = true
+            balanceValue = clamped
+        }
     }
 
     // MARK: - Device Header

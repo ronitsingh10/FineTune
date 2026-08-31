@@ -24,6 +24,7 @@ protocol ProcessTapControlling: AnyObject, Sendable {
     func setAutoEQPreampEnabled(_ enabled: Bool)
     func updateLoudnessCompensation(volume: Float, enabled: Bool)
     func updateLoudnessEqualization(_ settings: LoudnessEqualizerSettings)
+    func setStereoBalance(_ balance: Float)
     func switchDevice(to newDeviceUID: String, preferredTapSourceDeviceUID: String?, sourceDeviceDead: Bool) async throws
     func updateDevices(to newDeviceUIDs: [String], preferredTapSourceDeviceUID: String?, sourceDeviceDead: Bool) async throws
     func hasRecentAudioCallback(within seconds: Double) -> Bool
@@ -54,6 +55,10 @@ extension ProcessTapControlling {
 
     func invalidateAsync() async {
         invalidate()
+    }
+
+    func setStereoBalance(_ balance: Float) {
+        // Default no-op for mocks that don't override
     }
 
     func refreshTapSource(_ preferredDeviceUID: String?) async throws {

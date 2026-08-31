@@ -14,6 +14,9 @@ final class DeviceVolumeMonitor: DeviceVolumeProviding {
     /// Mute states for all tracked output devices (keyed by AudioDeviceID)
     private(set) var muteStates: [AudioDeviceID: Bool] = [:]
 
+    /// Stereo balance for all tracked output devices (0.0 = full left, 0.5 = center, 1.0 = full right)
+    private(set) var balances: [AudioDeviceID: Float] = [:]
+
     /// The current default output device ID
     private(set) var defaultDeviceID: AudioDeviceID = .unknown
 
@@ -38,6 +41,9 @@ final class DeviceVolumeMonitor: DeviceVolumeProviding {
 
     /// Called when any output device's mute state changes (deviceID, isMuted)
     var onMuteChanged: ((AudioDeviceID, Bool) -> Void)?
+
+    /// Called when any output device's stereo balance changes (deviceID, balance)
+    var onBalanceChanged: ((AudioDeviceID, Float) -> Void)?
 
     /// Called when the default output device changes (newDeviceUID)
     var onDefaultDeviceChanged: ((String) -> Void)?
@@ -77,6 +83,8 @@ final class DeviceVolumeMonitor: DeviceVolumeProviding {
     private var volumeListeners: [AudioDeviceID: AudioObjectPropertyListenerBlock] = [:]
     /// Mute listeners for each tracked output device
     private var muteListeners: [AudioDeviceID: AudioObjectPropertyListenerBlock] = [:]
+    /// Balance listeners for each tracked output device
+    private var balanceListeners: [AudioDeviceID: AudioObjectPropertyListenerBlock] = [:]
     private var defaultDeviceListenerBlock: AudioObjectPropertyListenerBlock?
     private var systemDeviceListenerBlock: AudioObjectPropertyListenerBlock?
 
@@ -121,6 +129,12 @@ final class DeviceVolumeMonitor: DeviceVolumeProviding {
 
     private var muteAddress = AudioObjectPropertyAddress(
         mSelector: kAudioDevicePropertyMute,
+        mScope: kAudioObjectPropertyScopeOutput,
+        mElement: kAudioObjectPropertyElementMain
+    )
+
+    private var balanceAddress = AudioObjectPropertyAddress(
+        mSelector: kAudioHardwareServiceDeviceProperty_VirtualMainBalance,
         mScope: kAudioObjectPropertyScopeOutput,
         mElement: kAudioObjectPropertyElementMain
     )
@@ -318,6 +332,11 @@ final class DeviceVolumeMonitor: DeviceVolumeProviding {
             removeMuteListener(for: deviceID)
         }
 
+        // Remove all output balance listeners
+        for deviceID in Array(balanceListeners.keys) {
+            removeBalanceListener(for: deviceID)
+        }
+
         // Remove all input volume listeners
         for deviceID in Array(inputVolumeListeners.keys) {
             removeInputVolumeListener(for: deviceID)
@@ -333,6 +352,7 @@ final class DeviceVolumeMonitor: DeviceVolumeProviding {
 
         volumes.removeAll()
         muteStates.removeAll()
+        balances.removeAll()
         systemDeviceID = .unknown
         systemDeviceUID = nil
 
@@ -374,6 +394,9 @@ final class DeviceVolumeMonitor: DeviceVolumeProviding {
             let success = deviceID.setOutputVolumeScalar(clamped)
             if success {
                 volumes[deviceID] = clamped
+                // VirtualMainVolume writes can reset HAL balance on some drivers —
+                // re-apply FineTune's desired balance immediately after.
+                reapplyBalanceAfterVolumeChange(for: deviceID)
             } else {
                 logger.warning("Failed to set volume on device \(deviceID)")
             }
@@ -484,6 +507,76 @@ final class DeviceVolumeMonitor: DeviceVolumeProviding {
                 onMuteChanged?(deviceID, false)
             }
         }
+    }
+
+    // MARK: - Stereo Balance
+
+    /// Whether FineTune can expose a balance control for this device.
+    /// Hardware: VirtualMainBalance or settable L/R channel volumes.
+    /// Software/DDC: always supported via DSP when FineTune routes audio through a tap.
+    func supportsBalance(for deviceID: AudioDeviceID) -> Bool {
+        guard deviceID.isValid else { return false }
+        switch outputVolumeBackend(for: deviceID) {
+        case .hardware:
+            return deviceID.supportsOutputBalance()
+        case .software, .ddc:
+            // DSP path applies balance when FineTune owns the tap; still show the
+            // control so users can set a per-output preference that takes effect
+            // for routed apps (and persists for when hardware balance appears).
+            return true
+        }
+    }
+
+    /// Sets stereo balance for a device (0.0 = full left, 0.5 = center, 1.0 = full right).
+    func setBalance(for deviceID: AudioDeviceID, to balance: Float) {
+        guard deviceID.isValid else {
+            logger.warning("Cannot set balance: invalid device ID")
+            return
+        }
+
+        let clamped = StereoBalance.clamp(balance)
+        guard let deviceUID = outputDeviceUID(for: deviceID) else {
+            logger.warning("Cannot persist balance: missing device UID for \(deviceID)")
+            return
+        }
+
+        settingsManager.setDeviceBalance(for: deviceUID, to: clamped)
+        balances[deviceID] = clamped
+
+        switch outputVolumeBackend(for: deviceID) {
+        case .hardware:
+            if deviceID.supportsOutputBalance() {
+                let success = deviceID.setOutputBalance(clamped)
+                if !success {
+                    logger.warning("Failed to set hardware balance on device \(deviceID)")
+                }
+            }
+        case .software, .ddc:
+            // Applied via ProcessTapController DSP; notify so AudioEngine can update taps.
+            break
+        }
+
+        onBalanceChanged?(deviceID, clamped)
+    }
+
+    /// Re-writes the persisted (or current in-memory) balance after a volume change
+    /// so VirtualMainVolume side effects cannot clear System Settings balance.
+    private func reapplyBalanceAfterVolumeChange(for deviceID: AudioDeviceID) {
+        guard outputVolumeBackend(for: deviceID) == .hardware else { return }
+        guard deviceID.supportsOutputBalance() else { return }
+
+        let desired: Float
+        if let uid = outputDeviceUID(for: deviceID),
+           let persisted = settingsManager.getDeviceBalance(for: uid) {
+            desired = persisted
+        } else if let current = balances[deviceID] {
+            desired = current
+        } else {
+            return
+        }
+
+        _ = deviceID.setOutputBalance(desired)
+        balances[deviceID] = desired
     }
 
     #if !APP_STORE
@@ -754,15 +847,20 @@ final class DeviceVolumeMonitor: DeviceVolumeProviding {
         let currentDeviceIDs = Set(deviceMonitor.outputDevices.map(\.id))
         let trackedVolumeIDs = Set(volumeListeners.keys)
         let trackedMuteIDs = Set(muteListeners.keys)
+        let trackedBalanceIDs = Set(balanceListeners.keys)
 
         // Add listeners for new devices (computed separately so mute retries independently)
         let newVolumeIDs = currentDeviceIDs.subtracting(trackedVolumeIDs)
         let newMuteIDs = currentDeviceIDs.subtracting(trackedMuteIDs)
+        let newBalanceIDs = currentDeviceIDs.subtracting(trackedBalanceIDs)
         for deviceID in newVolumeIDs {
             addVolumeListener(for: deviceID)
         }
         for deviceID in newMuteIDs {
             addMuteListener(for: deviceID)
+        }
+        for deviceID in newBalanceIDs {
+            addBalanceListener(for: deviceID)
         }
 
         // Remove listeners for stale devices
@@ -777,6 +875,17 @@ final class DeviceVolumeMonitor: DeviceVolumeProviding {
         for deviceID in staleMuteIDs {
             removeMuteListener(for: deviceID)
             muteStates.removeValue(forKey: deviceID)
+        }
+
+        let staleBalanceIDs = trackedBalanceIDs.subtracting(currentDeviceIDs)
+        for deviceID in staleBalanceIDs {
+            removeBalanceListener(for: deviceID)
+        }
+
+        // Prune balance state for disconnected devices even when no HAL listener
+        // was registered (software/DDC or devices without VirtualMainBalance).
+        for deviceID in Set(balances.keys).subtracting(currentDeviceIDs) {
+            balances.removeValue(forKey: deviceID)
         }
 
         // Read volumes and mute states for all current devices
@@ -943,6 +1052,53 @@ final class DeviceVolumeMonitor: DeviceVolumeProviding {
         logger.debug("Mute changed for device \(deviceID): \(newMuteState)")
     }
 
+    private func addBalanceListener(for deviceID: AudioDeviceID) {
+        guard deviceID.isValid else { return }
+        guard balanceListeners[deviceID] == nil else { return }
+        // Only listen when the HAL exposes VirtualMainBalance (channel-volume
+        // fallback has no single property to observe).
+        var address = balanceAddress
+        guard AudioObjectHasProperty(deviceID, &address) else { return }
+
+        let block: AudioObjectPropertyListenerBlock = { [weak self] _, _ in
+            Task { @MainActor [weak self] in
+                self?.handleBalanceChanged(for: deviceID)
+            }
+        }
+
+        balanceListeners[deviceID] = block
+        let status = AudioObjectAddPropertyListenerBlock(deviceID, &address, .main, block)
+        if status != noErr {
+            logger.debug("No VirtualMainBalance listener for device \(deviceID): \(status)")
+            balanceListeners.removeValue(forKey: deviceID)
+        }
+    }
+
+    private func removeBalanceListener(for deviceID: AudioDeviceID) {
+        guard let block = balanceListeners.removeValue(forKey: deviceID) else { return }
+
+        var address = balanceAddress
+        let status = AudioObjectRemovePropertyListenerBlock(deviceID, &address, .main, block)
+        if status != noErr && status != OSStatus(kAudioHardwareBadObjectError) {
+            logger.warning("Failed to remove balance listener for device \(deviceID): \(status)")
+        }
+    }
+
+    private func handleBalanceChanged(for deviceID: AudioDeviceID) {
+        guard deviceID.isValid else { return }
+        if outputVolumeBackend(for: deviceID) != .hardware { return }
+
+        let newBalance = StereoBalance.clamp(deviceID.readOutputBalance())
+        if let current = balances[deviceID], abs(current - newBalance) < 1e-5 { return }
+
+        balances[deviceID] = newBalance
+        if let uid = outputDeviceUID(for: deviceID) {
+            settingsManager.setDeviceBalance(for: uid, to: newBalance)
+        }
+        onBalanceChanged?(deviceID, newBalance)
+        logger.debug("Balance changed for device \(deviceID): \(newBalance)")
+    }
+
     /// Reads the current volume and mute state for all tracked devices.
     /// For Bluetooth devices, schedules a delayed re-read because the HAL may report
     /// default volume (1.0) for 50-200ms after the device appears.
@@ -960,6 +1116,7 @@ final class DeviceVolumeMonitor: DeviceVolumeProviding {
         guard deviceID.isDeviceAlive() else { return }
 
         let backend = outputVolumeBackend(for: deviceID)
+        restoreOrReadBalance(for: deviceID, deviceUID: device.uid, backend: backend)
 
         if backend == .software {
             let muted = settingsManager.getSoftwareDeviceMuteState(for: device.uid)
@@ -995,6 +1152,35 @@ final class DeviceVolumeMonitor: DeviceVolumeProviding {
         let transportType = deviceID.readTransportType()
         if transportType == .bluetooth || transportType == .bluetoothLE {
             scheduleBluetoothOutputConfirmation(for: deviceID)
+        }
+    }
+
+    /// Loads persisted balance (or reads HAL), applies to hardware when appropriate,
+    /// and updates in-memory `balances`.
+    private func restoreOrReadBalance(
+        for deviceID: AudioDeviceID,
+        deviceUID: String,
+        backend: VolumeControlTier
+    ) {
+        if let persisted = settingsManager.getDeviceBalance(for: deviceUID) {
+            balances[deviceID] = persisted
+            if backend == .hardware, deviceID.supportsOutputBalance() {
+                _ = deviceID.setOutputBalance(persisted)
+            }
+            return
+        }
+
+        switch backend {
+        case .hardware where deviceID.supportsOutputBalance():
+            let halBalance = StereoBalance.clamp(deviceID.readOutputBalance())
+            balances[deviceID] = halBalance
+            // Seed persistence from current System Settings so FineTune can
+            // re-apply after volume writes without forcing center.
+            if abs(halBalance - StereoBalance.center) > 1e-5 {
+                settingsManager.setDeviceBalance(for: deviceUID, to: halBalance)
+            }
+        default:
+            balances[deviceID] = StereoBalance.center
         }
     }
 

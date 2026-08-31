@@ -349,6 +349,16 @@ final class AudioEngine {
             }
         }
 
+        deviceVolumeMonitor.onBalanceChanged = { [weak self] deviceID, _ in
+            guard let self else { return }
+            guard let deviceUID = self.deviceMonitor.outputDevices.first(where: { $0.id == deviceID })?.uid else { return }
+            for (_, tap) in self.taps {
+                if tap.currentDeviceUIDs.contains(deviceUID) {
+                    self.applyTapBalance(to: tap, deviceUIDs: tap.currentDeviceUIDs)
+                }
+            }
+        }
+
         processMonitor.onAppsChanged = { [weak self] apps in
             self?.applyPersistedSettings()
             self?.scheduleStaleCleanup()
@@ -698,6 +708,7 @@ final class AudioEngine {
         let resolvedUIDs = deviceUIDs ?? tap.currentDeviceUIDs
         tap.volume = effectiveVolume(for: pid, deviceUIDs: resolvedUIDs)
         tap.isMuted = volumeState.getMute(for: pid)
+        applyTapBalance(to: tap, deviceUIDs: resolvedUIDs)
 
         if let primaryUID = resolvedUIDs.first,
            let device = deviceMonitor.device(for: primaryUID) {
@@ -706,6 +717,26 @@ final class AudioEngine {
         } else {
             tap.currentDeviceVolume = 1.0
             tap.isDeviceMuted = false
+        }
+    }
+
+    /// Applies DSP stereo balance for software/DDC-backed primary devices.
+    /// Hardware devices use VirtualMainBalance at the HAL — keep DSP at center
+    /// to avoid double attenuation.
+    private func applyTapBalance(to tap: any ProcessTapControlling, deviceUIDs: [String]) {
+        guard let primaryUID = deviceUIDs.first,
+              let device = deviceMonitor.device(for: primaryUID) else {
+            tap.setStereoBalance(StereoBalance.center)
+            return
+        }
+
+        let backend = outputVolumeBackend(for: device.id)
+        switch backend {
+        case .hardware:
+            tap.setStereoBalance(StereoBalance.center)
+        case .software, .ddc:
+            let balance = deviceVolumeMonitor.balances[device.id] ?? StereoBalance.center
+            tap.setStereoBalance(balance)
         }
     }
 

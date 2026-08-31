@@ -92,7 +92,7 @@ final class SettingsManager {
     private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "FineTune", category: "SettingsManager")
 
     struct Settings: Codable {
-        var version: Int = 12
+        var version: Int = 13
         var appVolumes: [String: Float] = [:]
         var appDeviceRouting: [String: String] = [:]  // bundleID → deviceUID
         var appMutes: [String: Bool] = [:]  // bundleID → isMuted
@@ -118,6 +118,9 @@ final class SettingsManager {
         var softwareDeviceVolumes: [String: Float] = [:]      // device UID → visible volume (0.0-1.0)
         var softwareDeviceMuteStates: [String: Bool] = [:]    // device UID → software mute state
         var softwareDeviceSavedVolumes: [String: Float] = [:] // device UID → volume before mute
+
+        // Per-device stereo balance (0.0 = full left, 0.5 = center, 1.0 = full right)
+        var deviceBalances: [String: Float] = [:]
 
         // Per-device volume control tier override (overrides auto-detection).
         // nil/missing → auto-detect (hardware/ddc/software). Populated only by
@@ -178,6 +181,9 @@ final class SettingsManager {
             softwareDeviceSavedVolumes = (try c.decodeIfPresent([String: Float].self, forKey: .softwareDeviceSavedVolumes) ?? [:])
                 .filter { $0.value.isFinite && $0.value >= 0 }
                 .mapValues { min($0, 1.0) }
+            deviceBalances = (try c.decodeIfPresent([String: Float].self, forKey: .deviceBalances) ?? [:])
+                .filter { $0.value.isFinite }
+                .mapValues { StereoBalance.clamp($0) }
             deviceVolumeTierOverride = try c.decodeIfPresent([String: VolumeControlTier].self, forKey: .deviceVolumeTierOverride) ?? [:]
             deviceIconOverrides = try c.decodeIfPresent([String: String].self, forKey: .deviceIconOverrides) ?? [:]
             outputDevicePriority = try c.decodeIfPresent([String].self, forKey: .outputDevicePriority) ?? []
@@ -424,6 +430,19 @@ final class SettingsManager {
 
     func setSoftwareDeviceSavedVolume(for deviceUID: String, to volume: Float) {
         settings.softwareDeviceSavedVolumes[deviceUID] = normalizedDeviceVolume(volume)
+        scheduleSave()
+    }
+
+    // MARK: - Per-Device Stereo Balance
+
+    /// Returns the persisted balance for a device UID, or `nil` when unset (treat as center).
+    func getDeviceBalance(for deviceUID: String) -> Float? {
+        settings.deviceBalances[deviceUID]
+    }
+
+    /// Persists stereo balance for a device (0.0 = full left, 0.5 = center, 1.0 = full right).
+    func setDeviceBalance(for deviceUID: String, to balance: Float) {
+        settings.deviceBalances[deviceUID] = StereoBalance.clamp(balance)
         scheduleSave()
     }
 
@@ -850,6 +869,7 @@ final class SettingsManager {
         settings.softwareDeviceVolumes.removeAll()
         settings.softwareDeviceMuteStates.removeAll()
         settings.softwareDeviceSavedVolumes.removeAll()
+        settings.deviceBalances.removeAll()
         settings.deviceVolumeTierOverride.removeAll()
         settings.deviceIconOverrides.removeAll()
         settings.outputDevicePriority.removeAll()
