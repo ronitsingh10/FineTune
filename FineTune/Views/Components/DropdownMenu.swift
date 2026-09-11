@@ -195,7 +195,7 @@ struct GroupedDropdownMenu<Section: Identifiable & Hashable, Item: Identifiable,
 
     let sections: [Section]
     let itemsForSection: (Section) -> [Item]
-    let sectionTitle: (Section) -> String
+    let sectionTitle: (Section) -> LocalizedStringResource
     let selectedItem: Item?
     let maxHeight: CGFloat
     let width: CGFloat
@@ -299,7 +299,7 @@ private struct GroupedDropdownContentView<Section: Identifiable & Hashable, Item
 
     let sections: [Section]
     let itemsForSection: (Section) -> [Item]
-    let sectionTitle: (Section) -> String
+    let sectionTitle: (Section) -> LocalizedStringResource
     let selectedItem: Item?
     let width: CGFloat
     let maxHeight: CGFloat

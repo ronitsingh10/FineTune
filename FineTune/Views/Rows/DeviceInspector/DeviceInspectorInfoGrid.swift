@@ -60,7 +60,7 @@ struct DeviceInspectorInfoGrid: View {
     }
 
     @ViewBuilder
-    private func labelCell(_ text: String) -> some View {
+    private func labelCell(_ text: LocalizedStringResource) -> some View {
         Text(text)
             .font(DesignTokens.Typography.pickerText)
             .foregroundStyle(DesignTokens.Colors.textSecondary)
@@ -69,7 +69,7 @@ struct DeviceInspectorInfoGrid: View {
 
     @ViewBuilder
     private func valueCell(_ text: String) -> some View {
-        Text(text)
+        Text(verbatim: text)
             .font(DesignTokens.Typography.pickerText)
             .foregroundStyle(DesignTokens.Colors.textPrimary)
             .lineLimit(1)
@@ -166,8 +166,10 @@ private struct DeviceIDValueCell: View {
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .help(copied ? "Copied" : "Copy device ID")
-            .accessibilityLabel(copied ? "Device ID copied" : "Copy device ID")
+            .help(copied ? String(localized: "Copied") : String(localized: "Copy device ID"))
+            .accessibilityLabel(copied
+                                ? String(localized: "Device ID copied")
+                                : String(localized: "Copy device ID"))
         }
         .accessibilityElement(children: .contain)
     }

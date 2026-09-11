@@ -81,7 +81,7 @@ struct DeviceIconPicker: View {
     }
 
     @ViewBuilder
-    private func gridSection(title: String, symbols: [String], highlighted: String?) -> some View {
+    private func gridSection(title: LocalizedStringResource, symbols: [String], highlighted: String?) -> some View {
         SectionHeader(title: title)
             .frame(maxWidth: .infinity, alignment: .leading)
         grid(symbols: symbols, highlighted: highlighted)

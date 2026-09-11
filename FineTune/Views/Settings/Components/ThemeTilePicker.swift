@@ -40,7 +40,7 @@ private struct ThemeTile: View {
                         )
                 }
 
-            Text(preference.description)
+            Text(preference.displayName)
                 .font(.system(size: 11, weight: isSelected ? .semibold : .regular))
                 .foregroundStyle(isSelected ? .primary : .secondary)
         }
@@ -49,7 +49,7 @@ private struct ThemeTile: View {
         .animation(reduceMotion ? nil : .easeOut(duration: 0.15), value: isSelected)
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
-        .accessibilityLabel(Text(preference.description))
+        .accessibilityLabel(Text(preference.displayName))
     }
 }
 
@@ -147,7 +147,7 @@ private struct PopupSizeTile: View {
                         )
                 }
 
-            Text(size.description)
+            Text(size.displayName)
                 .font(.system(size: 11, weight: isSelected ? .semibold : .regular))
                 .foregroundStyle(isSelected ? .primary : .secondary)
         }
@@ -156,7 +156,7 @@ private struct PopupSizeTile: View {
         .animation(reduceMotion ? nil : .easeOut(duration: 0.15), value: isSelected)
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
-        .accessibilityLabel(Text(size.description))
+        .accessibilityLabel(Text(size.displayName))
     }
 }
 

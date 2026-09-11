@@ -24,7 +24,9 @@ struct RadioButton: View {
         .onHover { hovering in
             isHovered = hovering
         }
-        .help(isSelected ? "Default device" : "Set as default")
+        .help(isSelected
+              ? String(localized: "Default device")
+              : String(localized: "Set as default"))
         .animation(DesignTokens.Animation.hover, value: isHovered)
     }
 
