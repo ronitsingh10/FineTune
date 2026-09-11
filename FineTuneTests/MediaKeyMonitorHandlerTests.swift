@@ -28,7 +28,8 @@ struct MediaKeyMonitorHandlerTests {
 
     private func makeMonitor(
         hudController: HUDWindowController? = nil,
-        popupVisible: Bool = false
+        popupVisible: Bool = false,
+        presenter: (any MediaKeyHUDPresenting)? = nil
     ) -> (monitor: MediaKeyMonitor, hud: HUDWindowController, popup: PopupVisibilityService, settingsManager: SettingsManager) {
         let tempDir = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString)
@@ -60,7 +61,7 @@ struct MediaKeyMonitorHandlerTests {
             audioEngine: engine,
             settingsManager: settings,
             accessibility: MockAccessibilityTrustProviding(isTrusted: true),
-            hudController: hud,
+            hudController: presenter ?? hud,
             popupVisibility: popup,
             mediaKeyStatus: mediaKeyStatus
         )
@@ -68,6 +69,30 @@ struct MediaKeyMonitorHandlerTests {
     }
 
     // MARK: - Volume step arithmetic
+
+    @Test("Mute HUD uses the restored volume on unmute and the original level on mute",
+          arguments: [VolumeControlTier.software, .hardware, .ddc])
+    func muteHUDVolume(tier: VolumeControlTier) throws {
+        let hud = RecordingMediaKeyHUD()
+        let (monitor, _, _, _) = makeMonitor(presenter: hud)
+        var volume: Float = tier == .software ? 0.36 : 0.6
+        let restoredVolume = volume
+
+        for wasMuted in [false, true] {
+            monitor.handleCore(
+                event: .muteToggle, deviceID: 1, tier: tier,
+                deviceName: "Test Device", currentVolume: volume, currentMute: wasMuted,
+                setVolume: { _, _ in Issue.record("Mute must not directly set volume") },
+                setMute: { _, muted in
+                    #expect(muted == !wasMuted)
+                    if tier == .software { volume = muted ? 0 : restoredVolume }
+                }
+            )
+            let presentation = try #require(hud.lastPresentation)
+            #expect(abs(presentation.fraction - 0.6) < 0.00001)
+            #expect(presentation.muted == !wasMuted)
+        }
+    }
 
     @Test("volumeUp on software tier steps in slider domain (x² taper)")
     func volumeUpStep() {
@@ -592,5 +617,16 @@ struct MediaKeyMonitorHandlerTests {
         )
         #expect(writtenMute == true)
         #expect(feedbackCalls == 1)
+    }
+}
+
+@MainActor
+private final class RecordingMediaKeyHUD: MediaKeyHUDPresenting {
+    var lastPresentation: (fraction: Double, muted: Bool)?
+
+    func swallowObserved() {}
+
+    func show(sliderFraction: Double, mute: Bool, deviceName: String) {
+        lastPresentation = (sliderFraction, mute)
     }
 }

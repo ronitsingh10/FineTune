@@ -286,6 +286,9 @@ final class DDCController {
                 for (deviceID, uid) in matchedUIDsSnapshot {
                     if let savedVolume = self.settingsManager.getDDCVolume(for: uid) {
                         self.cachedVolumes[deviceID] = savedVolume
+                        // Keep DDC discovery, but honor an explicitly selected non-DDC backend.
+                        let override = self.settingsManager.getDeviceVolumeTierOverride(for: uid)
+                        guard override == nil || override == .ddc else { continue }
                         // Restore saved volume to the display
                         let service = matchedSnapshot[deviceID]
                         self.ddcQueue.async {
