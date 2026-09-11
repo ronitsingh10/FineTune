@@ -8,6 +8,11 @@ private class KeyablePanel: NSPanel {
     override var canBecomeKey: Bool { true }
 }
 
+/// Vertical gap between the trigger and the panel.
+private let popoverTriggerGap: CGFloat = 4
+/// Minimum distance kept between the panel and the screen's visible edges.
+private let popoverScreenMargin: CGFloat = 8
+
 /// A dropdown panel without arrow using NSPanel
 /// Uses child window relationship for proper dismissal behavior
 struct PopoverHost<Content: View>: NSViewRepresentable {
@@ -64,6 +69,20 @@ struct PopoverHost<Content: View>: NSViewRepresentable {
         var globalEventMonitor: Any?
         var appDeactivateObserver: NSObjectProtocol?
         weak var parentWindow: NSWindow?
+        /// The view the panel is anchored to. Its screen frame is recomputed on
+        /// every placement so the panel follows the parent window if it moves.
+        private weak var triggerView: NSView?
+        /// Last known screen-space frame of the trigger; fallback when the view
+        /// is no longer in a window.
+        private var triggerScreenFrame: NSRect = .zero
+        private var resizeObserver: NSObjectProtocol?
+
+        private func currentTriggerScreenFrame() -> NSRect {
+            if let view = triggerView, let window = view.window {
+                triggerScreenFrame = window.convertToScreen(view.convert(view.bounds, to: nil))
+            }
+            return triggerScreenFrame
+        }
 
         init(isPresented: Binding<Bool>) {
             self._isPresented = isPresented
@@ -104,14 +123,21 @@ struct PopoverHost<Content: View>: NSViewRepresentable {
             panel.setContentSize(hosting.fittingSize)
             self.hostingView = hosting
 
-            // Position below trigger
-            let parentFrame = parentView.convert(parentView.bounds, to: nil)
-            let screenFrame = parentWindow.convertToScreen(parentFrame)
-            let panelOrigin = NSPoint(
-                x: screenFrame.origin.x,
-                y: screenFrame.origin.y - panel.frame.height - 4
-            )
-            panel.setFrameOrigin(panelOrigin)
+            // Position below trigger, kept on screen (see positionPanel). NSHostingView
+            // may resize the panel asynchronously through Auto Layout, so also
+            // re-run the placement whenever the panel's size actually changes.
+            triggerView = parentView
+            positionPanel(panel, size: hosting.fittingSize)
+            resizeObserver = NotificationCenter.default.addObserver(
+                forName: NSWindow.didResizeNotification,
+                object: panel,
+                queue: .main
+            ) { [weak self, weak panel] _ in
+                MainActor.assumeIsolated {
+                    guard let self, let panel else { return }
+                    self.positionPanel(panel, size: panel.frame.size)
+                }
+            }
 
             // Add as child window - links to parent's event stream
             parentWindow.addChildWindow(panel, ordered: .above)
@@ -126,8 +152,8 @@ struct PopoverHost<Content: View>: NSViewRepresentable {
 
             self.panel = panel
 
-            // Get trigger button frame in screen coordinates
-            let triggerFrame = parentWindow.convertToScreen(parentView.convert(parentView.bounds, to: nil))
+            // Trigger button frame in screen coordinates (captured by positionPanel above)
+            let triggerFrame = triggerScreenFrame
 
             // Local monitor: clicks within our app (outside panel AND outside trigger)
             localEventMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] event in
@@ -160,6 +186,44 @@ struct PopoverHost<Content: View>: NSViewRepresentable {
             }
         }
 
+        /// Places the panel just below the trigger, left-aligned with it, then keeps
+        /// it fully on screen. Icon-only triggers sit at the far right of the popup,
+        /// and the popup itself hugs the menu bar icon near the screen edge, so a
+        /// left-aligned dropdown routinely ran past the right edge and was clipped
+        /// (device names unreadable, "Multi" toggle unreachable). When the panel
+        /// would overflow to the right it is right-aligned with the trigger instead;
+        /// when there is no room below, it flips above. Coordinates are clamped to
+        /// the visible frame of the screen that contains the trigger.
+        private func positionPanel(_ panel: NSPanel, size: NSSize) {
+            let trigger = currentTriggerScreenFrame()
+            let gap = popoverTriggerGap
+            var origin = NSPoint(x: trigger.minX, y: trigger.minY - size.height - gap)
+
+            let triggerCenter = NSPoint(x: trigger.midX, y: trigger.midY)
+            let screen = NSScreen.screens.first { $0.frame.contains(triggerCenter) }
+                ?? NSScreen.screens.first { $0.frame.intersects(trigger) }
+                ?? parentWindow?.screen
+                ?? NSScreen.main
+            guard let visible = screen?.visibleFrame else {
+                panel.setFrameOrigin(origin)
+                return
+            }
+            let margin = popoverScreenMargin
+
+            if origin.x + size.width > visible.maxX - margin {
+                origin.x = trigger.maxX - size.width  // right-align with the trigger
+            }
+            origin.x = max(visible.minX + margin, min(origin.x, visible.maxX - margin - size.width))
+
+            if origin.y < visible.minY + margin,
+               trigger.maxY + gap + size.height <= visible.maxY - margin {
+                origin.y = trigger.maxY + gap  // flip above the trigger
+            }
+            origin.y = max(origin.y, visible.minY + margin)
+
+            panel.setFrameOrigin(origin)
+        }
+
         func updateContent<V: View>(
             _ content: () -> V,
             preferredColorScheme: ColorScheme?,
@@ -176,6 +240,9 @@ struct PopoverHost<Content: View>: NSViewRepresentable {
             let newSize = hostingView.fittingSize
             if let panel = panel, panel.frame.size != newSize {
                 panel.setContentSize(newSize)
+                // setContentSize keeps the bottom-left origin, so a panel that grew
+                // would creep upward over its trigger (and could leave the screen).
+                positionPanel(panel, size: newSize)
             }
         }
 
@@ -196,6 +263,10 @@ struct PopoverHost<Content: View>: NSViewRepresentable {
                 NotificationCenter.default.removeObserver(observer)
                 appDeactivateObserver = nil
             }
+            if let observer = resizeObserver {
+                NotificationCenter.default.removeObserver(observer)
+                resizeObserver = nil
+            }
             // Remove child window relationship
             if let panel = panel, let parent = panel.parent {
                 parent.removeChildWindow(panel)
@@ -203,6 +274,7 @@ struct PopoverHost<Content: View>: NSViewRepresentable {
             panel?.orderOut(nil)
             panel = nil
             hostingView = nil
+            triggerView = nil
 
             if let parentWindow = parentWindow {
                 if reKeyParent {
@@ -230,6 +302,9 @@ struct PopoverHost<Content: View>: NSViewRepresentable {
                 NSEvent.removeMonitor(monitor)
             }
             if let observer = appDeactivateObserver {
+                NotificationCenter.default.removeObserver(observer)
+            }
+            if let observer = resizeObserver {
                 NotificationCenter.default.removeObserver(observer)
             }
         }
