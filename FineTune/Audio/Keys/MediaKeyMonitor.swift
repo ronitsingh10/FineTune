@@ -258,7 +258,7 @@ final class MediaKeyMonitor {
         deviceID: AudioDeviceID,
         tier: VolumeControlTier,
         deviceName: String,
-        currentVolume: Float,
+        currentVolume: @autoclosure () -> Float,
         currentMute: Bool,
         setVolume: (AudioDeviceID, Float) -> Void,
         setMute: (AudioDeviceID, Bool) -> Void,
@@ -266,7 +266,7 @@ final class MediaKeyMonitor {
     ) {
         let shouldShowHUD = !popupVisibility.isVisible
         let sliderDelta = settingsManager.appSettings.volumeHotkeyStep.sliderDelta
-        let currentSlider = VolumeMapping.sliderFraction(forSystemGain: currentVolume, tier: tier)
+        let currentSlider = VolumeMapping.sliderFraction(forSystemGain: currentVolume(), tier: tier)
 
         switch event {
         case .volumeUp(let isRepeat):
@@ -312,7 +312,10 @@ final class MediaKeyMonitor {
             let newMute = !currentMute
             setMute(deviceID, newMute)
             if shouldShowHUD {
-                hudController.show(sliderFraction: currentSlider, mute: newMute, deviceName: deviceName)
+                // Software unmute restores the saved gain; read it after the write.
+                let slider = newMute ? currentSlider
+                    : VolumeMapping.sliderFraction(forSystemGain: currentVolume(), tier: tier)
+                hudController.show(sliderFraction: slider, mute: newMute, deviceName: deviceName)
             }
             iconCoordinator?.flashDevice()
         }

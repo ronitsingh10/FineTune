@@ -65,7 +65,7 @@ final class URLHandler {
 
     /// Set volumes for one or more apps
     /// URL format: finetune://set-volumes?app=com.a&volume=100&app=com.b&volume=50
-    /// Volume is percentage: 0-100 (gain only, boost is per-app and set separately)
+    /// Volume is the displayed slider percentage: 0-100 (boost is set separately).
     private func handleSetVolumes(queryItems: [URLQueryItem]) {
         var pairs: [(identifier: String, volume: Int)] = []
         var currentApp: String?
@@ -105,8 +105,7 @@ final class URLHandler {
         }
 
         for (identifier, volumePercent) in pairs {
-            // Linear conversion: volume=100 → gain 1.0
-            let gain = Float(volumePercent) / 100.0
+            let gain = VolumeMapping.sliderToGain(Double(volumePercent) / 100.0)
 
             if let app = findApp(by: identifier) {
                 audioEngine.setVolume(for: app, to: gain)
@@ -154,7 +153,7 @@ final class URLHandler {
 
         let newGain = VolumeMapping.sliderToGain(sliderPosition)
         audioEngine.setVolume(for: app, to: newGain)
-        let newPercent = Int(round(newGain * 100))
+        let newPercent = Int(round(sliderPosition * 100))
         logger.info("Stepped volume \(direction) for \(app.name) to \(newPercent)%")
     }
 
