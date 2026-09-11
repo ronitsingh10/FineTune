@@ -77,7 +77,9 @@ struct AutoEQPicker: View {
         }
         .buttonStyle(.plain)
         .onHover { isButtonHovered = $0 }
-        .help(isExpanded ? "Close AutoEQ" : "AutoEQ correction")
+        .help(isExpanded
+              ? String(localized: "Close AutoEQ")
+              : String(localized: "AutoEQ correction"))
         .animation(DesignTokens.Animation.hover, value: isButtonHovered)
     }
 

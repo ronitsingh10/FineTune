@@ -3,13 +3,13 @@ import SwiftUI
 
 @MainActor
 struct SettingsRow<Trailing: View>: View {
-    private let title: String
-    private let description: String?
+    private let title: LocalizedStringResource
+    private let description: LocalizedStringResource?
     @ViewBuilder private let trailing: () -> Trailing
 
     init(
-        _ title: String,
-        description: String? = nil,
+        _ title: LocalizedStringResource,
+        description: LocalizedStringResource? = nil,
         @ViewBuilder trailing: @escaping () -> Trailing
     ) {
         self.title = title

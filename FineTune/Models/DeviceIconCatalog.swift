@@ -10,13 +10,13 @@ enum DeviceIconCatalog {
     }
 
     struct Category: Identifiable {
-        let name: String
+        let id: String
+        let name: LocalizedStringResource
         let entries: [Entry]
-        var id: String { name }
     }
 
     static let categories: [Category] = [
-        Category(name: "Headphones & Earbuds", entries: [
+        Category(id: "headphones", name: "Headphones & Earbuds", entries: [
             Entry(symbol: "headphones", keywords: ["headphones", "cans", "over-ear"]),
             Entry(symbol: "airpodspro", keywords: ["airpods", "pro", "earbuds"]),
             Entry(symbol: "airpodsmax", keywords: ["airpods", "max", "over-ear"]),
@@ -39,7 +39,7 @@ enum DeviceIconCatalog {
             Entry(symbol: "beats.fitpro", keywords: ["beats", "fit", "sport"]),
             Entry(symbol: "hearingdevice.ear", keywords: ["hearing", "aid", "ear"]),
         ]),
-        Category(name: "Speakers", entries: [
+        Category(id: "speakers", name: "Speakers", entries: [
             Entry(symbol: "hifispeaker", keywords: ["speaker", "hifi"]),
             Entry(symbol: "hifispeaker.fill", keywords: ["speaker", "hifi"]),
             Entry(symbol: "hifispeaker.2", keywords: ["speakers", "stereo", "pair"]),
@@ -59,7 +59,7 @@ enum DeviceIconCatalog {
             Entry(symbol: "hifispeaker.and.appletv.fill", keywords: ["apple tv", "home theater", "speaker"]),
             Entry(symbol: "hifireceiver.fill", keywords: ["receiver", "amp", "home theater"]),
         ]),
-        Category(name: "Computers & Displays", entries: [
+        Category(id: "computers-displays", name: "Computers & Displays", entries: [
             Entry(symbol: "macbook", keywords: ["macbook", "laptop"]),
             Entry(symbol: "laptopcomputer", keywords: ["laptop", "notebook"]),
             Entry(symbol: "desktopcomputer", keywords: ["imac", "desktop"]),
@@ -76,7 +76,7 @@ enum DeviceIconCatalog {
             Entry(symbol: "visionpro", keywords: ["vision", "pro", "spatial"]),
             Entry(symbol: "videoprojector.fill", keywords: ["projector", "beamer", "hdmi"]),
         ]),
-        Category(name: "Microphones", entries: [
+        Category(id: "microphones", name: "Microphones", entries: [
             Entry(symbol: "mic", keywords: ["mic", "microphone"]),
             Entry(symbol: "mic.fill", keywords: ["mic", "microphone"]),
             Entry(symbol: "music.microphone", keywords: ["mic", "vocal", "studio"]),
@@ -86,7 +86,7 @@ enum DeviceIconCatalog {
             Entry(symbol: "web.camera.fill", keywords: ["webcam", "camera"]),
             Entry(symbol: "headset", keywords: ["headset", "boom", "gaming", "calls"]),
         ]),
-        Category(name: "Connectors & Other", entries: [
+        Category(id: "connectors-other", name: "Connectors & Other", entries: [
             Entry(symbol: "cable.connector", keywords: ["cable", "jack", "aux", "3.5mm"]),
             Entry(symbol: "cable.connector.horizontal", keywords: ["cable", "jack", "aux"]),
             Entry(symbol: "cable.coaxial", keywords: ["cable", "coaxial", "spdif"]),
