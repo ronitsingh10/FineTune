@@ -18,7 +18,7 @@ Control the volume of every app independently, boost quiet ones up to 4x, route 
 </p>
 
 <p align="center">
-  <strong>English</strong> · <a href="README.zh-CN.md">简体中文</a>
+  <strong>English</strong> · <a href="README.pt-BR.md">Português (Brasil)</a> · <a href="README.zh-CN.md">简体中文</a>
 </p>
 
 <p align="center">

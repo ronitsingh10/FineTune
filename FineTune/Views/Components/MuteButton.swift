@@ -54,8 +54,8 @@ private struct BaseMuteButton: View {
     let mutedIcon: String
     let unmutedIcon: String
     let layoutReferenceIcon: String?
-    let mutedHelp: String
-    let unmutedHelp: String
+    let mutedHelp: LocalizedStringResource
+    let unmutedHelp: LocalizedStringResource
     let action: () -> Void
 
     @State private var isPulsing = false
@@ -85,7 +85,7 @@ private struct BaseMuteButton: View {
         .onHover { hovering in
             isHovered = hovering
         }
-        .help(isMuted ? mutedHelp : unmutedHelp)
+        .help(Text(isMuted ? mutedHelp : unmutedHelp))
         .animation(.spring(response: 0.25, dampingFraction: 0.5), value: isPulsing)
         .animation(DesignTokens.Animation.hover, value: isHovered)
         .onChange(of: isMuted) { _, _ in

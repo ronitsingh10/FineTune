@@ -12,7 +12,7 @@ enum ShortcutAction: String, CaseIterable, Codable, Sendable {
     case targetAppVolumeDown = "frontmostAppVolumeDown"
     case targetAppMuteToggle = "frontmostAppMuteToggle"
 
-    var displayName: String {
+    var displayName: LocalizedStringResource {
         switch self {
         case .togglePopup: "Toggle FineTune Popup"
         case .targetAppVolumeUp: "App Volume Up"

@@ -73,19 +73,31 @@ struct DeviceInspectorFormatterTests {
 
     @Test("formatHogModeOwner returns resolved name when provided")
     func hogWithName() {
-        let result = DeviceInspectorInfo.formatHogModeOwner(1234, processName: "Audirvana")
+        let result = DeviceInspectorInfo.formatHogModeOwner(
+            1234,
+            processName: "Audirvana",
+            locale: Locale(identifier: "en")
+        )
         #expect(result == "In exclusive use by Audirvana (PID 1234)")
     }
 
     @Test("formatHogModeOwner falls back to PID-only when name is nil")
     func hogWithoutName() {
-        let result = DeviceInspectorInfo.formatHogModeOwner(5678, processName: nil)
+        let result = DeviceInspectorInfo.formatHogModeOwner(
+            5678,
+            processName: nil,
+            locale: Locale(identifier: "en")
+        )
         #expect(result == "In exclusive use by PID 5678")
     }
 
     @Test("formatHogModeOwner falls back to PID-only when name is empty")
     func hogWithEmptyName() {
-        let result = DeviceInspectorInfo.formatHogModeOwner(5678, processName: "")
+        let result = DeviceInspectorInfo.formatHogModeOwner(
+            5678,
+            processName: "",
+            locale: Locale(identifier: "en")
+        )
         #expect(result == "In exclusive use by PID 5678")
     }
 }

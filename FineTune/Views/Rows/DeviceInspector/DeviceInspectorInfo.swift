@@ -50,12 +50,30 @@ nonisolated extension DeviceInspectorInfo {
 
     /// Human-readable hog-mode owner string for the inline row.
     /// Returns nil when the device is not held exclusively by another process.
-    static func formatHogModeOwner(_ owner: pid_t, processName: String?) -> String? {
+    static func formatHogModeOwner(
+        _ owner: pid_t,
+        processName: String?,
+        locale: Locale? = nil
+    ) -> String? {
         guard owner > 0, owner != getpid() else { return nil }
+        let pid = String(owner)
         if let processName, !processName.isEmpty {
-            return "In exclusive use by \(processName) (PID \(owner))"
+            let resource: LocalizedStringResource = if let locale {
+                LocalizedStringResource(
+                    "In exclusive use by \(processName) (PID \(pid))",
+                    locale: locale
+                )
+            } else {
+                "In exclusive use by \(processName) (PID \(pid))"
+            }
+            return String(localized: resource)
         }
-        return "In exclusive use by PID \(owner)"
+        let resource: LocalizedStringResource = if let locale {
+            LocalizedStringResource("In exclusive use by PID \(pid)", locale: locale)
+        } else {
+            "In exclusive use by PID \(pid)"
+        }
+        return String(localized: resource)
     }
 }
 
