@@ -5,14 +5,14 @@ import Testing
 @Suite("Localization catalogs")
 struct LocalizationTests {
     private let english = Locale(identifier: "en")
-    private let simplifiedChinese = Locale(identifier: "zh-Hans")
+    private let brazilianPortuguese = Locale(identifier: "pt-BR")
 
-    @Test("Representative strings resolve in English and Simplified Chinese")
+    @Test("Representative strings resolve in English and Brazilian Portuguese")
     func representativeRuntimeStrings() {
         #expect(String(localized: LocalizedStringResource("Settings", locale: english)) == "Settings")
-        #expect(String(localized: LocalizedStringResource("Settings", locale: simplifiedChinese)) == "设置")
-        #expect(String(localized: LocalizedStringResource("Output Devices", locale: simplifiedChinese)) == "输出设备")
-        #expect(String(localized: LocalizedStringResource("AutoEQ correction", locale: simplifiedChinese)) == "AutoEQ 耳机校正")
+        #expect(String(localized: LocalizedStringResource("Settings", locale: brazilianPortuguese)) == "Configurações")
+        #expect(String(localized: LocalizedStringResource("Output Devices:", locale: brazilianPortuguese)) == "Dispositivos de saída:")
+        #expect(String(localized: LocalizedStringResource("AutoEQ correction", locale: brazilianPortuguese)) == "Correção AutoEQ")
     }
 
     @Test("English quantity strings use singular and plural forms")
@@ -21,7 +21,7 @@ struct LocalizationTests {
         #expect(String(localized: LocalizedStringResource("\(2) devices", locale: english)) == "2 devices")
     }
 
-    @Test("Every translatable app string has a Simplified Chinese value with matching placeholders")
+    @Test("Every translatable app string has a Brazilian Portuguese value with matching placeholders")
     func appCatalogCoverageAndPlaceholders() throws {
         let catalog = try catalog(named: "Localizable")
         let strings = try #require(catalog["strings"] as? [String: Any])
@@ -31,15 +31,14 @@ struct LocalizationTests {
             if entry["shouldTranslate"] as? Bool == false { continue }
 
             let localizations = try #require(entry["localizations"] as? [String: Any], "Missing localizations for \(source)")
-            let chinese = try #require(localizations["zh-Hans"] as? [String: Any], "Missing zh-Hans for \(source)")
-            let unit = try #require(chinese["stringUnit"] as? [String: Any], "Missing zh-Hans string unit for \(source)")
-            let value = try #require(unit["value"] as? String)
+            let portuguese = try #require(localizations["pt-BR"] as? [String: Any], "Missing pt-BR for \(source)")
+            let value = try localizedValue(in: localizations, language: "pt-BR")
 
             #expect(placeholders(in: value) == placeholders(in: source), "Placeholder mismatch for \(source): \(value)")
         }
     }
 
-    @Test("Info.plist permissions include English and Simplified Chinese")
+    @Test("Info.plist permissions include English and Brazilian Portuguese")
     func infoPlistPermissions() throws {
         let catalog = try catalog(named: "InfoPlist")
         let strings = try #require(catalog["strings"] as? [String: Any])
@@ -53,9 +52,9 @@ struct LocalizationTests {
             let entry = try #require(strings[key] as? [String: Any])
             let localizations = try #require(entry["localizations"] as? [String: Any])
             let englishValue = try localizedValue(in: localizations, language: "en")
-            let chineseValue = try localizedValue(in: localizations, language: "zh-Hans")
+            let portugueseValue = try localizedValue(in: localizations, language: "pt-BR")
             #expect(!englishValue.isEmpty)
-            #expect(!chineseValue.isEmpty)
+            #expect(!portugueseValue.isEmpty)
         }
     }
 
@@ -84,7 +83,13 @@ struct LocalizationTests {
 
     private func localizedValue(in localizations: [String: Any], language: String) throws -> String {
         let localization = try #require(localizations[language] as? [String: Any])
-        let unit = try #require(localization["stringUnit"] as? [String: Any])
+        if let unit = localization["stringUnit"] as? [String: Any] {
+            return try #require(unit["value"] as? String)
+        }
+        let variations = try #require(localization["variations"] as? [String: Any])
+        let plural = try #require(variations["plural"] as? [String: Any])
+        let other = try #require(plural["other"] as? [String: Any])
+        let unit = try #require(other["stringUnit"] as? [String: Any])
         return try #require(unit["value"] as? String)
     }
 
