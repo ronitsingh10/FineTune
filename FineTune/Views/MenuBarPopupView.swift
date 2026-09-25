@@ -60,6 +60,12 @@ struct MenuBarPopupView: View {
     /// Whether Bluetooth hardware is powered on
     @State private var isBluetoothOn = false
 
+    /// Paired device names awaiting their matching CoreAudio output after connect.
+    @State private var pendingBluetoothOutputs: [String: String] = [:]
+
+    /// Cleanup tasks for Bluetooth connections that never surface in CoreAudio.
+    @State private var pendingBluetoothTimeouts: [String: Task<Void, Never>] = [:]
+
     /// Whether edit mode is active (affects both device priority and app visibility)
     @State private var isEditingDevicePriority = false
 
@@ -156,12 +162,13 @@ struct MenuBarPopupView: View {
             // before the popup is actually shown, and setting isVisible here
             // would suppress the HUD on the first media key at cold launch.
         }
-        .onChange(of: audioEngine.outputDevices) { _, _ in
+        .onChange(of: audioEngine.outputDevices) { _, newDevices in
             if isEditingDevicePriority && !wasEditingInputDevices {
                 mergeDeviceChanges(from: audioEngine.outputDevices)
             }
             updateSortedDevices()
             syncNavOrder()
+            selectPendingBluetoothOutput(from: newDevices)
         }
         .onChange(of: audioEngine.inputDevices) { _, _ in
             if isEditingDevicePriority && wasEditingInputDevices {
@@ -537,9 +544,7 @@ struct MenuBarPopupView: View {
                                     device: device,
                                     isConnecting: audioEngine.bluetoothDeviceMonitor.connectingIDs.contains(device.id),
                                     errorMessage: audioEngine.bluetoothDeviceMonitor.connectionErrors[device.id],
-                                    onConnect: {
-                                        audioEngine.bluetoothDeviceMonitor.connect(device: device)
-                                    }
+                                    onConnect: { connectAndSelect(device) }
                                 )
                             }
                         }
@@ -624,8 +629,55 @@ struct MenuBarPopupView: View {
                     .id(PopupKeyboardNavModel.RowID.device(uid: device.uid))
                 }
 
+                if !isBluetoothOn {
+                    Text("Turn on Bluetooth to connect devices")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .padding(.top, DesignTokens.Spacing.xs)
+                } else {
+                    let connectedNames = Set(sortedDevices.map(\.name))
+                    let filteredPaired = pairedDevices.filter { !connectedNames.contains($0.name) }
+                    if !filteredPaired.isEmpty {
+                        SectionHeader(title: "Paired")
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.top, DesignTokens.Spacing.xs)
+
+                        ForEach(filteredPaired) { device in
+                            PairedDeviceRow(
+                                device: device,
+                                isConnecting: audioEngine.bluetoothDeviceMonitor.connectingIDs.contains(device.id),
+                                errorMessage: audioEngine.bluetoothDeviceMonitor.connectionErrors[device.id],
+                                onConnect: { connectAndSelect(device) }
+                            )
+                        }
+                    }
+                }
+
             }
         }
+    }
+
+    private func connectAndSelect(_ device: PairedBluetoothDevice) {
+        pendingBluetoothOutputs[device.id] = device.name
+        pendingBluetoothTimeouts[device.id]?.cancel()
+        pendingBluetoothTimeouts[device.id] = Task {
+            try? await Task.sleep(for: .seconds(12))
+            guard !Task.isCancelled else { return }
+            pendingBluetoothOutputs.removeValue(forKey: device.id)
+            pendingBluetoothTimeouts.removeValue(forKey: device.id)
+        }
+        audioEngine.bluetoothDeviceMonitor.connect(device: device)
+    }
+
+    private func selectPendingBluetoothOutput(from devices: [AudioDevice]) {
+        guard let match = devices.first(where: { pendingBluetoothOutputs.values.contains($0.name) }),
+              let pending = pendingBluetoothOutputs.first(where: { $0.value == match.name })
+        else { return }
+
+        pendingBluetoothTimeouts[pending.key]?.cancel()
+        pendingBluetoothTimeouts.removeValue(forKey: pending.key)
+        pendingBluetoothOutputs.removeValue(forKey: pending.key)
+        audioEngine.setDefaultOutputDevice(match.id)
     }
 
     /// Builds a single row for the priority-edit list. Extracted from
