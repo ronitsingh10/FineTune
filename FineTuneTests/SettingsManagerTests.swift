@@ -419,6 +419,74 @@ struct DeviceIconOverrideTests {
     }
 }
 
+// MARK: - Per-App Mono Downmix
+
+@Suite("SettingsManager — per-app mono downmix")
+@MainActor
+struct MonoDownmixSettingsTests {
+
+    private func makeManager() -> SettingsManager {
+        let tempDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+        return SettingsManager(directory: tempDir)
+    }
+
+    @Test("get returns nil until set, then round-trips")
+    func setAndGet() {
+        let manager = makeManager()
+        #expect(manager.getMonoDownmix(for: "com.test.app") == nil)
+
+        manager.setMonoDownmix(for: "com.test.app", to: true)
+        #expect(manager.getMonoDownmix(for: "com.test.app") == true)
+
+        manager.setMonoDownmix(for: "com.test.app", to: false)
+        #expect(manager.getMonoDownmix(for: "com.test.app") == false)
+    }
+
+    @Test("flags are independent per identifier")
+    func independentPerIdentifier() {
+        let manager = makeManager()
+        manager.setMonoDownmix(for: "com.a", to: true)
+        manager.setMonoDownmix(for: "com.b", to: false)
+
+        #expect(manager.getMonoDownmix(for: "com.a") == true)
+        #expect(manager.getMonoDownmix(for: "com.b") == false)
+        #expect(manager.getMonoDownmix(for: "com.c") == nil)
+    }
+
+    @Test("Settings JSON round-trips appMonoDownmix")
+    func jsonRoundTrip() throws {
+        var settings = SettingsManager.Settings()
+        settings.appMonoDownmix = ["com.test.app": true]
+        let data = try JSONEncoder().encode(settings)
+        let decoded = try JSONDecoder().decode(SettingsManager.Settings.self, from: data)
+        #expect(decoded.appMonoDownmix == ["com.test.app": true])
+    }
+
+    @Test("resetAllSettings clears mono downmix flags")
+    func resetClears() {
+        let manager = makeManager()
+        manager.setMonoDownmix(for: "com.test.app", to: true)
+
+        manager.resetAllSettings()
+
+        #expect(manager.getMonoDownmix(for: "com.test.app") == nil)
+    }
+
+    @Test("ignoreApp clears the mono downmix flag")
+    func ignoreClears() {
+        let manager = makeManager()
+        manager.setMonoDownmix(for: "com.test.app", to: true)
+
+        manager.ignoreApp(
+            "com.test.app",
+            info: IgnoredAppInfo(persistenceIdentifier: "com.test.app", displayName: "Test", bundleID: "com.test.app")
+        )
+
+        #expect(manager.getMonoDownmix(for: "com.test.app") == nil)
+    }
+}
+
 // MARK: - MenuBarIconStyle
 
 @Suite("MenuBarIconStyle — Enumeration")

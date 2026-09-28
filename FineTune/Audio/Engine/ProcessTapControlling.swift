@@ -24,6 +24,7 @@ protocol ProcessTapControlling: AnyObject, Sendable {
     func setAutoEQPreampEnabled(_ enabled: Bool)
     func updateLoudnessCompensation(volume: Float, enabled: Bool)
     func updateLoudnessEqualization(_ settings: LoudnessEqualizerSettings)
+    func setMonoDownmix(_ enabled: Bool)
     func switchDevice(to newDeviceUID: String, preferredTapSourceDeviceUID: String?, sourceDeviceDead: Bool) async throws
     func updateDevices(to newDeviceUIDs: [String], preferredTapSourceDeviceUID: String?, sourceDeviceDead: Bool) async throws
     func hasRecentAudioCallback(within seconds: Double) -> Bool
@@ -61,6 +62,10 @@ extension ProcessTapControlling {
     }
 
     func recreateForOutputRateChange() async throws {
+        // Default no-op for mocks that don't override
+    }
+
+    func setMonoDownmix(_ enabled: Bool) {
         // Default no-op for mocks that don't override
     }
 }

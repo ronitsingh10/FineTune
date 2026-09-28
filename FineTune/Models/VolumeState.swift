@@ -13,6 +13,7 @@ struct AppAudioState {
     var muted: Bool
     var persistenceIdentifier: String
     var boost: BoostLevel = .x1
+    var monoDownmix: Bool = false
     var deviceSelectionMode: DeviceSelectionMode = .single
     var selectedDeviceUIDs: Set<String> = []  // Used in multi mode
 }
@@ -88,6 +89,36 @@ final class VolumeState {
             return saved
         }
         return nil
+    }
+
+    // MARK: - Mono Downmix
+
+    func getMonoDownmix(for pid: pid_t) -> Bool {
+        states[pid]?.monoDownmix ?? false
+    }
+
+    func setMonoDownmix(for pid: pid_t, to enabled: Bool, identifier: String? = nil) {
+        if var state = states[pid] {
+            state.monoDownmix = enabled
+            if let identifier = identifier {
+                state.persistenceIdentifier = identifier
+            }
+            states[pid] = state
+            settingsManager?.setMonoDownmix(for: state.persistenceIdentifier, to: enabled)
+        } else if let identifier = identifier {
+            let defaultVolume = settingsManager?.appSettings.defaultNewAppVolume ?? 1.0
+            var newState = AppAudioState(volume: defaultVolume, muted: false, persistenceIdentifier: identifier)
+            newState.monoDownmix = enabled
+            states[pid] = newState
+            settingsManager?.setMonoDownmix(for: identifier, to: enabled)
+        }
+    }
+
+    func loadSavedMonoDownmix(for pid: pid_t, identifier: String) -> Bool? {
+        ensureState(for: pid, identifier: identifier)
+        let saved = settingsManager?.getMonoDownmix(for: identifier)
+        states[pid]?.monoDownmix = saved ?? false
+        return saved
     }
 
     // MARK: - Mute State

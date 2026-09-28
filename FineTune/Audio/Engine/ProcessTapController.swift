@@ -57,6 +57,9 @@ final class ProcessTapController: ProcessTapControlling {
     private nonisolated(unsafe) var _forceSilence: Bool = false
     /// User-controlled mute - still tracks VU levels but outputs silence
     private nonisolated(unsafe) var _isMuted: Bool = false
+    /// Per-app mono downmix - true means downmix this app's audio to a single
+    /// channel and duplicate it to both stereo channels. Other apps unaffected.
+    private nonisolated(unsafe) var _monoDownmix: Bool = false
     // Device volume compensation removed — was dead code (always 1.0).
     // If implementing, ensure both primary and secondary callbacks disable
     // compensation during crossfade to avoid gain jumps (RT-013).
@@ -204,6 +207,11 @@ final class ProcessTapController: ProcessTapControlling {
     var isMuted: Bool {
         get { _isMuted }
         set { _isMuted = newValue }
+    }
+
+    /// Enables or disables per-app mono downmix on the running audio thread.
+    func setMonoDownmix(_ enabled: Bool) {
+        _monoDownmix = enabled
     }
 
     // MARK: - Initialization
@@ -655,6 +663,7 @@ final class ProcessTapController: ProcessTapControlling {
             loudnessCompensator?.updateForVolume(initial.loudnessVolume)
         }
         _lastLoudnessVolume = initial.loudnessVolume
+        _monoDownmix = initial.monoDownmix
 
         // Create IO proc with gain processing
         nextCallbackID += 1
@@ -1328,7 +1337,8 @@ final class ProcessTapController: ProcessTapControlling {
         eqProc: EQProcessor?,
         autoEQProc: AutoEQProcessor?,
         loudnessEqualizerProc: LoudnessEqualizer?,
-        loudnessCompensatorProc: LoudnessCompensator?
+        loudnessCompensatorProc: LoudnessCompensator?,
+        monoDownmix: Bool = false
     ) {
         let inputBufferCount = inputBuffers.count
         let outputBufferCount = outputBuffers.count
@@ -1376,7 +1386,31 @@ final class ProcessTapController: ProcessTapControlling {
             let eq = eqProc  // Parameter read — each callback passes its own processor
             let eqCanProcessStereoInterleaved = (inputChannels == 2 && outputChannels == 2)
 
-            if inputChannels == outputChannels {
+            if monoDownmix {
+                // Per-app mono mode: downmix the source stereo pair to a single
+                // sample, then duplicate it across the preferred output pair.
+                // (all other output channels stay silent). Linear gains apply
+                // identically to the summed signal, so the volume ramp folds in.
+                for frame in 0..<frameCount {
+                    currentVol += (targetVol - currentVol) * rampCoefficient
+                    let gain = currentVol * crossfadeMultiplier * outputGateMultiplier
+                    let inBase = frame * inputChannels
+                    let mono = inputChannels == 1
+                        ? inputSamples[inBase] * gain
+                        : (inputSamples[inBase] + inputSamples[inBase + 1]) * 0.5 * gain
+
+                    let outBase = frame * outputChannels
+                    for ch in 0..<outputChannels {
+                        outputSamples[outBase + ch] = 0
+                    }
+                    outputSamples[outBase + safeLeft] = mono
+                    outputSamples[outBase + safeRight] = mono
+                }
+                let writtenSamples = frameCount * outputChannels
+                if writtenSamples < outputSampleCount {
+                    memset(outputSamples.advanced(by: writtenSamples), 0, (outputSampleCount - writtenSamples) * MemoryLayout<Float>.size)
+                }
+            } else if inputChannels == outputChannels {
                 let sampleCount = frameCount * inputChannels
                 for frame in 0..<frameCount {
                     currentVol += (targetVol - currentVol) * rampCoefficient
@@ -1535,7 +1569,7 @@ final class ProcessTapController: ProcessTapControlling {
             if totalSamplesThisBuffer == 0 {
                 totalSamplesThisBuffer = sampleCount / channels
             }
-            for i in stride(from: 0, to: sampleCount, by: channels) {
+            for i in 0..<sampleCount {
                 let absSample = abs(inputSamples[i])
                 if absSample > maxPeak { maxPeak = absSample }
             }
@@ -1630,7 +1664,8 @@ final class ProcessTapController: ProcessTapControlling {
             eqProc: eqProc,
             autoEQProc: autoEQProc,
             loudnessEqualizerProc: loudnessEqualizerProc,
-            loudnessCompensatorProc: loudnessCompensatorProc
+            loudnessCompensatorProc: loudnessCompensatorProc,
+            monoDownmix: _monoDownmix
         )
 
         if isPrimary {

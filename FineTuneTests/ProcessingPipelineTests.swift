@@ -106,7 +106,8 @@ private func processWithDefaults(
     eqProc: EQProcessor? = nil,
     autoEQProc: AutoEQProcessor? = nil,
     loudnessEqualizerProc: LoudnessEqualizer? = nil,
-    loudnessCompensatorProc: LoudnessCompensator? = nil
+    loudnessCompensatorProc: LoudnessCompensator? = nil,
+    monoDownmix: Bool = false
 ) {
     ProcessTapController.processMappedBuffers(
         inputBuffers: input.bufferList,
@@ -121,7 +122,8 @@ private func processWithDefaults(
         eqProc: eqProc,
         autoEQProc: autoEQProc,
         loudnessEqualizerProc: loudnessEqualizerProc,
-        loudnessCompensatorProc: loudnessCompensatorProc
+        loudnessCompensatorProc: loudnessCompensatorProc,
+        monoDownmix: monoDownmix
     )
 }
 
@@ -396,6 +398,149 @@ struct BufferMappingTests {
         var vol: Float = 1.0
         // Should not crash.
         processWithDefaults(input: input, output: output, currentVol: &vol)
+    }
+}
+
+// MARK: - Per-App Mono Downmix Tests
+
+@Suite("ProcessTapController — Mono Downmix")
+struct MonoDownmixTests {
+
+    /// Fills a stereo buffer with distinct left/right values.
+    private func fillStereo(_ abl: TestABL, bufferIndex: Int, left: Float, right: Float, frames: Int) {
+        let data = abl.data(at: bufferIndex)
+        for f in 0..<frames {
+            data[f * 2] = left
+            data[f * 2 + 1] = right
+        }
+    }
+
+    @Test("Stereo input downmixes to average and duplicates to both channels")
+    func stereoDownmixDuplicates() {
+        let frames = 256
+        let input = TestABL(buffers: [(channels: 2, frames: frames)])
+        let output = TestABL(buffers: [(channels: 2, frames: frames)])
+        fillStereo(input, bufferIndex: 0, left: 0.5, right: 0.25, frames: frames)
+
+        var vol: Float = 1.0
+        processWithDefaults(input: input, output: output, currentVol: &vol, monoDownmix: true)
+
+        // mono = (0.5 + 0.25) / 2 = 0.375 on both channels.
+        let outData = output.data(at: 0)
+        for f in 0..<frames {
+            #expect(abs(outData[f * 2] - 0.375) < 1e-6, "Left at frame \(f)")
+            #expect(abs(outData[f * 2 + 1] - 0.375) < 1e-6, "Right at frame \(f)")
+        }
+    }
+
+    @Test("Right-only input reaches both stereo outputs")
+    func rightOnlyDownmix() {
+        let input = TestABL(buffers: [(channels: 2, frames: 1)])
+        let output = TestABL(buffers: [(channels: 2, frames: 1)])
+        input.data(at: 0)[1] = 1.0
+
+        var vol: Float = 1.0
+        processWithDefaults(input: input, output: output, currentVol: &vol, monoDownmix: true)
+
+        #expect(output.data(at: 0)[0] == 0.5)
+        #expect(output.data(at: 0)[1] == 0.5)
+    }
+
+    @Test("Extra source channels do not reduce stereo pair level")
+    func multichannelSourceDownmix() {
+        let input = TestABL(buffers: [(channels: 4, frames: 1)])
+        let output = TestABL(buffers: [(channels: 4, frames: 1)])
+        input.data(at: 0)[0] = 1.0
+
+        var vol: Float = 1.0
+        processWithDefaults(input: input, output: output, currentVol: &vol, monoDownmix: true)
+
+        #expect(output.data(at: 0)[0] == 0.5)
+        #expect(output.data(at: 0)[1] == 0.5)
+        #expect(output.data(at: 0)[2] == 0.0)
+        #expect(output.data(at: 0)[3] == 0.0)
+    }
+
+    @Test("Mono downmix disabled preserves stereo — other apps unaffected")
+    func disabledPreservesStereo() {
+        let frames = 128
+        let input = TestABL(buffers: [(channels: 2, frames: frames)])
+        let output = TestABL(buffers: [(channels: 2, frames: frames)])
+        fillStereo(input, bufferIndex: 0, left: 0.5, right: 0.25, frames: frames)
+
+        var vol: Float = 1.0
+        processWithDefaults(input: input, output: output, currentVol: &vol, monoDownmix: false)
+
+        let outData = output.data(at: 0)
+        for f in 0..<frames {
+            #expect(outData[f * 2] == 0.5, "Left channel must stay stereo")
+            #expect(outData[f * 2 + 1] == 0.25, "Right channel must stay stereo")
+        }
+    }
+
+    @Test("Mono downmix applies the volume gain")
+    func downmixAppliesGain() {
+        let frames = 64
+        let input = TestABL(buffers: [(channels: 2, frames: frames)])
+        let output = TestABL(buffers: [(channels: 2, frames: frames)])
+        fillStereo(input, bufferIndex: 0, left: 0.6, right: 0.4, frames: frames)
+
+        // target 0.5 with instant ramp => gain 0.5.
+        var vol: Float = 0.0
+        processWithDefaults(
+            input: input, output: output,
+            targetVol: 0.5, rampCoefficient: 1.0,
+            currentVol: &vol, monoDownmix: true
+        )
+
+        // mono = (0.6 + 0.4) / 2 = 0.5; × 0.5 gain = 0.25.
+        let outData = output.data(at: 0)
+        for f in 0..<frames {
+            #expect(abs(outData[f * 2] - 0.25) < 1e-6, "Left at frame \(f)")
+            #expect(abs(outData[f * 2 + 1] - 0.25) < 1e-6, "Right at frame \(f)")
+        }
+    }
+
+    @Test("Mono downmix to 6ch output uses the preferred stereo pair only")
+    func downmixToSurround() {
+        let frames = 64
+        let input = TestABL(buffers: [(channels: 2, frames: frames)])
+        let output = TestABL(buffers: [(channels: 6, frames: frames)])
+        fillStereo(input, bufferIndex: 0, left: 0.7, right: 0.3, frames: frames)
+
+        var vol: Float = 1.0
+        processWithDefaults(
+            input: input, output: output,
+            preferredStereoLeft: 2, preferredStereoRight: 3,
+            currentVol: &vol, monoDownmix: true
+        )
+
+        // mono = 0.5 lands on channels 3/4 (zero-based 2/3); others silent.
+        let outData = output.data(at: 0)
+        for f in 0..<frames {
+            let base = f * 6
+            #expect(abs(outData[base + 2] - 0.5) < 1e-6, "Left at frame \(f)")
+            #expect(abs(outData[base + 3] - 0.5) < 1e-6, "Right at frame \(f)")
+            for ch in [0, 1, 4, 5] {
+                #expect(outData[base + ch] == 0.0, "Channel \(ch) should be silent at frame \(f)")
+            }
+        }
+    }
+
+    @Test("Mono downmix into a 1ch output writes the averaged signal")
+    func downmixToMonoOutput() {
+        let frames = 32
+        let input = TestABL(buffers: [(channels: 2, frames: frames)])
+        let output = TestABL(buffers: [(channels: 1, frames: frames)])
+        fillStereo(input, bufferIndex: 0, left: 1.0, right: 0.0, frames: frames)
+
+        var vol: Float = 1.0
+        processWithDefaults(input: input, output: output, currentVol: &vol, monoDownmix: true)
+
+        let outData = output.data(at: 0)
+        for f in 0..<frames {
+            #expect(abs(outData[f] - 0.5) < 1e-6, "Mono output at frame \(f)")
+        }
     }
 }
 
