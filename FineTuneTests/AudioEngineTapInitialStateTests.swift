@@ -22,6 +22,7 @@ final class RecordingProcessTapController: ProcessTapControlling {
         case setAutoEQPreampEnabled(Bool)
         case updateLoudnessCompensation(volume: Float, enabled: Bool)
         case updateLoudnessEqualization(LoudnessEqualizerSettings)
+        case setMonoDownmix(Bool)
         case invalidate
     }
 
@@ -34,6 +35,7 @@ final class RecordingProcessTapController: ProcessTapControlling {
         var loudnessVolume: Float
         var loudnessCompensationEnabled: Bool
         var loudnessEqualizerSettings: LoudnessEqualizerSettings
+        var monoDownmix: Bool
 
         @MainActor
         init(_ s: TapInitialState) {
@@ -43,6 +45,7 @@ final class RecordingProcessTapController: ProcessTapControlling {
             self.loudnessVolume = s.loudnessVolume
             self.loudnessCompensationEnabled = s.loudnessCompensationEnabled
             self.loudnessEqualizerSettings = s.loudnessEqualizerSettings
+            self.monoDownmix = s.monoDownmix
         }
     }
 
@@ -90,6 +93,10 @@ final class RecordingProcessTapController: ProcessTapControlling {
 
     func updateLoudnessEqualization(_ settings: LoudnessEqualizerSettings) {
         events.append(.updateLoudnessEqualization(settings))
+    }
+
+    func setMonoDownmix(_ enabled: Bool) {
+        events.append(.setMonoDownmix(enabled))
     }
 
     func switchDevice(to newDeviceUID: String, preferredTapSourceDeviceUID: String?, sourceDeviceDead: Bool) async throws {
@@ -277,6 +284,33 @@ struct AudioEngineTapInitialStateTests {
         #expect(abs(snap.loudnessVolume - 0.2) < 1e-6)
     }
 
+    // MARK: Per-app mono downmix
+
+    @Test("monoDownmix persisted for this app lands in TapInitialState.monoDownmix")
+    func monoDownmixCarried() throws {
+        let fix = makeFixture()
+        fix.engine.volumeState.setMonoDownmix(
+            for: fix.app.id, to: true, identifier: fix.app.persistenceIdentifier
+        )
+
+        fix.engine.setDevice(for: fix.app, deviceUID: fix.device.uid)
+
+        let snap = try #require(capturedInitial(fix))
+        #expect(snap.monoDownmix == true)
+    }
+
+    @Test("setMonoDownmix on the engine forwards to the live tap")
+    func monoDownmixForwardsToTap() throws {
+        let fix = makeFixture()
+        fix.engine.setDevice(for: fix.app, deviceUID: fix.device.uid)
+        let tap = try #require(fix.lastTap())
+
+        fix.engine.setMonoDownmix(true, for: fix.app)
+
+        #expect(fix.engine.isMonoDownmix(for: fix.app) == true)
+        #expect(tap.events.contains(.setMonoDownmix(true)))
+    }
+
     // MARK: AutoEQ profile resolution
 
     @Test("autoEQProfile is nil when the device does not support AutoEQ")
@@ -388,7 +422,7 @@ struct AudioEngineTapInitialStateTests {
         for event in tap.events.prefix(activateIndex) {
             switch event {
             case .updateEQSettings, .updateAutoEQProfile, .setAutoEQPreampEnabled,
-                 .updateLoudnessCompensation, .updateLoudnessEqualization:
+                 .updateLoudnessCompensation, .updateLoudnessEqualization, .setMonoDownmix:
                 Issue.record("Pre-activate mutation breaks the apply-initial-state contract: \(event)")
             case .activate, .invalidate:
                 break

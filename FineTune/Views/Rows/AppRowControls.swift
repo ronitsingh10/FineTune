@@ -23,10 +23,13 @@ struct AppRowControls: View {
     let onDeviceModeChange: (DeviceSelectionMode) -> Void
     let onSelectFollowDefault: () -> Void
     let onEQToggle: () -> Void
+    var isMonoDownmix: Bool = false
+    var onMonoDownmixChange: (Bool) -> Void = { _ in }
     var isRowFocused: Bool = false
 
     @State private var dragOverrideValue: Double?
     @State private var isEQButtonHovered = false
+    @State private var isMonoButtonHovered = false
 
     private var sliderValue: Double {
         dragOverrideValue ?? VolumeMapping.gainToSlider(volume)
@@ -59,6 +62,16 @@ struct AppRowControls: View {
         if isEQExpanded {
             return DesignTokens.Colors.interactiveActive
         } else if isEQButtonHovered {
+            return DesignTokens.Colors.interactiveHover
+        } else {
+            return DesignTokens.Colors.interactiveDefault
+        }
+    }
+
+    private var monoButtonColor: Color {
+        if isMonoDownmix {
+            return DesignTokens.Colors.interactiveActive
+        } else if isMonoButtonHovered {
             return DesignTokens.Colors.interactiveHover
         } else {
             return DesignTokens.Colors.interactiveDefault
@@ -128,6 +141,27 @@ struct AppRowControls: View {
                 triggerWidth: 0,
                 triggerStyle: .iconOnly
             )
+
+            // Mono downmix toggle
+            Button {
+                onMonoDownmixChange(!isMonoDownmix)
+            } label: {
+                Image(systemName: "arrow.triangle.merge")
+                    .font(.system(size: 12))
+                    .symbolRenderingMode(.hierarchical)
+                    .foregroundStyle(monoButtonColor)
+                    .frame(
+                        minWidth: DesignTokens.Dimensions.minTouchTarget,
+                        minHeight: DesignTokens.Dimensions.minTouchTarget
+                    )
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(isMonoDownmix ? "Disable Mono Downmix" : "Enable Mono Downmix")
+            .onHover { isMonoButtonHovered = $0 }
+            .help(isMonoDownmix ? "Mono downmix on" : "Mono downmix off")
+            .animation(DesignTokens.Animation.hover, value: isMonoButtonHovered)
+            .animation(DesignTokens.Animation.hover, value: isMonoDownmix)
 
             // EQ button
             Button {

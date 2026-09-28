@@ -33,6 +33,8 @@ struct AppRow: View {
     let onRenameUserPreset: (UUID, String) -> Void
     let isEQExpanded: Bool
     let onEQToggle: () -> Void
+    let isMonoDownmix: Bool
+    let onMonoDownmixChange: (Bool) -> Void
     let isFocused: Bool
 
     @State private var isIconHovered = false
@@ -68,6 +70,8 @@ struct AppRow: View {
         onRenameUserPreset: @escaping (UUID, String) -> Void = { _, _ in },
         isEQExpanded: Bool = false,
         onEQToggle: @escaping () -> Void = {},
+        isMonoDownmix: Bool = false,
+        onMonoDownmixChange: @escaping (Bool) -> Void = { _ in },
         isFocused: Bool = false
     ) {
         self.app = app
@@ -99,6 +103,8 @@ struct AppRow: View {
         self.onRenameUserPreset = onRenameUserPreset
         self.isEQExpanded = isEQExpanded
         self.onEQToggle = onEQToggle
+        self.isMonoDownmix = isMonoDownmix
+        self.onMonoDownmixChange = onMonoDownmixChange
         self.isFocused = isFocused
         // Initialize local EQ state for reactive UI updates
         self._localEQSettings = State(initialValue: eqSettings)
@@ -175,6 +181,8 @@ struct AppRow: View {
                     onDeviceModeChange: onDeviceModeChange,
                     onSelectFollowDefault: onSelectFollowDefault,
                     onEQToggle: onEQToggle,
+                    isMonoDownmix: isMonoDownmix,
+                    onMonoDownmixChange: onMonoDownmixChange,
                     isRowFocused: isFocused
                 )
             }

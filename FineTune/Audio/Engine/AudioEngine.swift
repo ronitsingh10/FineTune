@@ -628,6 +628,7 @@ final class AudioEngine {
             tap.updateEQSettings(.flat)
             tap.updateAutoEQProfile(nil)
             tap.updateLoudnessCompensation(volume: effectiveLoudnessVolume(for: tap), enabled: false)
+            tap.setMonoDownmix(false)
         }
 
         // 6. Re-apply from clean settings (re-establishes routing to system default)
@@ -756,6 +757,28 @@ final class AudioEngine {
         return settingsManager.getEQSettings(for: app.persistenceIdentifier)
     }
 
+    // MARK: - Per-App Mono Downmix
+
+    /// Enables or disables mono downmix for an app: its tapped stereo is summed
+    /// to a single channel and duplicated to both left and right. Other apps keep
+    /// their normal stereo output.
+    func setMonoDownmix(_ enabled: Bool, for app: AudioApp) {
+        volumeState.setMonoDownmix(for: app.id, to: enabled, identifier: app.persistenceIdentifier)
+        taps[app.id]?.setMonoDownmix(enabled)
+    }
+
+    func isMonoDownmix(for app: AudioApp) -> Bool {
+        volumeState.getMonoDownmix(for: app.id)
+    }
+
+    func getMonoDownmixForInactive(identifier: String) -> Bool {
+        appListCoordinator.getMonoDownmixForInactive(identifier: identifier)
+    }
+
+    func setMonoDownmixForInactive(identifier: String, to enabled: Bool) {
+        appListCoordinator.setMonoDownmixForInactive(identifier: identifier, to: enabled)
+    }
+
     // MARK: - Per-Device AutoEQ
 
     func getAutoEQProfile(for deviceUID: String) -> AutoEQProfile? {
@@ -832,7 +855,8 @@ final class AudioEngine {
             autoEQPreampEnabled: settingsManager.autoEQPreampEnabled,
             loudnessVolume: deviceVolume * volumeState.getVolume(for: app.id),
             loudnessCompensationEnabled: settingsManager.appSettings.loudnessCompensationEnabled,
-            loudnessEqualizerSettings: loudnessEqSettings
+            loudnessEqualizerSettings: loudnessEqSettings,
+            monoDownmix: volumeState.getMonoDownmix(for: app.id)
         )
     }
 
@@ -1109,6 +1133,7 @@ final class AudioEngine {
             let savedVolume = volumeState.loadSavedVolume(for: app.id, identifier: app.persistenceIdentifier)
             let savedMute = volumeState.loadSavedMute(for: app.id, identifier: app.persistenceIdentifier)
             _ = volumeState.loadSavedBoost(for: app.id, identifier: app.persistenceIdentifier)
+            _ = volumeState.loadSavedMonoDownmix(for: app.id, identifier: app.persistenceIdentifier)
 
             // Handle multi-device mode
             if mode == .multi {

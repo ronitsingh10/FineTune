@@ -93,6 +93,14 @@ final class AppListCoordinator {
         settingsManager.setEQSettings(settings, for: identifier)
     }
 
+    func getMonoDownmixForInactive(identifier: String) -> Bool {
+        settingsManager.getMonoDownmix(for: identifier) ?? false
+    }
+
+    func setMonoDownmixForInactive(identifier: String, to enabled: Bool) {
+        settingsManager.setMonoDownmix(for: identifier, to: enabled)
+    }
+
     func getDeviceRoutingForInactive(identifier: String) -> String? {
         settingsManager.getDeviceRouting(for: identifier)
     }

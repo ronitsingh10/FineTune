@@ -923,6 +923,10 @@ struct MenuBarPopupView: View {
                 onEQToggle: {
                     toggleEQ(for: displayableApp.id, scrollProxy: scrollProxy)
                 },
+                isMonoDownmix: audioEngine.isMonoDownmix(for: app),
+                onMonoDownmixChange: { enabled in
+                    audioEngine.setMonoDownmix(enabled, for: app)
+                },
                 isFocused: hasKeyboardEngaged && selectedRow == .app(persistenceID: displayableApp.id)
             )
             .id(PopupKeyboardNavModel.RowID.app(persistenceID: displayableApp.id))
@@ -990,6 +994,10 @@ struct MenuBarPopupView: View {
             isEQExpanded: expandedRowID == displayableApp.id,
             onEQToggle: {
                 toggleEQ(for: displayableApp.id, scrollProxy: scrollProxy)
+            },
+            isMonoDownmix: audioEngine.getMonoDownmixForInactive(identifier: identifier),
+            onMonoDownmixChange: { enabled in
+                audioEngine.setMonoDownmixForInactive(identifier: identifier, to: enabled)
             },
             isFocused: hasKeyboardEngaged && selectedRow == .app(persistenceID: displayableApp.id)
         )

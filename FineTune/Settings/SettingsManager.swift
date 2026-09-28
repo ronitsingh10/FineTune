@@ -98,6 +98,7 @@ final class SettingsManager {
         var appMutes: [String: Bool] = [:]  // bundleID → isMuted
         var appBoosts: [String: Float] = [:]  // bundleID → boost rawValue (1.0, 2.0, 3.0, 4.0)
         var appEQSettings: [String: EQSettings] = [:]  // bundleID → EQ settings
+        var appMonoDownmix: [String: Bool] = [:]  // bundleID → per-app mono downmix enabled
         var appSettings: AppSettings = AppSettings()  // App-wide settings
         var systemSoundsFollowsDefault: Bool = true  // Whether system sounds follows macOS default
         var appDeviceSelectionMode: [String: DeviceSelectionMode] = [:]  // bundleID → selection mode
@@ -153,6 +154,7 @@ final class SettingsManager {
             appMutes = try c.decodeIfPresent([String: Bool].self, forKey: .appMutes) ?? [:]
             appBoosts = try c.decodeIfPresent([String: Float].self, forKey: .appBoosts) ?? [:]
             appEQSettings = try c.decodeIfPresent([String: EQSettings].self, forKey: .appEQSettings) ?? [:]
+            appMonoDownmix = try c.decodeIfPresent([String: Bool].self, forKey: .appMonoDownmix) ?? [:]
             var decodedAppSettings = try c.decodeIfPresent(AppSettings.self, forKey: .appSettings) ?? AppSettings()
             if !decodedAppSettings.defaultNewAppVolume.isFinite || decodedAppSettings.defaultNewAppVolume < 0 {
                 decodedAppSettings.defaultNewAppVolume = 1.0
@@ -270,6 +272,18 @@ final class SettingsManager {
         scheduleSave()
     }
 
+    // MARK: - Per-App Mono Downmix
+
+    /// Returns the persisted mono-downmix flag for an app, or nil when unset.
+    func getMonoDownmix(for identifier: String) -> Bool? {
+        settings.appMonoDownmix[identifier]
+    }
+
+    func setMonoDownmix(for identifier: String, to enabled: Bool) {
+        settings.appMonoDownmix[identifier] = enabled
+        scheduleSave()
+    }
+
     // MARK: - Device Selection Mode
 
     func getDeviceSelectionMode(for identifier: String) -> DeviceSelectionMode? {
@@ -350,6 +364,7 @@ final class SettingsManager {
         settings.appMutes.removeValue(forKey: identifier)
         settings.appDeviceRouting.removeValue(forKey: identifier)
         settings.appEQSettings.removeValue(forKey: identifier)
+        settings.appMonoDownmix.removeValue(forKey: identifier)
         settings.appDeviceSelectionMode.removeValue(forKey: identifier)
         settings.appSelectedDeviceUIDs.removeValue(forKey: identifier)
         scheduleSave()
@@ -644,6 +659,7 @@ final class SettingsManager {
             .union(settings.appBoosts.keys)
             .union(settings.appMutes.keys)
             .union(settings.appEQSettings.keys)
+            .union(settings.appMonoDownmix.keys)
             .union(settings.appDeviceSelectionMode.keys)
             .union(settings.appSelectedDeviceUIDs.keys)
 
@@ -660,6 +676,7 @@ final class SettingsManager {
             let volume = settings.appVolumes[identifier]
             let mute = settings.appMutes[identifier]
             let eq = settings.appEQSettings[identifier]
+            let monoDownmix = settings.appMonoDownmix[identifier]
             let selectionMode = settings.appDeviceSelectionMode[identifier]
             let selectedUIDs = settings.appSelectedDeviceUIDs[identifier]
 
@@ -669,11 +686,12 @@ final class SettingsManager {
             let isDefaultBoost = boost == nil || boost == BoostLevel.x1.rawValue
             let isDefaultMute = mute == nil || mute == false
             let isDefaultEQ = eq == nil || eq == .flat
+            let isDefaultMonoDownmix = monoDownmix == nil || monoDownmix == false
             let isDefaultSelectionMode = selectionMode == nil
             let isDefaultSelectedUIDs = selectedUIDs == nil || selectedUIDs?.isEmpty == true
 
             guard isDefaultVolume && isDefaultBoost && isDefaultMute && isDefaultEQ
-                    && isDefaultSelectionMode && isDefaultSelectedUIDs else {
+                    && isDefaultMonoDownmix && isDefaultSelectionMode && isDefaultSelectedUIDs else {
                 continue
             }
 
@@ -682,6 +700,7 @@ final class SettingsManager {
             settings.appBoosts.removeValue(forKey: identifier)
             settings.appMutes.removeValue(forKey: identifier)
             settings.appEQSettings.removeValue(forKey: identifier)
+            settings.appMonoDownmix.removeValue(forKey: identifier)
             settings.appDeviceSelectionMode.removeValue(forKey: identifier)
             settings.appSelectedDeviceUIDs.removeValue(forKey: identifier)
             pruned += 1
@@ -836,6 +855,7 @@ final class SettingsManager {
         settings.appDeviceRouting.removeAll()
         settings.appMutes.removeAll()
         settings.appEQSettings.removeAll()
+        settings.appMonoDownmix.removeAll()
         settings.pinnedApps.removeAll()
         settings.pinnedAppInfo.removeAll()
         settings.ignoredApps.removeAll()
