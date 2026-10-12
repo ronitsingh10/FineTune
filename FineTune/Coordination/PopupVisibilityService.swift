@@ -6,4 +6,8 @@ import Foundation
 @MainActor
 final class PopupVisibilityService {
     var isVisible: Bool = false
+    var showingInputDevices = false
+    var expandedRowID: String?
+    var isEditingDevicePriority = false
+    var expandedDeviceUID: String?
 }

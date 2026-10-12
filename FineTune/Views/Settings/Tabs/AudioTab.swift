@@ -35,17 +35,7 @@ struct AudioTab: View {
         .scrollIndicators(.never)
         .onAppear { updateSortedDevices() }
         .onChange(of: audioEngine.outputDevices) { _, _ in updateSortedDevices() }
-        .onChange(of: settings.appSettings.lockInputDevice) { oldValue, newValue in
-            if !oldValue && newValue {
-                audioEngine.handleInputLockEnabled()
-            }
-        }
-        .onChange(of: settings.appSettings.loudnessCompensationEnabled) { _, newValue in
-            audioEngine.setLoudnessCompensationEnabled(newValue)
-        }
-        .onChange(of: settings.appSettings.loudnessEqualizationEnabled) { _, newValue in
-            audioEngine.setLoudnessEqualizationEnabled(newValue)
-        }
+
     }
 
     // MARK: - Volume

@@ -24,6 +24,7 @@ struct IgnoredAppInfo: Codable, Equatable {
 
 nonisolated struct AppSettings: Codable, Equatable {
     // General
+    var automationEnabled: Bool = false
     var launchAtLogin: Bool = false
     var menuBarIconStyle: MenuBarIconStyle = .default
 
@@ -65,6 +66,7 @@ nonisolated struct AppSettings: Codable, Equatable {
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
+        automationEnabled = try c.decodeIfPresent(Bool.self, forKey: .automationEnabled) ?? false
         launchAtLogin = try c.decodeIfPresent(Bool.self, forKey: .launchAtLogin) ?? false
         menuBarIconStyle = try c.decodeIfPresent(MenuBarIconStyle.self, forKey: .menuBarIconStyle) ?? .default
         defaultNewAppVolume = try c.decodeIfPresent(Float.self, forKey: .defaultNewAppVolume) ?? 1.0
@@ -87,8 +89,11 @@ nonisolated struct AppSettings: Codable, Equatable {
 @MainActor
 final class SettingsManager {
     private var settings: Settings
+    var automationStatus = "Disabled"
+    var onAppSettingsChanged: ((AppSettings, AppSettings) -> Void)?
     private var saveTask: Task<Void, Never>?
     private let settingsURL: URL
+    private let loginItem: any LoginItemManaging
     private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "FineTune", category: "SettingsManager")
 
     struct Settings: Codable {
@@ -191,8 +196,9 @@ final class SettingsManager {
         }
     }
 
-    init(directory: URL? = nil) {
-        let baseDir = directory ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!.appendingPathComponent("FineTune")
+    init(directory: URL? = nil, loginItem: any LoginItemManaging = SystemLoginItemManager()) {
+        self.loginItem = loginItem
+        let baseDir = directory ?? FineTuneDirectories.base
         self.settingsURL = baseDir.appendingPathComponent("settings.json")
         self.settings = Settings()
         loadFromDisk()
@@ -205,6 +211,10 @@ final class SettingsManager {
     func setVolume(for identifier: String, to volume: Float) {
         settings.appVolumes[identifier] = volume
         scheduleSave()
+    }
+
+    var automationKnownAppIdentifiers: Set<String> {
+        Set(settings.appVolumes.keys).union(settings.appMutes.keys).union(settings.appBoosts.keys).union(settings.pinnedApps).union(settings.ignoredApps).union(settings.appDeviceRouting.keys).union(settings.appEQSettings.keys).union(settings.appDeviceSelectionMode.keys).union(settings.appSelectedDeviceUIDs.keys)
     }
 
     // MARK: - Per-App Boost
@@ -804,17 +814,19 @@ final class SettingsManager {
         if newSettings.launchAtLogin != settings.appSettings.launchAtLogin {
             setLaunchAtLogin(newSettings.launchAtLogin)
         }
+        let oldSettings = settings.appSettings
         settings.appSettings = newSettings
+        onAppSettingsChanged?(oldSettings, newSettings)
         scheduleSave()
     }
 
     private func setLaunchAtLogin(_ enabled: Bool) {
         do {
             if enabled {
-                try SMAppService.mainApp.register()
+                try loginItem.setEnabled(true)
                 logger.info("Registered for launch at login")
             } else {
-                try SMAppService.mainApp.unregister()
+                try loginItem.setEnabled(false)
                 logger.info("Unregistered from launch at login")
             }
         } catch {
@@ -824,13 +836,14 @@ final class SettingsManager {
 
     /// Returns the actual launch at login status from the system
     var isLaunchAtLoginEnabled: Bool {
-        SMAppService.mainApp.status == .enabled
+        loginItem.isEnabled
     }
 
     // MARK: - Reset All Settings
 
     /// Resets all per-app settings and app-wide settings to defaults
     func resetAllSettings() {
+        let oldAppSettings = settings.appSettings
         settings.appVolumes.removeAll()
         settings.appBoosts.removeAll()
         settings.appDeviceRouting.removeAll()
@@ -864,9 +877,10 @@ final class SettingsManager {
         settings.userEQPresets.removeAll()
 
         // Also unregister from launch at login
-        try? SMAppService.mainApp.unregister()
+        try? loginItem.setEnabled(false)
 
         scheduleSave()
+        onAppSettingsChanged?(oldAppSettings, settings.appSettings)
         logger.info("Reset all settings to defaults")
     }
 

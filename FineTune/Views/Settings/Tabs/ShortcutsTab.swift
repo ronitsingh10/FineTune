@@ -22,9 +22,6 @@ struct ShortcutsTab: View {
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .scrollIndicators(.never)
-        .onChange(of: settings.appSettings.mediaKeyControlEnabled) { _, _ in
-            mediaKeyMonitor.reconcile()
-        }
     }
 
     // MARK: - Volume

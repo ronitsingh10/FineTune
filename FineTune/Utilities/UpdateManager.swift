@@ -19,6 +19,11 @@ final class UpdateManager: NSObject, ObservableObject {
         )
         super.init()
 
+        #if FINETUNE_CUSTOM_BUILD
+        // A stock Sparkle release must never replace the required custom API build.
+        return
+        #endif
+
         // Start updater to enable manual checks, but don't trigger auto-check UI
         try? updaterController.updater.start()
 

@@ -399,6 +399,13 @@ final class AudioEngine {
                 self?.handleDefaultInputDeviceChanged(newDefaultInputUID)
             }
         }
+        settingsManager.onAppSettingsChanged = { [weak self] old, new in self?.applySettingsEffects(old: old, new: new) }
+    }
+
+    func applySettingsEffects(old: AppSettings, new: AppSettings) {
+        if old.lockInputDevice != new.lockInputDevice && new.lockInputDevice { handleInputLockEnabled() }
+        if old.loudnessCompensationEnabled != new.loudnessCompensationEnabled { setLoudnessCompensationEnabled(new.loudnessCompensationEnabled) }
+        if old.loudnessEqualizationEnabled != new.loudnessEqualizationEnabled { setLoudnessEqualizationEnabled(new.loudnessEqualizationEnabled) }
     }
 
     var apps: [AudioApp] {
@@ -745,10 +752,12 @@ final class AudioEngine {
     }
 
     /// Update EQ settings for an app
-    func setEQSettings(_ settings: EQSettings, for app: AudioApp) {
-        guard let tap = taps[app.id] else { return }
-        tap.updateEQSettings(settings)
+    @discardableResult
+    func setEQSettings(_ settings: EQSettings, for app: AudioApp) -> Bool {
         settingsManager.setEQSettings(settings, for: app.persistenceIdentifier)
+        guard let tap = taps[app.id] else { return false }
+        tap.updateEQSettings(settings)
+        return true
     }
 
     /// Get EQ settings for an app
@@ -954,6 +963,8 @@ final class AudioEngine {
             ensureTapExists(for: app, deviceUID: targetUID)
         }
     }
+
+    func automationEffectiveRouting(for app: AudioApp) -> [String] { taps[app.id]?.currentDeviceUIDs ?? [] }
 
     func getDeviceUID(for app: AudioApp) -> String? {
         appDeviceRouting[app.id]
@@ -2113,17 +2124,15 @@ final class AudioEngine {
 
     /// Called when user explicitly selects an input device (via FineTune UI).
     /// Persists the choice and applies the change.
-    func setLockedInputDevice(_ device: AudioDevice) {
+    @discardableResult
+    func setLockedInputDevice(_ device: AudioDevice) -> Bool {
         logger.info("User locked input device to: \(device.name)")
 
-        // Persist the choice — both current lock and preferred (user intent)
+        guard deviceVolumeMonitor.setDefaultInputDevice(device.id) else { return false }
         settingsManager.setLockedInputDeviceUID(device.uid)
         settingsManager.setPreferredInputDeviceUID(device.uid)
-
-        // Apply the change
-        if deviceVolumeMonitor.setDefaultInputDevice(device.id) {
-            inputEchoTracker.increment(device.uid)
-        }
+        inputEchoTracker.increment(device.uid)
+        return true
     }
 
     /// Called when an input device connects — restores locked/preferred device and guards against auto-switch.

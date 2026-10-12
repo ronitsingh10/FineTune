@@ -12,6 +12,7 @@ struct GeneralTab: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 24) {
                 generalSection
+                automationSection
                 menuBarSection
                 dataSection
             }
@@ -29,6 +30,16 @@ struct GeneralTab: View {
             Button("Cancel", role: .cancel) {}
         } message: {
             Text("This cannot be undone.")
+        }
+    }
+
+    private var automationSection: some View {
+        SettingsSection("Automation") {
+            SettingsRow("Local Automation API", description: "Allow local apps such as Stream Deck to control FineTune.") {
+                Toggle("", isOn: $settings.appSettings.automationEnabled)
+                    .toggleStyle(.switch).controlSize(.small).labelsHidden()
+            }
+            Text(settings.automationStatus).font(.caption).foregroundStyle(.secondary).padding(.horizontal, 16)
         }
     }
 

@@ -39,6 +39,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
 @main
 struct FineTuneApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
+    @State private var automationRuntime: AutomationRuntime
     @State private var audioEngine: AudioEngine
     @State private var accessibility: AccessibilityPermissionService
     @State private var mediaKeyStatus: MediaKeyStatus
@@ -87,6 +88,7 @@ struct FineTuneApp: App {
             audioEngine: audioEngine,
             deviceVolumeMonitor: audioEngine.deviceVolumeMonitor as! DeviceVolumeMonitor,
             updateManager: updateManager,
+            automationPresentation: automationRuntime.service.adapters.first { $0 is PresentationAutomationAdapter } as? PresentationAutomationAdapter,
             permission: audioEngine.permission,
             accessibility: accessibility,
             mediaKeyStatus: mediaKeyStatus,
@@ -96,20 +98,24 @@ struct FineTuneApp: App {
         )
         .task {
             // Idempotent: subsequent task runs (popup re-open) are no-ops inside start().
-            shortcutsRegistry.start()
+            (automationRuntime.service.adapters.first { $0 is UpdateAutomationAdapter } as? UpdateAutomationAdapter)?.manager = updateManager
+            if !(ProcessInfo.processInfo.environment.keys.contains { $0.hasPrefix("XCTest") || $0.hasPrefix("XCInject") } || NSClassFromString("XCTestCase") != nil) { shortcutsRegistry.start() }
         }
     }
 
     init() {
+        // A hosted XCTest app must not start audio taps, register global hotkeys,
+        // request permissions, or touch the user's saved settings.
+        let hostedTests = ProcessInfo.processInfo.environment.keys.contains { $0.hasPrefix("XCTest") || $0.hasPrefix("XCInject") } || NSClassFromString("XCTestCase") != nil
         // Install crash handler to clean up aggregate devices on abnormal exit
-        CrashGuard.install()
+        if !hostedTests { CrashGuard.install() }
         // Destroy any orphaned aggregate devices from previous crashes
-        OrphanedTapCleanup.destroyOrphanedDevices()
+        if !hostedTests { OrphanedTapCleanup.destroyOrphanedDevices() }
 
-        let settings = SettingsManager()
+        let settings = SettingsManager(directory: hostedTests ? FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString) : nil)
         let profileManager = AutoEQProfileManager()
         let permission = AudioRecordingPermission()
-        let engine = AudioEngine(permission: permission, settingsManager: settings, autoEQProfileManager: profileManager)
+        let engine = AudioEngine(permission: permission, settingsManager: settings, autoEQProfileManager: profileManager, startMonitorsAutomatically: !hostedTests)
         _audioEngine = State(initialValue: engine)
 
         // Media keys / HUD services — instantiated at app scope so the tap
@@ -168,7 +174,7 @@ struct FineTuneApp: App {
         )
         monitor.iconCoordinator = coordinator
         // Defer start() so NSApplication.shared is fully bootstrapped before we walk NSApp.windows.
-        DispatchQueue.main.async { [coordinator] in coordinator.start() }
+        if !hostedTests { DispatchQueue.main.async { [coordinator] in coordinator.start() } }
         _iconCoordinator = State(initialValue: coordinator)
 
         // Render the scene's first frame with the user's chosen style instead of a generic
@@ -199,8 +205,7 @@ struct FineTuneApp: App {
         accessibilityService.onTrustChanged = { [weak monitor] _ in
             monitor?.reconcile()
         }
-        accessibilityService.start()
-        monitor.reconcile()
+        if !hostedTests { accessibilityService.start(); monitor.reconcile() }
 
         // Global hotkeys (KeyboardShortcuts SPM, Carbon-backed; no Accessibility
         // permission required for the hotkey itself). Registry start() is deferred
@@ -210,7 +215,7 @@ struct FineTuneApp: App {
         let resolver = TargetAppResolver(
             ownBundleID: Bundle.main.bundleIdentifier ?? "com.finetuneapp.FineTune"
         )
-        resolver.start()
+        if !hostedTests { resolver.start() }
         let registry = ShortcutsRegistry(
             settings: settings,
             popupController: popupController,
@@ -222,10 +227,18 @@ struct FineTuneApp: App {
         _shortcutsRegistry = State(initialValue: registry)
         _resolver = State(initialValue: resolver)
 
+        let automation = AutomationRuntime(engine: engine, resolver: resolver, popup: popupService, controller: popupController)
+        automation.onSettingsEffects = { [weak monitor] old, new in
+            if old.mediaKeyControlEnabled != new.mediaKeyControlEnabled { monitor?.reconcile() }
+        }
+        (automation.service.adapters.first { $0 is PreferencesAutomationAdapter } as? PreferencesAutomationAdapter)?.registry = registry
+        _automationRuntime = State(initialValue: automation)
+        if !hostedTests { automation.reconcile() }
+
         // Pass engine to AppDelegate
         _appDelegate.wrappedValue.audioEngine = engine
 
-        if permission.status == .unknown {
+        if !hostedTests && permission.status == .unknown {
             permission.request()
         }
 
@@ -236,11 +249,13 @@ struct FineTuneApp: App {
         UNUserNotificationCenter.current().delegate = _appDelegate.wrappedValue
 
         // Request notification authorization (for device disconnect alerts)
-        UNUserNotificationCenter.current().requestAuthorization(options: [.alert]) { granted, error in
+        if !hostedTests { UNUserNotificationCenter.current().requestAuthorization(options: [.alert]) { granted, error in
             if let error {
                 logger.error("Notification authorization error: \(error.localizedDescription)")
             }
             // If not granted, notifications will silently not appear - acceptable behavior
+        }
+
         }
 
         // Flush debounced settings + tear down the CGEventTap before dealloc.
@@ -248,8 +263,9 @@ struct FineTuneApp: App {
             forName: NSApplication.willTerminateNotification,
             object: nil,
             queue: .main
-        ) { [settings, monitor, accessibilityService, hud, coordinator] _ in
+        ) { [settings, monitor, accessibilityService, hud, coordinator, automation] _ in
             MainActor.assumeIsolated {
+                automation.stop()
                 coordinator.stop()
                 monitor.stop()
                 accessibilityService.stop()

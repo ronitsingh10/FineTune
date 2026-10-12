@@ -703,6 +703,12 @@ final class DeviceVolumeMonitor: DeviceVolumeProviding {
     /// Updates the local property immediately for responsive UI, then debounces the
     /// AppleScript call by 100ms to avoid blocking during rapid slider drags.
     /// - Parameter volume: Alert volume from 0.0 to 1.0
+    func automationSetAlertVolume(_ volume: Float) async throws {
+        guard volume.isFinite, (0...1).contains(volume) else { throw AutomationError(.invalidParameter, "Invalid alert volume") }
+        alertVolumeDebounceTask?.cancel(); alertVolumeDebounceTask = nil
+        alertVolume = try await AlertVolumeAutomation.write(percent: Int((volume * 100).rounded()))
+    }
+
     func setAlertVolume(_ volume: Float) {
         let clamped = max(0, min(1, volume))
         let pct = Int(round(clamped * 100))

@@ -186,8 +186,9 @@ final class MockDeviceVolumeProviding: DeviceVolumeProviding {
     @discardableResult
     func setDefaultDevice(_ deviceID: AudioDeviceID) -> Bool { true }
 
+    var inputSelectionSucceeds = true
     @discardableResult
-    func setDefaultInputDevice(_ deviceID: AudioDeviceID) -> Bool { true }
+    func setDefaultInputDevice(_ deviceID: AudioDeviceID) -> Bool { inputSelectionSucceeds }
 
     func outputVolumeBackend(for deviceID: AudioDeviceID) -> VolumeControlTier {
         if let uid = deviceMonitor.device(for: deviceID)?.uid,

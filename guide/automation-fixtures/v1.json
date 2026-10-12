@@ -1,0 +1,10 @@
+{
+  "apiVersion": 1,
+  "request": {"apiVersion":1,"id":"42","method":"app.volume.set","params":{"target":{"appId":"com.example.player"},"percent":30}},
+  "applied": {"apiVersion":1,"id":"42","result":{"status":"applied","revision":120,"instanceId":"test-instance","state":{"volumePercent":30,"boost":1,"muted":false}}},
+  "stored": {"apiVersion":1,"id":"43","result":{"status":"stored","state":{"volumePercent":30}}},
+  "pending": {"apiVersion":1,"id":"44","result":{"status":"pending","operationId":"test-operation"}},
+  "invalid": {"apiVersion":1,"id":"45","error":{"code":"invalid_parameter","message":"Expected percent in 0...100","field":"percent"}},
+  "unavailable": {"apiVersion":1,"id":"46","error":{"code":"unavailable","message":"Device is disconnected"}},
+  "event": {"apiVersion":1,"event":"state.changed","instanceId":"test-instance","revision":121,"state":{"apps":[],"devices":[]}}
+}

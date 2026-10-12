@@ -97,6 +97,35 @@ final class DDCController {
         ddcQueue.asyncAfter(deadline: .now() + .milliseconds(100), execute: item)
     }
 
+    /// Automation needs confirmed completion rather than the UI's optimistic cache.
+    func automationSetVolume(for deviceID: AudioDeviceID, to volume: Int) async throws {
+        guard let service = services[deviceID], let uid = deviceUIDs[deviceID] else { throw AutomationError(.unavailable, "DDC service unavailable") }
+        let value = max(0, min(100, volume))
+        debounceTimers[deviceID]?.cancel(); debounceTimers[deviceID] = nil
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, any Error>) in
+            ddcQueue.async { @Sendable in
+                do {
+                    try service.setAudioVolume(value)
+                    let readback = try service.getAudioVolume()
+                    guard abs(readback.current - value) <= 1 else { throw AutomationError(.unavailable, "DDC readback differs from requested volume") }
+                    continuation.resume()
+                } catch { continuation.resume(throwing: error) }
+            }
+        }
+        try Task.checkCancellation()
+        guard services[deviceID] === service else { throw AutomationError(.unavailable, "DDC device disconnected") }
+        cachedVolumes[deviceID] = value; settingsManager.setDDCVolume(for: uid, to: value)
+    }
+    func automationSetMute(for deviceID: AudioDeviceID, to muted: Bool) async throws {
+        guard let uid = deviceUIDs[deviceID] else { throw AutomationError(.unavailable, "DDC device unavailable") }
+        let previous = cachedVolumes[deviceID] ?? 50
+        let next = muted ? 0 : settingsManager.getDDCSavedVolume(for: uid) ?? 50
+        try await automationSetVolume(for: deviceID, to: next)
+        if muted && previous > 0 { settingsManager.setDDCSavedVolume(for: uid, to: previous) }
+        settingsManager.setDDCMuteState(for: uid, to: muted)
+        settingsManager.flushSync()
+    }
+
     /// Software mute: saves current volume, sets to 0.
     func mute(for deviceID: AudioDeviceID) {
         guard let uid = deviceUIDs[deviceID] else { return }

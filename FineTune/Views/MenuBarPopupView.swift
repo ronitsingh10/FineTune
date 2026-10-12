@@ -8,6 +8,7 @@ struct MenuBarPopupView: View {
     @Bindable var deviceVolumeMonitor: DeviceVolumeMonitor
     @ObservedObject var updateManager: UpdateManager
 
+    var automationPresentation: PresentationAutomationAdapter? = nil
     let permission: AudioRecordingPermission
 
     /// Accessibility trust state — forwarded to the Settings window for the
@@ -37,11 +38,9 @@ struct MenuBarPopupView: View {
     @State private var sortedInputDevices: [AudioDevice] = []
 
     /// Which device tab is selected (false = output, true = input)
-    @State private var showingInputDevices = false
 
     /// Track which app has its EQ panel expanded (only one at a time)
     /// Uses DisplayableApp.id (String) to work with both active and inactive apps
-    @State private var expandedRowID: String?
 
     /// Debounce EQ toggle to prevent rapid clicks during animation
     @State private var isEQAnimating = false
@@ -61,7 +60,6 @@ struct MenuBarPopupView: View {
     @State private var isBluetoothOn = false
 
     /// Whether edit mode is active (affects both device priority and app visibility)
-    @State private var isEditingDevicePriority = false
 
     /// Tracks which tab was active when edit mode started (for correct save on exit)
     @State private var wasEditingInputDevices = false
@@ -70,8 +68,7 @@ struct MenuBarPopupView: View {
     @State private var editableDeviceOrder: [AudioDevice] = []
 
     /// Device whose inline detail panel is expanded in edit mode (nil when
-    /// collapsed). Mirrors the `expandedRowID` pattern used for per-app EQ.
-    @State private var expandedDeviceUID: String?
+    /// collapsed). Mirrors the `popupVisibility.expandedRowID` pattern used for per-app EQ.
 
     /// Hover state for support link heart animation
     @State private var isSupportHovered = false
@@ -110,7 +107,7 @@ struct MenuBarPopupView: View {
             HStack(alignment: .top) {
                 deviceTabsHeader
                 Spacer()
-                if isEditingDevicePriority {
+                if popupVisibility.isEditingDevicePriority {
                     Text("Drag or type a number to set priority")
                         .font(.system(size: 11))
                         .foregroundStyle(DesignTokens.Colors.textSecondary)
@@ -147,6 +144,8 @@ struct MenuBarPopupView: View {
         .preferredColorScheme(audioEngine.settingsManager.appSettings.appearance.swiftUIColorScheme)
         .environment(\.appearancePreference, audioEngine.settingsManager.appSettings.appearance)
         .onAppear {
+            automationPresentation?.openSettings = { openSettings() }
+            if popupVisibility.isEditingDevicePriority { applyDevicePriorityEdit(true) }
             updateSortedDevices()
             updateSortedInputDevices()
             pairedDevices = audioEngine.bluetoothDeviceMonitor.pairedDevices
@@ -157,20 +156,20 @@ struct MenuBarPopupView: View {
             // would suppress the HUD on the first media key at cold launch.
         }
         .onChange(of: audioEngine.outputDevices) { _, _ in
-            if isEditingDevicePriority && !wasEditingInputDevices {
+            if popupVisibility.isEditingDevicePriority && !wasEditingInputDevices {
                 mergeDeviceChanges(from: audioEngine.outputDevices)
             }
             updateSortedDevices()
             syncNavOrder()
         }
         .onChange(of: audioEngine.inputDevices) { _, _ in
-            if isEditingDevicePriority && wasEditingInputDevices {
+            if popupVisibility.isEditingDevicePriority && wasEditingInputDevices {
                 mergeDeviceChanges(from: audioEngine.inputDevices)
             }
             updateSortedInputDevices()
             syncNavOrder()
         }
-        .onChange(of: showingInputDevices) { _, _ in
+        .onChange(of: popupVisibility.showingInputDevices) { _, _ in
             exitEditModeSaving()
             syncNavOrder()
             if hasKeyboardEngaged {
@@ -180,7 +179,8 @@ struct MenuBarPopupView: View {
         .onChange(of: audioEngine.apps) { _, _ in
             syncNavOrder()
         }
-        .onChange(of: isEditingDevicePriority) { _, editing in
+        .onChange(of: popupVisibility.isEditingDevicePriority) { _, editing in
+            applyDevicePriorityEdit(editing)
             if editing {
                 selectedRow = nil
                 hasKeyboardEngaged = false
@@ -257,13 +257,13 @@ struct MenuBarPopupView: View {
 
     /// Edit priority button — pencil ↔ checkmark, styled to match settingsButton
     private var editPriorityButton: some View {
-        Button(isEditingDevicePriority ? "Done reordering" : "Reorder devices",
-               systemImage: isEditingDevicePriority ? "checkmark" : "pencil") {
+        Button(popupVisibility.isEditingDevicePriority ? "Done reordering" : "Reorder devices",
+               systemImage: popupVisibility.isEditingDevicePriority ? "checkmark" : "pencil") {
             toggleDevicePriorityEdit()
         }
         .labelStyle(.iconOnly)
         .buttonStyle(.plain)
-        .font(.system(size: 12, weight: isEditingDevicePriority ? .bold : .regular))
+        .font(.system(size: 12, weight: popupVisibility.isEditingDevicePriority ? .bold : .regular))
         .symbolRenderingMode(.hierarchical)
         .foregroundStyle(DesignTokens.Colors.interactiveDefault)
         .frame(
@@ -271,8 +271,8 @@ struct MenuBarPopupView: View {
             minHeight: DesignTokens.Dimensions.minTouchTarget
         )
         .contentShape(Rectangle())
-        .animation(.spring(response: 0.3, dampingFraction: 0.75), value: isEditingDevicePriority)
-        .help(isEditingDevicePriority ? "Done reordering" : "Reorder devices")
+        .animation(.spring(response: 0.3, dampingFraction: 0.75), value: popupVisibility.isEditingDevicePriority)
+        .help(popupVisibility.isEditingDevicePriority ? "Done reordering" : "Reorder devices")
     }
 
     // MARK: - Settings Button
@@ -296,7 +296,7 @@ struct MenuBarPopupView: View {
     /// Handles Escape key: closes EQ first, then dismisses the popup.
     /// Escape order: expanded device detail → edit mode → expanded app EQ →
     /// popup dismiss. Expanded device detail is checked before
-    /// `isEditingDevicePriority` so Escape collapses the row first rather than
+    /// `popupVisibility.isEditingDevicePriority` so Escape collapses the row first rather than
     /// tearing down edit mode entirely.
     private func handleEscape() {
         // The hidden Escape keyboardShortcut button can win over `.onKeyPress`, so an
@@ -305,16 +305,16 @@ struct MenuBarPopupView: View {
             textEntry.buffer = nil
             return
         }
-        if expandedDeviceUID != nil {
+        if popupVisibility.expandedDeviceUID != nil {
             withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
-                expandedDeviceUID = nil
+                popupVisibility.expandedDeviceUID = nil
             }
-        } else if isEditingDevicePriority {
+        } else if popupVisibility.isEditingDevicePriority {
             toggleDevicePriorityEdit()
-        } else if expandedRowID != nil {
+        } else if popupVisibility.expandedRowID != nil {
             // Collapse any expanded app EQ panel
             withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
-                expandedRowID = nil
+                popupVisibility.expandedRowID = nil
             }
         } else {
             NSApp.keyWindow?.resignKey()
@@ -443,16 +443,16 @@ struct MenuBarPopupView: View {
             // Output (speaker) button
             Button {
                 withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) {
-                    showingInputDevices = false
+                    popupVisibility.showingInputDevices = false
                 }
             } label: {
                 Image(systemName: "speaker.wave.2.fill")
                     .font(.system(size: iconSize, weight: .medium))
                     .symbolRenderingMode(.hierarchical)
-                    .foregroundStyle(showingInputDevices ? DesignTokens.Colors.textTertiary : DesignTokens.Colors.textPrimary)
+                    .foregroundStyle(popupVisibility.showingInputDevices ? DesignTokens.Colors.textTertiary : DesignTokens.Colors.textPrimary)
                     .frame(width: buttonSize, height: buttonSize)
                     .background {
-                        if !showingInputDevices {
+                        if !popupVisibility.showingInputDevices {
                             RoundedRectangle(cornerRadius: DesignTokens.Dimensions.buttonRadius)
                                 .fill(DesignTokens.Colors.glassFillStrong)
                                 .matchedGeometryEffect(id: "deviceToggle", in: deviceToggleNamespace)
@@ -466,16 +466,16 @@ struct MenuBarPopupView: View {
             // Input (mic) button
             Button {
                 withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) {
-                    showingInputDevices = true
+                    popupVisibility.showingInputDevices = true
                 }
             } label: {
                 Image(systemName: "mic.fill")
                     .font(.system(size: iconSize, weight: .medium))
                     .symbolRenderingMode(.hierarchical)
-                    .foregroundStyle(showingInputDevices ? DesignTokens.Colors.textPrimary : DesignTokens.Colors.textTertiary)
+                    .foregroundStyle(popupVisibility.showingInputDevices ? DesignTokens.Colors.textPrimary : DesignTokens.Colors.textTertiary)
                     .frame(width: buttonSize, height: buttonSize)
                     .background {
-                        if showingInputDevices {
+                        if popupVisibility.showingInputDevices {
                             RoundedRectangle(cornerRadius: DesignTokens.Dimensions.buttonRadius)
                                 .fill(DesignTokens.Colors.glassFillStrong)
                                 .matchedGeometryEffect(id: "deviceToggle", in: deviceToggleNamespace)
@@ -506,9 +506,9 @@ struct MenuBarPopupView: View {
 
     private var devicesContent: some View {
         VStack(spacing: 0) {
-            if isEditingDevicePriority {
+            if popupVisibility.isEditingDevicePriority {
                 // Edit mode: drag-and-drop reordering (works for both output and input)
-                let defaultDeviceID = showingInputDevices
+                let defaultDeviceID = popupVisibility.showingInputDevices
                     ? deviceVolumeMonitor.defaultInputDeviceID
                     : deviceVolumeMonitor.defaultDeviceID
                 ForEach(Array(editableDeviceOrder.enumerated()), id: \.element.uid) { index, device in
@@ -516,7 +516,7 @@ struct MenuBarPopupView: View {
                 }
 
                 // Paired Bluetooth devices (output tab only)
-                if !showingInputDevices {
+                if !popupVisibility.showingInputDevices {
                     if !isBluetoothOn {
                         Text("Turn on Bluetooth to connect devices")
                             .font(.caption)
@@ -545,7 +545,7 @@ struct MenuBarPopupView: View {
                         }
                     }
                 }
-            } else if showingInputDevices {
+            } else if popupVisibility.showingInputDevices {
                 ForEach(sortedInputDevices) { device in
                     InputDeviceRow(
                         device: device,
@@ -637,7 +637,7 @@ struct MenuBarPopupView: View {
         index: Int,
         defaultDeviceID: AudioDeviceID
     ) -> some View {
-        let isDeviceHidden = showingInputDevices
+        let isDeviceHidden = popupVisibility.showingInputDevices
             ? audioEngine.settingsManager.isInputDeviceHidden(device.uid)
             : audioEngine.settingsManager.isOutputDeviceHidden(device.uid)
 
@@ -646,9 +646,9 @@ struct MenuBarPopupView: View {
             iconOverrideSymbol: audioEngine.settingsManager.getDeviceIconOverride(for: device.uid),
             priorityIndex: index,
             isDefault: device.id == defaultDeviceID,
-            isInputDevice: showingInputDevices,
+            isInputDevice: popupVisibility.showingInputDevices,
             deviceCount: editableDeviceOrder.count,
-            isExpanded: expandedDeviceUID == device.uid,
+            isExpanded: popupVisibility.expandedDeviceUID == device.uid,
             isHidden: isDeviceHidden,
             onReorder: { newIndex in
                 guard let fromIndex = editableDeviceOrder.firstIndex(where: { $0.uid == device.uid }) else { return }
@@ -663,13 +663,13 @@ struct MenuBarPopupView: View {
             onToggleExpand: {
                 // Input devices have no per-device detail to show —
                 // only output devices carry a volume-tier override.
-                guard !showingInputDevices else { return }
+                guard !popupVisibility.showingInputDevices else { return }
                 withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
-                    expandedDeviceUID = (expandedDeviceUID == device.uid) ? nil : device.uid
+                    popupVisibility.expandedDeviceUID = (popupVisibility.expandedDeviceUID == device.uid) ? nil : device.uid
                 }
             },
             onToggleHidden: {
-                if showingInputDevices {
+                if popupVisibility.showingInputDevices {
                     audioEngine.settingsManager.toggleInputDeviceHidden(uid: device.uid)
                 } else {
                     audioEngine.settingsManager.toggleOutputDeviceHidden(uid: device.uid)
@@ -681,7 +681,7 @@ struct MenuBarPopupView: View {
             expandedContent: {
                 // Only render when actually expanded. Input devices skip
                 // the expand, so this is never hit for them.
-                if !showingInputDevices && expandedDeviceUID == device.uid {
+                if !popupVisibility.showingInputDevices && popupVisibility.expandedDeviceUID == device.uid {
                     DeviceDetailSheet(
                         device: device,
                         transportType: device.id.readTransportType(),
@@ -744,7 +744,7 @@ struct MenuBarPopupView: View {
             SectionHeader(title: "Apps")
             Spacer()
             let ignoredCount = audioEngine.settingsManager.getIgnoredAppInfo().count
-            if ignoredCount > 0 && !isEditingDevicePriority {
+            if ignoredCount > 0 && !popupVisibility.isEditingDevicePriority {
                 Text("\(ignoredCount) ignored")
                     .font(DesignTokens.Typography.caption)
                     .foregroundStyle(DesignTokens.Colors.textTertiary)
@@ -754,7 +754,7 @@ struct MenuBarPopupView: View {
 
         if permission.status != .authorized {
             PermissionBannerView(permission: permission)
-        } else if isEditingDevicePriority {
+        } else if popupVisibility.isEditingDevicePriority {
             appEditModeContent
         } else if audioEngine.displayableApps.isEmpty {
             emptyStateView
@@ -919,7 +919,7 @@ struct MenuBarPopupView: View {
                 onRenameUserPreset: { id, newName in
                     audioEngine.settingsManager.updateUserPreset(id: id, name: newName)
                 },
-                isEQExpanded: expandedRowID == displayableApp.id,
+                isEQExpanded: popupVisibility.expandedRowID == displayableApp.id,
                 onEQToggle: {
                     toggleEQ(for: displayableApp.id, scrollProxy: scrollProxy)
                 },
@@ -987,7 +987,7 @@ struct MenuBarPopupView: View {
             onRenameUserPreset: { id, newName in
                 audioEngine.settingsManager.updateUserPreset(id: id, name: newName)
             },
-            isEQExpanded: expandedRowID == displayableApp.id,
+            isEQExpanded: popupVisibility.expandedRowID == displayableApp.id,
             onEQToggle: {
                 toggleEQ(for: displayableApp.id, scrollProxy: scrollProxy)
             },
@@ -1001,12 +1001,12 @@ struct MenuBarPopupView: View {
         guard !isEQAnimating else { return }
         isEQAnimating = true
 
-        let isExpanding = expandedRowID != appID
+        let isExpanding = popupVisibility.expandedRowID != appID
         withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
-            if expandedRowID == appID {
-                expandedRowID = nil
+            if popupVisibility.expandedRowID == appID {
+                popupVisibility.expandedRowID = nil
             } else {
-                expandedRowID = appID
+                popupVisibility.expandedRowID = appID
             }
             if isExpanding {
                 scrollProxy.scrollTo(PopupKeyboardNavModel.RowID.app(persistenceID: appID), anchor: .top)
@@ -1022,25 +1022,19 @@ struct MenuBarPopupView: View {
     // MARK: - Device Priority Edit
 
     private func toggleDevicePriorityEdit() {
-        if isEditingDevicePriority {
-            // Exiting edit mode: persist to the correct priority list and
-            // collapse any expanded device detail (the inline body only lives
-            // inside edit mode, so it must collapse when the mode does).
-            persistEditableOrder()
-            isEditingDevicePriority = false
-            expandedDeviceUID = nil
-            if wasEditingInputDevices {
-                updateSortedInputDevices()
-            } else {
-                updateSortedDevices()
-            }
-        } else {
-            // Entering edit mode: use the full (unfiltered) device list so hidden devices are also shown.
-            wasEditingInputDevices = showingInputDevices
-            editableDeviceOrder = showingInputDevices
+        popupVisibility.isEditingDevicePriority.toggle()
+    }
+
+    private func applyDevicePriorityEdit(_ editing: Bool) {
+        if editing {
+            wasEditingInputDevices = popupVisibility.showingInputDevices
+            editableDeviceOrder = popupVisibility.showingInputDevices
                 ? audioEngine.prioritySortedInputDevices
                 : audioEngine.prioritySortedOutputDevices
-            isEditingDevicePriority = true
+        } else {
+            persistEditableOrder()
+            popupVisibility.expandedDeviceUID = nil
+            if wasEditingInputDevices { updateSortedInputDevices() } else { updateSortedDevices() }
         }
     }
 
@@ -1062,10 +1056,8 @@ struct MenuBarPopupView: View {
 
     /// Exits edit mode, saving the current order. Called on edge cases like device changes.
     private func exitEditModeSaving() {
-        guard isEditingDevicePriority else { return }
-        persistEditableOrder()
-        isEditingDevicePriority = false
-        expandedDeviceUID = nil
+        guard popupVisibility.isEditingDevicePriority else { return }
+        popupVisibility.isEditingDevicePriority = false
     }
 
     /// Merges device list changes into `editableDeviceOrder` while preserving the user's reordering.
@@ -1193,16 +1185,16 @@ struct MenuBarPopupView: View {
     // MARK: - Keyboard Navigation
 
     private func syncNavOrder() {
-        let activeDevices = showingInputDevices ? sortedInputDevices : sortedDevices
+        let activeDevices = popupVisibility.showingInputDevices ? sortedInputDevices : sortedDevices
         navModel.syncOrder(
             activeDevices: activeDevices,
             appPersistenceIDs: audioEngine.displayableApps.map(\.id),
-            isEditingPriority: isEditingDevicePriority
+            isEditingPriority: popupVisibility.isEditingDevicePriority
         )
     }
 
     private func currentDefaultDeviceUID() -> String? {
-        showingInputDevices
+        popupVisibility.showingInputDevices
             ? deviceVolumeMonitor.defaultInputDeviceUID
             : deviceVolumeMonitor.defaultDeviceUID
     }
@@ -1337,7 +1329,7 @@ struct MenuBarPopupView: View {
             )
             return .handled
         case .device(let uid):
-            if showingInputDevices {
+            if popupVisibility.showingInputDevices {
                 guard let device = sortedInputDevices.first(where: { $0.uid == uid }) else {
                     return .ignored
                 }
@@ -1392,7 +1384,7 @@ struct MenuBarPopupView: View {
             audioEngine.setMuteForInactive(identifier: persistenceID, to: !current)
             return .handled
         case .device(let uid):
-            if showingInputDevices {
+            if popupVisibility.showingInputDevices {
                 guard let device = sortedInputDevices.first(where: { $0.uid == uid }) else {
                     return .ignored
                 }
@@ -1413,7 +1405,7 @@ struct MenuBarPopupView: View {
         guard let target else { return .ignored }
         switch target {
         case .device(let uid):
-            if showingInputDevices {
+            if popupVisibility.showingInputDevices {
                 guard let device = sortedInputDevices.first(where: { $0.uid == uid }) else {
                     return .ignored
                 }
@@ -1428,7 +1420,7 @@ struct MenuBarPopupView: View {
             return .handled
         case .app(let persistenceID):
             withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
-                expandedRowID = (expandedRowID == persistenceID) ? nil : persistenceID
+                popupVisibility.expandedRowID = (popupVisibility.expandedRowID == persistenceID) ? nil : persistenceID
             }
             return .handled
         }
@@ -1436,7 +1428,7 @@ struct MenuBarPopupView: View {
 
     private func toggleDeviceTab() {
         withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) {
-            showingInputDevices.toggle()
+            popupVisibility.showingInputDevices.toggle()
         }
     }
 
