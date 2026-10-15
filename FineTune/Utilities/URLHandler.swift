@@ -12,6 +12,7 @@ protocol URLHandlerEngine {
     func getVolume(for app: AudioApp) -> Float
     func setMute(for app: AudioApp, to muted: Bool)
     func getMute(for app: AudioApp) -> Bool
+    func setPan(for app: AudioApp, to pan: Float)
     func setDevice(for app: AudioApp, deviceUID: String?)
     func setVolumeForInactive(identifier: String, to volume: Float)
     func setMuteForInactive(identifier: String, to muted: Bool)
@@ -51,6 +52,9 @@ final class URLHandler {
             handleSetMute(queryItems: queryItems)
         case "toggle-mute":
             handleToggleMute(queryItems: queryItems)
+        // Pan actions
+        case "set-pan":
+            handleSetPan(queryItems: queryItems)
         // Other actions
         case "set-device":
             handleSetDevice(queryItems: queryItems)
@@ -231,6 +235,68 @@ final class URLHandler {
                 audioEngine.setMuteForInactive(identifier: identifier, to: !current)
                 logger.info("Toggled mute for inactive app \(identifier) to \(!current)")
             }
+        }
+    }
+
+    // MARK: - Pan Actions
+
+    /// Set stereo pan for one or more apps
+    /// URL format: finetune://set-pan?app=com.a&pan=-100&app=com.b&pan=right
+    /// Pan is -100 (full left) … 0 (center) … 100 (full right), or left / center / right.
+    private func handleSetPan(queryItems: [URLQueryItem]) {
+        var pairs: [(identifier: String, pan: Float)] = []
+        var currentApp: String?
+
+        for item in queryItems {
+            switch item.name.lowercased() {
+            case "app":
+                currentApp = item.value
+            case "pan":
+                guard let app = currentApp else {
+                    logger.warning("set-pan: pan parameter without preceding app")
+                    continue
+                }
+                guard let panStr = item.value, let pan = Self.parsePan(panStr) else {
+                    logger.warning("set-pan: invalid pan value '\(item.value ?? "nil")' for app \(app)")
+                    currentApp = nil
+                    continue
+                }
+                pairs.append((app, pan))
+                currentApp = nil
+            default:
+                continue
+            }
+        }
+
+        if let trailing = currentApp {
+            logger.warning("set-pan: trailing app '\(trailing)' without pan parameter")
+        }
+
+        guard !pairs.isEmpty else {
+            logger.error("set-pan: No valid app/pan pairs found")
+            return
+        }
+
+        for (identifier, pan) in pairs {
+            if let app = findApp(by: identifier) {
+                audioEngine.setPan(for: app, to: pan)
+                logger.info("Set pan for \(app.name) to \(pan)")
+            } else {
+                audioEngine.settingsManager.setPan(for: identifier, to: pan)
+                logger.info("Set pan for inactive app \(identifier) to \(pan)")
+            }
+        }
+    }
+
+    /// Parses a pan value: -100…100, or left / center / right. Returns -1…1.
+    nonisolated static func parsePan(_ value: String) -> Float? {
+        switch value.lowercased() {
+        case "left", "l": return -1
+        case "center", "centre", "c": return 0
+        case "right", "r": return 1
+        default:
+            guard let percent = Float(value), percent.isFinite else { return nil }
+            return PanMath.clamp(percent / 100)
         }
     }
 

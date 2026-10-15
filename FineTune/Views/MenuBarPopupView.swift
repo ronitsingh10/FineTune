@@ -897,7 +897,8 @@ struct MenuBarPopupView: View {
                     audioEngine.setDevice(for: app, deviceUID: nil)
                 },
                 onAppActivate: {
-                    activateApp(pid: app.id, bundleID: app.bundleID)
+                    // AppleScript targets by bundle ID, which can't tell instances apart.
+                    activateApp(pid: app.id, bundleID: app.instance == nil ? app.bundleID : nil)
                 },
                 eqSettings: audioEngine.getEQSettings(for: app),
                 userPresets: userPresets,
@@ -918,6 +919,10 @@ struct MenuBarPopupView: View {
                 },
                 onRenameUserPreset: { id, newName in
                     audioEngine.settingsManager.updateUserPreset(id: id, name: newName)
+                },
+                pan: audioEngine.getPan(for: app),
+                onPanChange: { pan in
+                    audioEngine.setPan(for: app, to: pan)
                 },
                 isEQExpanded: expandedRowID == displayableApp.id,
                 onEQToggle: {

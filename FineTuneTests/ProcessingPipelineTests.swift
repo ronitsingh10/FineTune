@@ -97,6 +97,7 @@ private func processWithDefaults(
     input: TestABL,
     output: TestABL,
     targetVol: Float = 1.0,
+    targetPan: Float = 0,
     crossfadeMultiplier: Float = 1.0,
     outputGateMultiplier: Float = 1.0,
     rampCoefficient: Float = 1.0,
@@ -108,16 +109,20 @@ private func processWithDefaults(
     loudnessEqualizerProc: LoudnessEqualizer? = nil,
     loudnessCompensatorProc: LoudnessCompensator? = nil
 ) {
+    // Pan starts at its target (no ramp) unless a test drives the ramp directly.
+    var currentPan = targetPan
     ProcessTapController.processMappedBuffers(
         inputBuffers: input.bufferList,
         outputBuffers: output.bufferList,
         targetVol: targetVol,
+        targetPan: targetPan,
         crossfadeMultiplier: crossfadeMultiplier,
         outputGateMultiplier: outputGateMultiplier,
         rampCoefficient: rampCoefficient,
         preferredStereoLeft: preferredStereoLeft,
         preferredStereoRight: preferredStereoRight,
         currentVol: &currentVol,
+        currentPan: &currentPan,
         eqProc: eqProc,
         autoEQProc: autoEQProc,
         loudnessEqualizerProc: loudnessEqualizerProc,
@@ -1185,5 +1190,187 @@ struct LoudnessIntegrationTests {
         }
         #expect(diffCount > 0,
                 "Adding loudness equalizer should change output beyond compensator alone")
+    }
+}
+
+// MARK: - Pan Tests
+
+@Suite("ProcessTapController — Pan")
+struct PanPipelineTests {
+
+    /// Fills a stereo buffer with constant left/right values.
+    private func fillStereo(_ abl: TestABL, frames: Int, left: Float, right: Float) {
+        let data = abl.data(at: 0)
+        for f in 0..<frames {
+            data[f * 2] = left
+            data[f * 2 + 1] = right
+        }
+    }
+
+    @Test("Center pan is a bit-exact passthrough")
+    func centerIsPassthrough() {
+        let frames = 256
+        let input = TestABL(buffers: [(channels: 2, frames: frames)])
+        let output = TestABL(buffers: [(channels: 2, frames: frames)])
+        fillStereo(input, frames: frames, left: 0.4, right: 0.1)
+
+        var vol: Float = 1.0
+        processWithDefaults(input: input, output: output, targetPan: 0, currentVol: &vol)
+
+        let out = output.data(at: 0)
+        for f in 0..<frames {
+            #expect(out[f * 2] == 0.4)
+            #expect(out[f * 2 + 1] == 0.1)
+        }
+    }
+
+    @Test("Full left folds stereo to mono in the left channel, silences right")
+    func fullLeft() {
+        let frames = 256
+        let input = TestABL(buffers: [(channels: 2, frames: frames)])
+        let output = TestABL(buffers: [(channels: 2, frames: frames)])
+        fillStereo(input, frames: frames, left: 0.4, right: 0.2)
+
+        var vol: Float = 1.0
+        processWithDefaults(input: input, output: output, targetPan: -1, currentVol: &vol)
+
+        let out = output.data(at: 0)
+        for f in 0..<frames {
+            #expect(abs(out[f * 2] - 0.3) < 1e-6, "Left should carry the mono mix")
+            #expect(out[f * 2 + 1] == 0, "Right should be silent")
+        }
+    }
+
+    @Test("Full right folds stereo to mono in the right channel, silences left")
+    func fullRight() {
+        let frames = 256
+        let input = TestABL(buffers: [(channels: 2, frames: frames)])
+        let output = TestABL(buffers: [(channels: 2, frames: frames)])
+        fillStereo(input, frames: frames, left: 0.4, right: 0.2)
+
+        var vol: Float = 1.0
+        processWithDefaults(input: input, output: output, targetPan: 1, currentVol: &vol)
+
+        let out = output.data(at: 0)
+        for f in 0..<frames {
+            #expect(out[f * 2] == 0, "Left should be silent")
+            #expect(abs(out[f * 2 + 1] - 0.3) < 1e-6, "Right should carry the mono mix")
+        }
+    }
+
+    @Test("Mono source into stereo output is panned by gain only")
+    func monoIntoStereo() {
+        let frames = 128
+        let input = TestABL(buffers: [(channels: 1, frames: frames)])
+        let output = TestABL(buffers: [(channels: 2, frames: frames)])
+        fill(input, bufferIndex: 0, value: 0.4)
+
+        var vol: Float = 1.0
+        processWithDefaults(input: input, output: output, targetPan: 0.5, currentVol: &vol)
+
+        let out = output.data(at: 0)
+        for f in 0..<frames {
+            #expect(abs(out[f * 2] - 0.2) < 1e-6, "Left attenuated to 50%")
+            #expect(abs(out[f * 2 + 1] - 0.4) < 1e-6, "Right untouched")
+        }
+    }
+
+    @Test("Stereo into multichannel output pans onto the preferred stereo pair")
+    func stereoIntoMultichannel() {
+        let frames = 64
+        let input = TestABL(buffers: [(channels: 2, frames: frames)])
+        let output = TestABL(buffers: [(channels: 4, frames: frames)])
+        fillStereo(input, frames: frames, left: 0.4, right: 0.2)
+
+        var vol: Float = 1.0
+        processWithDefaults(
+            input: input, output: output, targetPan: 1,
+            preferredStereoLeft: 2, preferredStereoRight: 3,
+            currentVol: &vol
+        )
+
+        let out = output.data(at: 0)
+        for f in 0..<frames {
+            let base = f * 4
+            #expect(out[base] == 0 && out[base + 1] == 0)
+            #expect(out[base + 2] == 0)
+            #expect(abs(out[base + 3] - 0.3) < 1e-6)
+        }
+    }
+
+    @Test("Pan ramps smoothly toward its target and snaps exactly to center")
+    func rampAndSnap() {
+        let frames = 4096
+        let input = TestABL(buffers: [(channels: 2, frames: frames)])
+        let output = TestABL(buffers: [(channels: 2, frames: frames)])
+        fillStereo(input, frames: frames, left: 0.3, right: 0.3)
+
+        var vol: Float = 1.0
+        var pan: Float = -1
+        // Ramp from full left back to center over several buffers.
+        for _ in 0..<10 {
+            ProcessTapController.processMappedBuffers(
+                inputBuffers: input.bufferList,
+                outputBuffers: output.bufferList,
+                targetVol: 1, targetPan: 0,
+                crossfadeMultiplier: 1, outputGateMultiplier: 1,
+                rampCoefficient: 0.01,
+                preferredStereoLeft: 0, preferredStereoRight: 1,
+                currentVol: &vol, currentPan: &pan,
+                eqProc: nil, autoEQProc: nil,
+                loudnessEqualizerProc: nil, loudnessCompensatorProc: nil
+            )
+        }
+        #expect(pan == 0, "Ramp must land exactly on center so the passthrough path re-engages")
+
+        // Right channel must rise monotonically during a ramp (no zipper jumps).
+        pan = -1
+        ProcessTapController.processMappedBuffers(
+            inputBuffers: input.bufferList,
+            outputBuffers: output.bufferList,
+            targetVol: 1, targetPan: 0,
+            crossfadeMultiplier: 1, outputGateMultiplier: 1,
+            rampCoefficient: 0.001,
+            preferredStereoLeft: 0, preferredStereoRight: 1,
+            currentVol: &vol, currentPan: &pan,
+            eqProc: nil, autoEQProc: nil,
+            loudnessEqualizerProc: nil, loudnessCompensatorProc: nil
+        )
+        let out = output.data(at: 0)
+        for f in 1..<frames {
+            #expect(out[f * 2 + 1] >= out[(f - 1) * 2 + 1])
+        }
+        #expect(out[1] < 0.01, "Right starts near silent")
+        #expect(pan > -1 && pan < 0)
+    }
+}
+
+@Suite("PanMath")
+struct PanMathTests {
+    @Test("Clamp keeps values in range and rejects non-finite input")
+    func clamp() {
+        #expect(PanMath.clamp(-3) == -1)
+        #expect(PanMath.clamp(3) == 1)
+        #expect(PanMath.clamp(0.25) == 0.25)
+        #expect(PanMath.clamp(.nan) == 0)
+        #expect(PanMath.clamp(.infinity) == 0)
+    }
+
+    @Test("Stereo pan conserves the mono sum on the active side at extremes")
+    func extremes() {
+        let left = PanMath.applyStereo(left: 1, right: 0, pan: -1)
+        #expect(left.left == 0.5 && left.right == 0)
+        let right = PanMath.applyStereo(left: 1, right: 0, pan: 1)
+        #expect(right.left == 0 && right.right == 0.5)
+    }
+
+    @Test("URL pan parsing accepts percentages and names")
+    func urlParsing() {
+        #expect(URLHandler.parsePan("left") == -1)
+        #expect(URLHandler.parsePan("Right") == 1)
+        #expect(URLHandler.parsePan("center") == 0)
+        #expect(URLHandler.parsePan("-50") == -0.5)
+        #expect(URLHandler.parsePan("250") == 1)
+        #expect(URLHandler.parsePan("abc") == nil)
     }
 }
