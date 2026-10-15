@@ -15,7 +15,8 @@ import os
 // 2. **HAL I/O thread (real-time)**: Audio processing callback.
 //    - processAudioCallback() — unified callback with runtime role via callbackID
 //    - Reads nonisolated(unsafe) vars; writes _peakLevel/_secondaryPeakLevel,
-//      _primaryCurrentVolume/_secondaryCurrentVolume, _lastRenderHostTime, _hasRenderedAudio
+//      _primaryCurrentVolume/_secondaryCurrentVolume, _primaryCurrentPan/_secondaryCurrentPan,
+//      _lastRenderHostTime, _hasRenderedAudio
 //    - MUST NOT allocate, lock, log, or call ObjC. See .claude/rules/rt-safety.md
 //
 // The nonisolated(unsafe) annotation marks variables that cross the thread boundary.
@@ -52,6 +53,12 @@ final class ProcessTapController: ProcessTapControlling {
     private nonisolated(unsafe) var _primaryCurrentVolume: Float = 1.0
     /// Current ramped volume for secondary tap during crossfade
     private nonisolated(unsafe) var _secondaryCurrentVolume: Float = 1.0
+    /// Target stereo pan set by AudioEngine. -1.0 = full left, 0 = center, 1.0 = full right.
+    private nonisolated(unsafe) var _pan: Float = 0
+    /// Current ramped pan for primary tap (smoothly approaches _pan, avoids zipper noise)
+    private nonisolated(unsafe) var _primaryCurrentPan: Float = 0
+    /// Current ramped pan for secondary tap during crossfade
+    private nonisolated(unsafe) var _secondaryCurrentPan: Float = 0
     /// Emergency silence flag - zeroes output immediately (used during destructive device switch)
     /// Unlike _isMuted, this bypasses all processing including VU metering
     private nonisolated(unsafe) var _forceSilence: Bool = false
@@ -204,6 +211,11 @@ final class ProcessTapController: ProcessTapControlling {
     var isMuted: Bool {
         get { _isMuted }
         set { _isMuted = newValue }
+    }
+
+    var pan: Float {
+        get { _pan }
+        set { _pan = PanMath.clamp(newValue) }
     }
 
     // MARK: - Initialization
@@ -681,6 +693,7 @@ final class ProcessTapController: ProcessTapControlling {
         // Seed the ramp target before AudioDeviceStart so the first IOProc callback
         // ramps from userVolume→userVolume (no-op) instead of 1.0→userVolume.
         _primaryCurrentVolume = _volume
+        _primaryCurrentPan = _pan
 
         // Reset output gate to armed; size the ramp/hold windows from device sample rate.
         _outputGateRawPhase = 0
@@ -1010,6 +1023,7 @@ final class ProcessTapController: ProcessTapControlling {
         secondaryRampCoefficient = 1 - exp(-1 / (Float(sampleRate) * rampTimeSeconds))
 
         _secondaryCurrentVolume = _primaryCurrentVolume
+        _secondaryCurrentPan = _primaryCurrentPan
 
         // Create independent EQ processors for the secondary tap.
         // Each tap needs its own biquad delay buffers — sharing would corrupt filter state
@@ -1118,6 +1132,7 @@ final class ProcessTapController: ProcessTapControlling {
 
         _primaryCurrentVolume = _secondaryCurrentVolume
         _secondaryCurrentVolume = 0
+        _primaryCurrentPan = _secondaryCurrentPan
         _primaryPreferredStereoLeftChannel = _secondaryPreferredStereoLeftChannel
         _primaryPreferredStereoRightChannel = _secondaryPreferredStereoRightChannel
 
@@ -1319,12 +1334,14 @@ final class ProcessTapController: ProcessTapControlling {
         inputBuffers: UnsafeMutableAudioBufferListPointer,
         outputBuffers: UnsafeMutableAudioBufferListPointer,
         targetVol: Float,
+        targetPan: Float,
         crossfadeMultiplier: Float,
         outputGateMultiplier: Float,
         rampCoefficient: Float,
         preferredStereoLeft: Int,
         preferredStereoRight: Int,
         currentVol: inout Float,
+        currentPan: inout Float,
         eqProc: EQProcessor?,
         autoEQProc: AutoEQProcessor?,
         loudnessEqualizerProc: LoudnessEqualizer?,
@@ -1376,7 +1393,29 @@ final class ProcessTapController: ProcessTapControlling {
             let eq = eqProc  // Parameter read — each callback passes its own processor
             let eqCanProcessStereoInterleaved = (inputChannels == 2 && outputChannels == 2)
 
-            if inputChannels == outputChannels {
+            // Pan only applies to stereo-capable outputs. Inactive pan (target and ramp both
+            // at center) takes the original code paths unchanged.
+            let panActive = (targetPan != 0 || currentPan != 0) && outputChannels >= 2
+
+            if panActive && inputChannels == 2 && outputChannels == 2 {
+                for frame in 0..<frameCount {
+                    currentVol += (targetVol - currentVol) * rampCoefficient
+                    PanMath.ramp(current: &currentPan, target: targetPan, coefficient: rampCoefficient)
+                    let gain = currentVol * crossfadeMultiplier * outputGateMultiplier
+                    let base = frame * 2
+                    let panned = PanMath.applyStereo(
+                        left: inputSamples[base] * gain,
+                        right: inputSamples[base + 1] * gain,
+                        pan: currentPan
+                    )
+                    outputSamples[base] = panned.left
+                    outputSamples[base + 1] = panned.right
+                }
+                let sampleCount = frameCount * 2
+                if sampleCount < outputSampleCount {
+                    memset(outputSamples.advanced(by: sampleCount), 0, (outputSampleCount - sampleCount) * MemoryLayout<Float>.size)
+                }
+            } else if inputChannels == outputChannels {
                 let sampleCount = frameCount * inputChannels
                 for frame in 0..<frameCount {
                     currentVol += (targetVol - currentVol) * rampCoefficient
@@ -1395,8 +1434,14 @@ final class ProcessTapController: ProcessTapControlling {
                     let gain = currentVol * crossfadeMultiplier * outputGateMultiplier
                     let inBase = frame * 2
                     let outBase = frame * outputChannels
-                    let left = inputSamples[inBase] * gain
-                    let right = inputSamples[inBase + 1] * gain
+                    var left = inputSamples[inBase] * gain
+                    var right = inputSamples[inBase + 1] * gain
+                    if panActive {
+                        PanMath.ramp(current: &currentPan, target: targetPan, coefficient: rampCoefficient)
+                        let panned = PanMath.applyStereo(left: left, right: right, pan: currentPan)
+                        left = panned.left
+                        right = panned.right
+                    }
 
                     for ch in 0..<outputChannels {
                         outputSamples[outBase + ch] = 0
@@ -1414,12 +1459,20 @@ final class ProcessTapController: ProcessTapControlling {
                     let gain = currentVol * crossfadeMultiplier * outputGateMultiplier
                     let sample = inputSamples[frame] * gain
                     let outBase = frame * outputChannels
+                    var left = sample
+                    var right = sample
+                    if panActive {
+                        PanMath.ramp(current: &currentPan, target: targetPan, coefficient: rampCoefficient)
+                        let panned = PanMath.applyMono(sample, pan: currentPan)
+                        left = panned.left
+                        right = panned.right
+                    }
 
                     for ch in 0..<outputChannels {
                         outputSamples[outBase + ch] = 0
                     }
-                    outputSamples[outBase + safeLeft] = sample
-                    outputSamples[outBase + safeRight] = sample
+                    outputSamples[outBase + safeLeft] = left
+                    outputSamples[outBase + safeRight] = right
                 }
                 let writtenSamples = frameCount * outputChannels
                 if writtenSamples < outputSampleCount {
@@ -1580,7 +1633,9 @@ final class ProcessTapController: ProcessTapControlling {
         }
 
         let targetVol = _volume
+        let targetPan = _pan
         var currentVol: Float
+        var currentPan: Float
         let crossfadeMultiplier: Float
         let rampCoeff: Float
         let stereoLeft: Int
@@ -1592,6 +1647,7 @@ final class ProcessTapController: ProcessTapControlling {
 
         if isPrimary {
             currentVol = _primaryCurrentVolume
+            currentPan = _primaryCurrentPan
             // Equal-power crossfade: primary uses cosine curve (1→0).
             // CrossfadeState.primaryMultiplier handles all phase logic including the
             // race condition guard (returns 0.0 when progress >= 1.0 in idle phase).
@@ -1605,6 +1661,7 @@ final class ProcessTapController: ProcessTapControlling {
             loudnessCompensatorProc = loudnessCompensator
         } else {
             currentVol = _secondaryCurrentVolume
+            currentPan = _secondaryCurrentPan
             // Secondary uses sine curve (0→1).
             // .warmingUp → 0.0 (muted), .crossfading → sin(progress*π/2), .idle → 1.0
             crossfadeMultiplier = crossfadeState.secondaryMultiplier
@@ -1621,12 +1678,14 @@ final class ProcessTapController: ProcessTapControlling {
             inputBuffers: inputBuffers,
             outputBuffers: outputBuffers,
             targetVol: targetVol,
+            targetPan: targetPan,
             crossfadeMultiplier: crossfadeMultiplier,
             outputGateMultiplier: outputGateMultiplier,
             rampCoefficient: rampCoeff,
             preferredStereoLeft: stereoLeft,
             preferredStereoRight: stereoRight,
             currentVol: &currentVol,
+            currentPan: &currentPan,
             eqProc: eqProc,
             autoEQProc: autoEQProc,
             loudnessEqualizerProc: loudnessEqualizerProc,
@@ -1635,8 +1694,10 @@ final class ProcessTapController: ProcessTapControlling {
 
         if isPrimary {
             _primaryCurrentVolume = currentVol
+            _primaryCurrentPan = currentPan
         } else {
             _secondaryCurrentVolume = currentVol
+            _secondaryCurrentPan = currentPan
         }
     }
 }

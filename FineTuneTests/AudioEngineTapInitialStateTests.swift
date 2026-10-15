@@ -52,6 +52,7 @@ final class RecordingProcessTapController: ProcessTapControlling {
     // Mutable surface — recorded as plain property writes (not events).
     var volume: Float = 1.0
     var isMuted: Bool = false
+    var pan: Float = 0
     var currentDeviceVolume: Float = 1.0
     var isDeviceMuted: Bool = false
     var audioLevel: Float = 0.0

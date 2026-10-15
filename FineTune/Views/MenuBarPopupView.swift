@@ -919,6 +919,10 @@ struct MenuBarPopupView: View {
                 onRenameUserPreset: { id, newName in
                     audioEngine.settingsManager.updateUserPreset(id: id, name: newName)
                 },
+                pan: audioEngine.getPan(for: app),
+                onPanChange: { pan in
+                    audioEngine.setPan(for: app, to: pan)
+                },
                 isEQExpanded: expandedRowID == displayableApp.id,
                 onEQToggle: {
                     toggleEQ(for: displayableApp.id, scrollProxy: scrollProxy)
