@@ -698,6 +698,7 @@ final class AudioEngine {
         let resolvedUIDs = deviceUIDs ?? tap.currentDeviceUIDs
         tap.volume = effectiveVolume(for: pid, deviceUIDs: resolvedUIDs)
         tap.isMuted = volumeState.getMute(for: pid)
+        tap.pan = settingsManager.getPan(for: tap.app.persistenceIdentifier)
 
         if let primaryUID = resolvedUIDs.first,
            let device = deviceMonitor.device(for: primaryUID) {
@@ -742,6 +743,17 @@ final class AudioEngine {
 
     func getMute(for app: AudioApp) -> Bool {
         volumeState.getMute(for: app.id)
+    }
+
+    /// Set an app's stereo position (-1.0 = full left, 0.0 = center, 1.0 = full right).
+    func setPan(for app: AudioApp, to pan: Float) {
+        let clamped = PanMath.clamp(pan)
+        settingsManager.setPan(for: app.persistenceIdentifier, to: clamped)
+        taps[app.id]?.pan = clamped
+    }
+
+    func getPan(for app: AudioApp) -> Float {
+        settingsManager.getPan(for: app.persistenceIdentifier)
     }
 
     /// Update EQ settings for an app

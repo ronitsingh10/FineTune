@@ -10,6 +10,7 @@ Control FineTune from Terminal, shell scripts, [Shortcuts](https://support.apple
 | Step volume | `finetune://step-volume?app=BUNDLE_ID&direction=up` | Nudge volume up or down by ~5% |
 | Set mute | `finetune://set-mute?app=BUNDLE_ID&muted=true` | Mute or unmute an app |
 | Toggle mute | `finetune://toggle-mute?app=BUNDLE_ID` | Toggle mute state |
+| Set pan | `finetune://set-pan?app=BUNDLE_ID&pan=VALUE` | Place an app in the stereo field: -100 (full left) to 100 (full right), or `left` / `center` / `right` |
 | Set device | `finetune://set-device?app=BUNDLE_ID&device=DEVICE_UID` | Route an app to a specific output |
 | Reset | `finetune://reset` | Reset all apps to 100% and unmuted |
 
@@ -27,6 +28,9 @@ open "finetune://set-mute?app=com.spotify.client&muted=true&app=com.apple.Music&
 
 # Step Discord volume down
 open "finetune://step-volume?app=com.hnc.Discord&direction=down"
+
+# Music in the left ear, Zoom in the right
+open "finetune://set-pan?app=com.spotify.client&pan=left&app=us.zoom.xos&pan=right"
 
 # Route an app to a specific device
 open "finetune://set-device?app=com.spotify.client&device=YOUR_DEVICE_UID"

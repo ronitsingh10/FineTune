@@ -31,6 +31,8 @@ struct AppRowWithLevelPolling: View {
     let onSavePreset: (String, EQSettings) -> Void
     let onDeleteUserPreset: (UUID) -> Void
     let onRenameUserPreset: (UUID, String) -> Void
+    let pan: Float
+    let onPanChange: (Float) -> Void
     let isEQExpanded: Bool
     let onEQToggle: () -> Void
     let isFocused: Bool
@@ -67,6 +69,8 @@ struct AppRowWithLevelPolling: View {
         onSavePreset: @escaping (String, EQSettings) -> Void = { _, _ in },
         onDeleteUserPreset: @escaping (UUID) -> Void = { _ in },
         onRenameUserPreset: @escaping (UUID, String) -> Void = { _, _ in },
+        pan: Float = 0,
+        onPanChange: @escaping (Float) -> Void = { _ in },
         isEQExpanded: Bool = false,
         onEQToggle: @escaping () -> Void = {},
         isFocused: Bool = false
@@ -99,6 +103,8 @@ struct AppRowWithLevelPolling: View {
         self.onSavePreset = onSavePreset
         self.onDeleteUserPreset = onDeleteUserPreset
         self.onRenameUserPreset = onRenameUserPreset
+        self.pan = pan
+        self.onPanChange = onPanChange
         self.isEQExpanded = isEQExpanded
         self.onEQToggle = onEQToggle
         self.isFocused = isFocused
@@ -133,6 +139,8 @@ struct AppRowWithLevelPolling: View {
             onSavePreset: onSavePreset,
             onDeleteUserPreset: onDeleteUserPreset,
             onRenameUserPreset: onRenameUserPreset,
+            pan: pan,
+            onPanChange: onPanChange,
             isEQExpanded: isEQExpanded,
             onEQToggle: onEQToggle,
             isFocused: isFocused

@@ -31,6 +31,8 @@ struct AppRow: View {
     let onSavePreset: (String, EQSettings) -> Void
     let onDeleteUserPreset: (UUID) -> Void
     let onRenameUserPreset: (UUID, String) -> Void
+    let pan: Float
+    let onPanChange: (Float) -> Void
     let isEQExpanded: Bool
     let onEQToggle: () -> Void
     let isFocused: Bool
@@ -66,6 +68,8 @@ struct AppRow: View {
         onSavePreset: @escaping (String, EQSettings) -> Void = { _, _ in },
         onDeleteUserPreset: @escaping (UUID) -> Void = { _ in },
         onRenameUserPreset: @escaping (UUID, String) -> Void = { _, _ in },
+        pan: Float = 0,
+        onPanChange: @escaping (Float) -> Void = { _ in },
         isEQExpanded: Bool = false,
         onEQToggle: @escaping () -> Void = {},
         isFocused: Bool = false
@@ -97,6 +101,8 @@ struct AppRow: View {
         self.onSavePreset = onSavePreset
         self.onDeleteUserPreset = onDeleteUserPreset
         self.onRenameUserPreset = onRenameUserPreset
+        self.pan = pan
+        self.onPanChange = onPanChange
         self.isEQExpanded = isEQExpanded
         self.onEQToggle = onEQToggle
         self.isFocused = isFocused
@@ -180,26 +186,30 @@ struct AppRow: View {
             }
             .frame(height: DesignTokens.Dimensions.rowContentHeight)
         } expandedContent: {
-            // EQ panel - shown when expanded
+            // EQ + pan panels - shown when expanded
             // SwiftUI calculates natural height via conditional rendering
-            EQPanelView(
-                settings: $localEQSettings,
-                userPresets: userPresets,
-                onPresetSelected: { preset in
-                    localEQSettings = preset.settings
-                    onEQChange(preset.settings)
-                },
-                onUserPresetSelected: { userPreset in
-                    localEQSettings = userPreset.settings
-                    onUserPresetSelected(userPreset)
-                },
-                onSettingsChanged: { settings in
-                    onEQChange(settings)
-                },
-                onSavePreset: onSavePreset,
-                onDeleteUserPreset: onDeleteUserPreset,
-                onRenameUserPreset: onRenameUserPreset
-            )
+            VStack(spacing: DesignTokens.Spacing.xs) {
+                EQPanelView(
+                    settings: $localEQSettings,
+                    userPresets: userPresets,
+                    onPresetSelected: { preset in
+                        localEQSettings = preset.settings
+                        onEQChange(preset.settings)
+                    },
+                    onUserPresetSelected: { userPreset in
+                        localEQSettings = userPreset.settings
+                        onUserPresetSelected(userPreset)
+                    },
+                    onSettingsChanged: { settings in
+                        onEQChange(settings)
+                    },
+                    onSavePreset: onSavePreset,
+                    onDeleteUserPreset: onDeleteUserPreset,
+                    onRenameUserPreset: onRenameUserPreset
+                )
+
+                PanControlView(pan: pan, onPanChange: onPanChange)
+            }
             .padding(.top, DesignTokens.Spacing.sm)
         }
         .onChange(of: eqSettings) { _, newValue in

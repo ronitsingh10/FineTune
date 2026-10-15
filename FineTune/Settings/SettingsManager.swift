@@ -97,6 +97,7 @@ final class SettingsManager {
         var appDeviceRouting: [String: String] = [:]  // bundleID → deviceUID
         var appMutes: [String: Bool] = [:]  // bundleID → isMuted
         var appBoosts: [String: Float] = [:]  // bundleID → boost rawValue (1.0, 2.0, 3.0, 4.0)
+        var appPans: [String: Float] = [:]  // bundleID → pan (-1.0 = full left, 0 = center, 1.0 = full right)
         var appEQSettings: [String: EQSettings] = [:]  // bundleID → EQ settings
         var appSettings: AppSettings = AppSettings()  // App-wide settings
         var systemSoundsFollowsDefault: Bool = true  // Whether system sounds follows macOS default
@@ -152,6 +153,9 @@ final class SettingsManager {
             appDeviceRouting = try c.decodeIfPresent([String: String].self, forKey: .appDeviceRouting) ?? [:]
             appMutes = try c.decodeIfPresent([String: Bool].self, forKey: .appMutes) ?? [:]
             appBoosts = try c.decodeIfPresent([String: Float].self, forKey: .appBoosts) ?? [:]
+            appPans = (try c.decodeIfPresent([String: Float].self, forKey: .appPans) ?? [:])
+                .filter { $0.value.isFinite }
+                .mapValues { PanMath.clamp($0) }
             appEQSettings = try c.decodeIfPresent([String: EQSettings].self, forKey: .appEQSettings) ?? [:]
             var decodedAppSettings = try c.decodeIfPresent(AppSettings.self, forKey: .appSettings) ?? AppSettings()
             if !decodedAppSettings.defaultNewAppVolume.isFinite || decodedAppSettings.defaultNewAppVolume < 0 {
@@ -216,6 +220,23 @@ final class SettingsManager {
 
     func setBoost(for identifier: String, to boost: BoostLevel) {
         settings.appBoosts[identifier] = boost.rawValue
+        scheduleSave()
+    }
+
+    // MARK: - Per-App Pan
+
+    /// Stereo position for an app: -1.0 = full left, 0.0 = center (default), 1.0 = full right.
+    func getPan(for identifier: String) -> Float {
+        settings.appPans[identifier] ?? 0
+    }
+
+    func setPan(for identifier: String, to pan: Float) {
+        let clamped = PanMath.clamp(pan)
+        if clamped == 0 {
+            settings.appPans.removeValue(forKey: identifier)
+        } else {
+            settings.appPans[identifier] = clamped
+        }
         scheduleSave()
     }
 
@@ -347,6 +368,7 @@ final class SettingsManager {
         // Clear per-app settings — FineTune won't interact with this app
         settings.appVolumes.removeValue(forKey: identifier)
         settings.appBoosts.removeValue(forKey: identifier)
+        settings.appPans.removeValue(forKey: identifier)
         settings.appMutes.removeValue(forKey: identifier)
         settings.appDeviceRouting.removeValue(forKey: identifier)
         settings.appEQSettings.removeValue(forKey: identifier)
@@ -642,6 +664,7 @@ final class SettingsManager {
     func pruneStaleSettings(keeping activeIdentifiers: Set<String>) {
         let allIdentifiers = Set(settings.appVolumes.keys)
             .union(settings.appBoosts.keys)
+            .union(settings.appPans.keys)
             .union(settings.appMutes.keys)
             .union(settings.appEQSettings.keys)
             .union(settings.appDeviceSelectionMode.keys)
@@ -664,15 +687,17 @@ final class SettingsManager {
             let selectedUIDs = settings.appSelectedDeviceUIDs[identifier]
 
             let boost = settings.appBoosts[identifier]
+            let pan = settings.appPans[identifier]
 
             let isDefaultVolume = volume == nil || volume == 1.0
             let isDefaultBoost = boost == nil || boost == BoostLevel.x1.rawValue
+            let isDefaultPan = pan == nil || pan == 0
             let isDefaultMute = mute == nil || mute == false
             let isDefaultEQ = eq == nil || eq == .flat
             let isDefaultSelectionMode = selectionMode == nil
             let isDefaultSelectedUIDs = selectedUIDs == nil || selectedUIDs?.isEmpty == true
 
-            guard isDefaultVolume && isDefaultBoost && isDefaultMute && isDefaultEQ
+            guard isDefaultVolume && isDefaultBoost && isDefaultPan && isDefaultMute && isDefaultEQ
                     && isDefaultSelectionMode && isDefaultSelectedUIDs else {
                 continue
             }
@@ -680,6 +705,7 @@ final class SettingsManager {
             // All values are defaults — safe to prune
             settings.appVolumes.removeValue(forKey: identifier)
             settings.appBoosts.removeValue(forKey: identifier)
+            settings.appPans.removeValue(forKey: identifier)
             settings.appMutes.removeValue(forKey: identifier)
             settings.appEQSettings.removeValue(forKey: identifier)
             settings.appDeviceSelectionMode.removeValue(forKey: identifier)
@@ -833,6 +859,7 @@ final class SettingsManager {
     func resetAllSettings() {
         settings.appVolumes.removeAll()
         settings.appBoosts.removeAll()
+        settings.appPans.removeAll()
         settings.appDeviceRouting.removeAll()
         settings.appMutes.removeAll()
         settings.appEQSettings.removeAll()

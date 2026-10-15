@@ -10,6 +10,8 @@ protocol ProcessTapControlling: AnyObject, Sendable {
     var app: AudioApp { get }
     var volume: Float { get set }
     var isMuted: Bool { get set }
+    /// Stereo pan: -1.0 = full left, 0.0 = center, 1.0 = full right.
+    var pan: Float { get set }
     var currentDeviceVolume: Float { get set }
     var isDeviceMuted: Bool { get set }
     var audioLevel: Float { get }
