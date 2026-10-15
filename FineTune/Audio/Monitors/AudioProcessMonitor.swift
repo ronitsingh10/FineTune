@@ -80,6 +80,8 @@ final class AudioProcessMonitor: AudioProcessMonitoring {
     private var processListenerBlocks: [AudioObjectID: AudioObjectPropertyListenerBlock] = [:]
     private var monitoredProcesses: Set<AudioObjectID> = []
     private var periodicRefreshTask: Task<Void, Never>?
+    /// Profile instance per app PID. Launch arguments don't change, so each PID is read once.
+    private var instancesByPID: [pid_t: AppInstance?] = [:]
 
     private var processListAddress = AudioObjectPropertyAddress(
         mSelector: kAudioHardwarePropertyProcessObjectList,
@@ -139,6 +141,13 @@ final class AudioProcessMonitor: AudioProcessMonitoring {
         }
 
         return nil
+    }
+
+    private func instance(forAppPID pid: pid_t) -> AppInstance? {
+        if let cached = instancesByPID[pid] { return cached }
+        let instance = AppInstance.from(pid: pid)
+        instancesByPID[pid] = instance
+        return instance
     }
 
     func start() {
@@ -238,6 +247,9 @@ final class AudioProcessMonitor: AudioProcessMonitoring {
                 // Skip system daemons (siri, coreaudio, etc.) - they shouldn't appear in the apps list
                 if isSystemDaemon(bundleID: bundleID, name: name) { continue }
 
+                let instance = resolvedApp.flatMap { instance(forAppPID: $0.processIdentifier) }
+                let displayName = instance.map { "\(name) (\($0.label))" } ?? name
+
                 // Merge helper process objectIDs into parent app entry
                 if let existing = appsByPID[parentPID] {
                     if !existing.processObjectIDs.contains(objectID) {
@@ -250,20 +262,25 @@ final class AudioProcessMonitor: AudioProcessMonitoring {
                             name: existing.name,
                             icon: existing.icon,
                             bundleID: existing.bundleID,
-                            isHelperBacked: existing.isHelperBacked || isHelper
+                            isHelperBacked: existing.isHelperBacked || isHelper,
+                            instance: existing.instance
                         )
                     }
                 } else {
                     appsByPID[parentPID] = AudioApp(
                         id: parentPID,
                         processObjectIDs: [objectID],
-                        name: name,
+                        name: displayName,
                         icon: icon,
                         bundleID: bundleID,
-                        isHelperBacked: isHelper
+                        isHelperBacked: isHelper,
+                        instance: instance
                     )
                 }
             }
+
+            // Forget cached instances for apps that have quit, so a reused PID is re-read.
+            instancesByPID = instancesByPID.filter { runningAppsByPID[$0.key] != nil }
 
             // Update per-process listeners
             updateProcessListeners(for: processIDs)

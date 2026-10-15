@@ -897,7 +897,8 @@ struct MenuBarPopupView: View {
                     audioEngine.setDevice(for: app, deviceUID: nil)
                 },
                 onAppActivate: {
-                    activateApp(pid: app.id, bundleID: app.bundleID)
+                    // AppleScript targets by bundle ID, which can't tell instances apart.
+                    activateApp(pid: app.id, bundleID: app.instance == nil ? app.bundleID : nil)
                 },
                 eqSettings: audioEngine.getEQSettings(for: app),
                 userPresets: userPresets,

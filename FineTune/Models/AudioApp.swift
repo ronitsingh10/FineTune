@@ -9,6 +9,8 @@ struct AudioApp: Identifiable, Hashable {
     let icon: NSImage
     let bundleID: String?
     let isHelperBacked: Bool
+    /// Set when this is a separately-profiled copy of an app (see `AppInstance`).
+    let instance: AppInstance?
 
     init(
         id: pid_t,
@@ -16,7 +18,8 @@ struct AudioApp: Identifiable, Hashable {
         name: String,
         icon: NSImage,
         bundleID: String?,
-        isHelperBacked: Bool = false
+        isHelperBacked: Bool = false,
+        instance: AppInstance? = nil
     ) {
         self.id = id
         self.processObjectIDs = processObjectIDs
@@ -24,10 +27,13 @@ struct AudioApp: Identifiable, Hashable {
         self.icon = icon
         self.bundleID = bundleID
         self.isHelperBacked = isHelperBacked
+        self.instance = instance
     }
 
     var persistenceIdentifier: String {
-        bundleID ?? "name:\(name)"
+        let base = bundleID ?? "name:\(name)"
+        guard let instance else { return base }
+        return "\(base)@\(instance.key)"
     }
 
     func hash(into hasher: inout Hasher) {
