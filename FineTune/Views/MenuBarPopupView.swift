@@ -565,6 +565,9 @@ struct MenuBarPopupView: View {
                         isFocused: hasKeyboardEngaged && selectedRow == .device(uid: device.uid),
                         iconOverrideSymbol: audioEngine.settingsManager.getDeviceIconOverride(for: device.uid)
                     )
+                    .disabled(!audioEngine.isInputAllowedByBluetoothGuard(device))
+                    .help(audioEngine.isInputAllowedByBluetoothGuard(device)
+                        ? "Select input device" : "Bluetooth input guard is on — turn it off in Audio settings to change the input")
                     .id(PopupKeyboardNavModel.RowID.device(uid: device.uid))
                 }
             } else {

@@ -248,12 +248,13 @@ struct FineTuneApp: App {
             forName: NSApplication.willTerminateNotification,
             object: nil,
             queue: .main
-        ) { [settings, monitor, accessibilityService, hud, coordinator] _ in
+        ) { [settings, monitor, accessibilityService, hud, coordinator, engine] _ in
             MainActor.assumeIsolated {
                 coordinator.stop()
                 monitor.stop()
                 accessibilityService.stop()
                 hud.shutdown()
+                engine.shutdown()
                 settings.flushSync()
             }
         }

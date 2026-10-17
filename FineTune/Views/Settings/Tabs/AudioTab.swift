@@ -25,6 +25,7 @@ struct AudioTab: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 24) {
+                bluetoothProtectionSection
                 volumeSection
                 devicesSection
             }
@@ -45,6 +46,35 @@ struct AudioTab: View {
         }
         .onChange(of: settings.appSettings.loudnessEqualizationEnabled) { _, newValue in
             audioEngine.setLoudnessEqualizationEnabled(newValue)
+        }
+    }
+
+    private var bluetoothProtectionSection: some View {
+        SettingsSection("Bluetooth Audio Quality") {
+            SettingsRow(
+                "Headphones as output only",
+                description: "Pins the default input to the built-in microphone so Bluetooth stays on the high-quality A2DP link"
+            ) {
+                Toggle("", isOn: Binding(
+                    get: { settings.appSettings.bluetoothInputProtection },
+                    set: { audioEngine.setBluetoothInputProtection($0) }
+                ))
+                .labelsHidden()
+                .toggleStyle(.switch)
+                .controlSize(.small)
+            }
+            Text(audioEngine.bluetoothProtectionStatus)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            if let warning = audioEngine.bluetoothCallModeWarning {
+                Label(warning, systemImage: "exclamationmark.triangle")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+            }
+            Text("Call apps must also use the built-in mic. This guard never records audio and cannot stop an app from opening the Bluetooth mic, so it does not fully disable HFP/SCO. Turn it off to use FineTune's regular input-lock rules.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 
@@ -84,6 +114,7 @@ struct AudioTab: View {
                 description: "Prevent auto-switching when devices connect"
             ) {
                 Toggle("", isOn: $settings.appSettings.lockInputDevice)
+                    .disabled(settings.appSettings.bluetoothInputProtection)
                     .toggleStyle(.switch)
                     .controlSize(.small)
                     .labelsHidden()
