@@ -21,7 +21,12 @@ final class AudioRecordingPermission {
 
     var status: AudioCapturePermissionStatus = .unknown
 
-    init() {
+    init(status: AudioCapturePermissionStatus? = nil) {
+        // Tests can supply a status without querying TCC or registering app observers.
+        if let status {
+            self.status = status
+            return
+        }
         refreshStatus()
         registerForActivation()
     }

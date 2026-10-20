@@ -10,6 +10,17 @@ private let logger = Logger(subsystem: "com.finetuneapp.FineTune", category: "Ap
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelegate {
     var audioEngine: AudioEngine?
+    var controlService: ControlService?
+    private let controlTermination = ControlTermination()
+
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        guard let controlService else { return .terminateNow }
+        // Allow queue-confined socket cleanup to finish without blocking the main actor.
+        controlTermination.begin(stop: { controlService.stop(completion: $0) }, reply: {
+            NSApplication.shared.reply(toApplicationShouldTerminate: true)
+        })
+        return .terminateLater
+    }
 
     func application(_ application: NSApplication, open urls: [URL]) {
         guard let audioEngine = audioEngine else {
@@ -50,6 +61,7 @@ struct FineTuneApp: App {
     @State private var menuBarPopupController: MenuBarPopupController
     @State private var shortcutsRegistry: ShortcutsRegistry
     @State private var resolver: TargetAppResolver
+    @State private var controlService: ControlService
     @StateObject private var updateManager = UpdateManager()
     @State private var showMenuBarExtra = true
 
@@ -70,7 +82,8 @@ struct FineTuneApp: App {
                 mediaKeyStatus: mediaKeyStatus,
                 mediaKeyMonitor: mediaKeyMonitor,
                 shortcutsRegistry: shortcutsRegistry,
-                updateManager: updateManager
+                updateManager: updateManager,
+                controlService: controlService
             )
         }
         FluidMenuBarExtra("FineTune", image: launchIconImage, isInserted: $showMenuBarExtra) {
@@ -111,6 +124,9 @@ struct FineTuneApp: App {
         let permission = AudioRecordingPermission()
         let engine = AudioEngine(permission: permission, settingsManager: settings, autoEQProfileManager: profileManager)
         _audioEngine = State(initialValue: engine)
+        let controlService = ControlService(engine: engine, settings: settings)
+        _controlService = State(initialValue: controlService)
+        controlService.observeSetting()
 
         // Media keys / HUD services — instantiated at app scope so the tap
         // and HUD panel outlive popup open/close cycles.
@@ -224,6 +240,7 @@ struct FineTuneApp: App {
 
         // Pass engine to AppDelegate
         _appDelegate.wrappedValue.audioEngine = engine
+        _appDelegate.wrappedValue.controlService = controlService
 
         if permission.status == .unknown {
             permission.request()
@@ -248,8 +265,9 @@ struct FineTuneApp: App {
             forName: NSApplication.willTerminateNotification,
             object: nil,
             queue: .main
-        ) { [settings, monitor, accessibilityService, hud, coordinator] _ in
+        ) { [settings, monitor, accessibilityService, hud, coordinator, controlService] _ in
             MainActor.assumeIsolated {
+                controlService.stop()
                 coordinator.stop()
                 monitor.stop()
                 accessibilityService.stop()

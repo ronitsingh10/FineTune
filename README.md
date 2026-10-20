@@ -97,6 +97,7 @@ That's it. Adjust sliders, route audio, and explore EQ from the menu bar.
 
 - **[AutoEQ & Headphone Correction](guide/autoeq.md)** — Apply frequency correction from the [AutoEQ](https://github.com/jaakkopasanen/AutoEq) project, import [EqualizerAPO](https://sourceforge.net/projects/equalizerapo/) profiles, or browse [autoeq.app](https://www.autoeq.app/)
 - **[URL Schemes](guide/url-schemes.md)** — Automate FineTune from Terminal, [Shortcuts](https://support.apple.com/guide/shortcuts-mac), [Raycast](https://raycast.com), or scripts
+- **[External Control API](guide/control-api.md)** — Opt-in local socket for bidirectional app volume, mute, routing, and device selection
 - **[Troubleshooting](guide/troubleshooting.md)** — Permission issues, missing apps, audio problems
 
 ## Contributing

@@ -25,6 +25,7 @@ struct IgnoredAppInfo: Codable, Equatable {
 nonisolated struct AppSettings: Codable, Equatable {
     // General
     var launchAtLogin: Bool = false
+    var externalControlEnabled: Bool = false
     var menuBarIconStyle: MenuBarIconStyle = .default
 
     // Audio
@@ -66,6 +67,7 @@ nonisolated struct AppSettings: Codable, Equatable {
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         launchAtLogin = try c.decodeIfPresent(Bool.self, forKey: .launchAtLogin) ?? false
+        externalControlEnabled = try c.decodeIfPresent(Bool.self, forKey: .externalControlEnabled) ?? false
         menuBarIconStyle = try c.decodeIfPresent(MenuBarIconStyle.self, forKey: .menuBarIconStyle) ?? .default
         defaultNewAppVolume = try c.decodeIfPresent(Float.self, forKey: .defaultNewAppVolume) ?? 1.0
         lockInputDevice = try c.decodeIfPresent(Bool.self, forKey: .lockInputDevice) ?? true

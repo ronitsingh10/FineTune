@@ -11,6 +11,7 @@ struct SettingsRootView: View {
     let mediaKeyMonitor: MediaKeyMonitor
     let shortcutsRegistry: ShortcutsRegistry
     @ObservedObject var updateManager: UpdateManager
+    var controlService: ControlService? = nil
 
     enum Section: String, Hashable, CaseIterable, Identifiable {
         case general, audio, shortcuts, updates, about
@@ -26,7 +27,8 @@ struct SettingsRootView: View {
                 onResetAll: {
                     audioEngine.handleSettingsReset()
                     deviceVolumeMonitor.setSystemFollowDefault()
-                }
+                },
+                controlFailure: controlService?.startupFailure
             )
             .tabItem { Label("General", systemImage: "gearshape") }
             .tag(Section.general)

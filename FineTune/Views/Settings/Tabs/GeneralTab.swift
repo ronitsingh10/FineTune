@@ -5,6 +5,7 @@ import SwiftUI
 struct GeneralTab: View {
     @Bindable var settings: SettingsManager
     let onResetAll: () -> Void
+    var controlFailure: String? = nil
 
     @State private var showResetConfirmation = false
 
@@ -44,6 +45,22 @@ struct GeneralTab: View {
                     .toggleStyle(.switch)
                     .controlSize(.small)
                     .labelsHidden()
+            }
+            SettingsRowDivider()
+            SettingsRow(
+                "External controller access",
+                description: "Allow apps running as your user to read and control FineTune. Uses a local socket."
+            ) {
+                Toggle("", isOn: $settings.appSettings.externalControlEnabled)
+                    .toggleStyle(.switch)
+                    .controlSize(.small)
+                    .labelsHidden()
+            }
+            if let controlFailure {
+                Text(controlFailure)
+                    .font(.caption)
+                    .foregroundStyle(.red)
+                    .textSelection(.enabled)
             }
             SettingsRowDivider()
             SettingsRow(

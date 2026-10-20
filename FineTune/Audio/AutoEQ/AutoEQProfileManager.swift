@@ -26,9 +26,10 @@ final class AutoEQProfileManager {
     /// Normalized names for fuzzy search (parallel array with sortedEntries).
     private var normalizedNames: [String] = []
 
-    init(loader: AutoEQProfileLoader = AutoEQProfileLoader(), fetcher: AutoEQFetcher? = nil) {
+    init(loader: AutoEQProfileLoader = AutoEQProfileLoader(), fetcher: AutoEQFetcher? = nil, loadAutomatically: Bool = true) {
         self.loader = loader
         self.fetcher = fetcher ?? AutoEQFetcher()
+        guard loadAutomatically else { return }
 
         // Imported profiles are small — load synchronously
         let imported = loader.loadImportedProfiles()
