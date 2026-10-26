@@ -1304,18 +1304,19 @@ final class AudioEngine {
     }
 
     /// Routes all followsDefault apps to the given device UID and switches their taps.
-    /// Early-exits if all apps are already routed to the target (avoids unnecessary tap switches).
+    /// Skips taps already on the target, including retained taps absent from the app list.
     private func routeFollowsDefaultApps(to targetUID: String) {
-        guard !followsDefault.allSatisfy({ appDeviceRouting[$0] == targetUID }) else { return }
-
         for pid in followsDefault {
             appDeviceRouting[pid] = targetUID
         }
 
         var tapsToSwitch: [(app: AudioApp, tap: any ProcessTapControlling)] = []
-        for app in apps {
-            guard followsDefault.contains(app.id), let tap = taps[app.id] else { continue }
-            tapsToSwitch.append((app, tap))
+        // CoreAudio can temporarily remove an app from the process list during an
+        // output change. Its retained tap still needs routing, even while absent.
+        // Compare the actual tap destination rather than the optimistic routing map.
+        for (pid, tap) in taps {
+            guard followsDefault.contains(pid), tap.currentDeviceUIDs != [targetUID] else { continue }
+            tapsToSwitch.append((tap.app, tap))
         }
         guard !tapsToSwitch.isEmpty else { return }
 
@@ -1516,6 +1517,24 @@ final class AudioEngine {
             if settingsManager.appSettings.showDeviceDisconnectAlerts {
                 showReconnectNotification(deviceName: deviceName, affectedApps: affectedApps)
             }
+        }
+
+        // AirPlay can appear in HAL as a consequence of selecting it in Control Center.
+        // Treat that connection as an explicit selection, not a hardware auto-switch:
+        // restoring the old default here tears down the AirPlay connection itself.
+        // Also avoid arming pendingAutoSwitch when the device-list event arrives first.
+        if deviceMonitor.device(for: deviceUID)?.id.readTransportType() == .airPlay {
+            if case .pendingAutoSwitch(_, let task) = outputPriorityState {
+                task.cancel()
+            }
+            outputPriorityState = .stable
+            lastAutoSwitchOverrideTime = nil
+            if deviceVolumeMonitor.defaultDeviceUID == deviceUID {
+                lastConfirmedDefaultUID = deviceUID
+                routeFollowsDefaultApps(to: deviceUID)
+            }
+            logger.debug("AirPlay connected; preserving system output selection")
+            return
         }
 
         // Only override the default if the newly connected device IS the highest-priority
