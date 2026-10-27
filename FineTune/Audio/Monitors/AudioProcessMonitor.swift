@@ -87,6 +87,14 @@ final class AudioProcessMonitor: AudioProcessMonitoring {
         mElement: kAudioObjectPropertyElementMain
     )
 
+    /// True for a top-level `.app` bundle. Helper apps nested inside another bundle
+    /// (e.g. `Discord.app/Contents/Frameworks/Discord Helper (Renderer).app`) are
+    /// registered with NSWorkspace too, but must resolve to their parent app.
+    nonisolated static func isTopLevelAppBundle(_ url: URL?) -> Bool {
+        guard let url, url.pathExtension == "app" else { return false }
+        return !url.deletingLastPathComponent().pathComponents.contains { $0.hasSuffix(".app") }
+    }
+
     /// Function type for the private responsibility API
     private typealias ResponsibilityFunc = @convention(c) (pid_t) -> pid_t
 
@@ -109,7 +117,7 @@ final class AudioProcessMonitor: AudioProcessMonitoring {
         // First try Apple's responsibility API (works for XPC services like Safari's WebKit processes)
         if let responsiblePID = getResponsiblePID(for: pid),
            let app = runningAppsByPID[responsiblePID],
-           app.bundleURL?.pathExtension == "app" {
+           Self.isTopLevelAppBundle(app.bundleURL) {
             return app
         }
 
@@ -122,7 +130,7 @@ final class AudioProcessMonitor: AudioProcessMonitoring {
 
             // Check if this PID is a proper app bundle (.app, not .xpc service)
             if let app = runningAppsByPID[currentPID],
-               app.bundleURL?.pathExtension == "app" {
+               Self.isTopLevelAppBundle(app.bundleURL) {
                 return app
             }
 
@@ -220,8 +228,8 @@ final class AudioProcessMonitor: AudioProcessMonitoring {
                 // Try to find the parent app (for helper processes like Safari Graphics and Media)
                 let directApp = runningAppsByPID[pid]
 
-                // Check if it's a real app bundle (.app), not an XPC service (.xpc)
-                let isRealApp = directApp?.bundleURL?.pathExtension == "app"
+                // Check if it's a real app bundle (.app), not an XPC service or nested helper app
+                let isRealApp = Self.isTopLevelAppBundle(directApp?.bundleURL)
                 let resolvedApp = isRealApp ? directApp : findResponsibleApp(for: pid, in: runningAppsByPID)
                 let parentPID = resolvedApp?.processIdentifier ?? pid
                 let isHelper = parentPID != pid

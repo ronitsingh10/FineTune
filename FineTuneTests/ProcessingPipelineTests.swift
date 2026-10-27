@@ -134,6 +134,30 @@ private func loadRepositorySource(_ relativePath: String) throws -> String {
     return try String(contentsOf: url, encoding: .utf8)
 }
 
+// MARK: - Input Peak Tests
+
+@Suite("ProcessTapController — Input Peak")
+struct InputPeakTests {
+
+    @Test("Right-only stereo input is not read as silence (Discord regression)")
+    func rightOnlyStereo() {
+        let input = TestABL(buffers: [(channels: 2, frames: 256)])
+        let data = input.data(at: 0)
+        for f in 0..<256 { data[f * 2 + 1] = 0.5 }
+
+        let (peak, frames) = ProcessTapController.inputPeak(input.bufferList)
+        #expect(peak == 0.5)
+        #expect(frames == 256)
+    }
+
+    @Test("Peak is clamped to 1.0")
+    func clamped() {
+        let input = TestABL(buffers: [(channels: 2, frames: 4)])
+        fill(input, bufferIndex: 0, value: -3.0)
+        #expect(ProcessTapController.inputPeak(input.bufferList).peak == 1.0)
+    }
+}
+
 // MARK: - Buffer Mapping Tests
 
 @Suite("ProcessTapController — Buffer Mapping")

@@ -1264,6 +1264,30 @@ final class ProcessTapController: ProcessTapControlling {
         primaryResources.destroy()
     }
 
+    /// Peak |sample| (clamped to 1) across every channel of every input buffer, plus the
+    /// frame count of the first non-empty buffer. Must scan all channels: some apps (e.g.
+    /// Discord) render into only one side of a stereo stream, and a left-only scan reads
+    /// silence, which keeps the output gate closed. RT-safe: no allocations.
+    @inline(__always)
+    nonisolated static func inputPeak(_ inputBuffers: UnsafeMutableAudioBufferListPointer) -> (peak: Float, frames: Int) {
+        var maxPeak: Float = 0.0
+        var frames = 0
+        for inputBuffer in inputBuffers {
+            guard let inputData = inputBuffer.mData else { continue }
+            let inputSamples = inputData.assumingMemoryBound(to: Float.self)
+            let channels = max(1, Int(inputBuffer.mNumberChannels))
+            let sampleCount = Int(inputBuffer.mDataByteSize) / MemoryLayout<Float>.size
+            if frames == 0 {
+                frames = sampleCount / channels
+            }
+            for i in 0..<sampleCount {
+                let absSample = abs(inputSamples[i])
+                if absSample > maxPeak { maxPeak = absSample }
+            }
+        }
+        return (min(maxPeak, 1.0), frames)
+    }
+
     /// Advance the output-gate state machine for one buffer and return the multiplier
     /// to apply to this buffer's output. Pure function; no class state. RT-safe:
     /// no allocations, no locks, no Foundation. One `cos` per buffer (not per sample).
@@ -1525,22 +1549,7 @@ final class ProcessTapController: ProcessTapControlling {
         }
 
         // Track peak level for VU meter
-        var maxPeak: Float = 0.0
-        var totalSamplesThisBuffer: Int = 0
-        for inputBuffer in inputBuffers {
-            guard let inputData = inputBuffer.mData else { continue }
-            let inputSamples = inputData.assumingMemoryBound(to: Float.self)
-            let channels = max(1, Int(inputBuffer.mNumberChannels))
-            let sampleCount = Int(inputBuffer.mDataByteSize) / MemoryLayout<Float>.size
-            if totalSamplesThisBuffer == 0 {
-                totalSamplesThisBuffer = sampleCount / channels
-            }
-            for i in stride(from: 0, to: sampleCount, by: channels) {
-                let absSample = abs(inputSamples[i])
-                if absSample > maxPeak { maxPeak = absSample }
-            }
-        }
-        let rawPeak = min(maxPeak, 1.0)
+        let (rawPeak, totalSamplesThisBuffer) = Self.inputPeak(inputBuffers)
 
         if isPrimary {
             _peakLevel = _peakLevel + levelSmoothingFactor * (rawPeak - _peakLevel)
