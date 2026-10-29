@@ -23,7 +23,7 @@ import os
 
 @MainActor
 final class ProcessTapController: ProcessTapControlling {
-    let app: AudioApp
+    private(set) var app: AudioApp
     private let logger: Logger
     // Note: This queue is passed to AudioDeviceCreateIOProcIDWithBlock but the actual
     // audio callback runs on CoreAudio's real-time HAL I/O thread, not this queue.
@@ -57,6 +57,8 @@ final class ProcessTapController: ProcessTapControlling {
     private nonisolated(unsafe) var _forceSilence: Bool = false
     /// User-controlled mute - still tracks VU levels but outputs silence
     private nonisolated(unsafe) var _isMuted: Bool = false
+    /// Output policy gate. Applies to both callbacks and survives rendering rebuilds.
+    private nonisolated(unsafe) var _outputBlocked: Bool = false
     // Device volume compensation removed — was dead code (always 1.0).
     // If implementing, ensure both primary and secondary callbacks disable
     // compensation during crossfade to avoid gain jumps (RT-013).
@@ -146,7 +148,12 @@ final class ProcessTapController: ProcessTapControlling {
 
     // Core Audio resources (primary tap) — TapResources enforces correct teardown order
     private var primaryResources = TapResources()
+    /// Device-independent `.muted` tap. It is never attached to an aggregate, so
+    /// losing the selected hardware or replacing rendering resources cannot stop
+    /// the source mute. Explicit invalidation/disable releases it.
+    private var outputGuardResources = TapResources()
     private var activated = false
+    private var activationInitialState = TapInitialState()
 
     // Secondary tap for crossfade
     private var secondaryResources = TapResources()
@@ -206,6 +213,66 @@ final class ProcessTapController: ProcessTapControlling {
         set { _isMuted = newValue }
     }
 
+    var persistentOutputGuardEnabled: Bool { outputGuardResources.tapID.isValid }
+
+    var outputBlocked: Bool {
+        get { _outputBlocked }
+        set {
+            _outputBlocked = newValue
+            OSMemoryBarrier()
+        }
+    }
+
+    /// Pure description builder, also exercised without creating a CoreAudio tap.
+    static func outputGuardDescription(processObjectIDs: [AudioObjectID]) -> CATapDescription {
+        let description = CATapDescription(stereoMixdownOfProcesses: processObjectIDs)
+        description.uuid = UUID()
+        description.name = "FineTune Output Guard"
+        description.muteBehavior = .muted
+        description.isPrivate = true
+        return description
+    }
+
+    func setPersistentOutputGuardEnabled(_ enabled: Bool) throws {
+        guard enabled != persistentOutputGuardEnabled else { return }
+        if !enabled {
+            outputGuardResources.destroy()
+            return
+        }
+
+        outputGuardResources = try createOutputGuard(for: app)
+        logger.info("Persistent source mute installed for \(self.app.name)")
+    }
+
+    func updateGuardedApp(_ app: AudioApp) throws {
+        guard app.id == self.app.id, persistentOutputGuardEnabled else { return }
+        guard Set(app.processObjectIDs) != Set(self.app.processObjectIDs) else { return }
+        // Create first: on failure the original membership stays protected.
+        // Discovery cannot prevent initial samples from a newly started helper.
+        let replacement = try createOutputGuard(for: app)
+        var previous = outputGuardResources
+        outputGuardResources = replacement
+        self.app = app
+        previous.destroy()
+    }
+
+    private func createOutputGuard(for app: AudioApp) throws -> TapResources {
+        // A device-specific tap cannot protect audio that macOS reroutes to its
+        // new default output. Capture all streams of these processes instead.
+        let description = Self.outputGuardDescription(processObjectIDs: app.processObjectIDs)
+        var tapID: AudioObjectID = .unknown
+        let status = AudioHardwareCreateProcessTap(description, &tapID)
+        guard status == noErr else {
+            throw NSError(domain: NSOSStatusErrorDomain, code: Int(status), userInfo: [
+                NSLocalizedDescriptionKey: "Could not install the persistent output guard: \(status)"
+            ])
+        }
+        var resources = TapResources()
+        resources.tapDescription = description
+        resources.tapID = tapID
+        return resources
+    }
+
     // MARK: - Initialization
 
     /// Initialize with multiple output devices for synchronized multi-device output.
@@ -242,21 +309,26 @@ final class ProcessTapController: ProcessTapControlling {
     // MARK: - Public Methods
 
     func updateEQSettings(_ settings: EQSettings) {
+        activationInitialState.eqSettings = settings
         eqProcessor?.updateSettings(settings)
         secondaryEQProcessor?.updateSettings(settings)
     }
 
     func updateAutoEQProfile(_ profile: AutoEQProfile?) {
+        activationInitialState.autoEQProfile = profile
         autoEQProcessor?.updateProfile(profile)
         secondaryAutoEQProcessor?.updateProfile(profile)
     }
 
     func setAutoEQPreampEnabled(_ enabled: Bool) {
+        activationInitialState.autoEQPreampEnabled = enabled
         autoEQProcessor?.setPreampEnabled(enabled)
         secondaryAutoEQProcessor?.setPreampEnabled(enabled)
     }
 
     func updateLoudnessCompensation(volume: Float, enabled: Bool) {
+        activationInitialState.loudnessVolume = volume
+        activationInitialState.loudnessCompensationEnabled = enabled
         _lastLoudnessVolume = volume
         if enabled {
             loudnessCompensator?.updateForVolume(volume)
@@ -268,6 +340,7 @@ final class ProcessTapController: ProcessTapControlling {
     }
 
     func updateLoudnessEqualization(_ settings: LoudnessEqualizerSettings) {
+        activationInitialState.loudnessEqualizerSettings = settings
         // Atomic swap pattern: create new instance, swap pointer, defer-destroy old.
         // LoudnessEqualizer is immutable after init — no runtime mutation methods.
         // This eliminates the data race between main-thread settings changes and
@@ -427,6 +500,7 @@ final class ProcessTapController: ProcessTapControlling {
     /// renegotiates across the profile change.
     func recreateForOutputRateChange() async throws {
         guard activated, let primaryUID = currentDeviceUIDs.first else { return }
+        guard !(persistentOutputGuardEnabled && outputBlocked) else { return }
         guard primaryResources.tapDescription != nil else { throw CrossfadeError.noTapDescription }
         logger.info("[RATE] \(self.app.name): recreating aggregate at new rate")
         try await performDestructiveDeviceSwitch(to: primaryUID, allDeviceUIDs: currentDeviceUIDs, sourceAlreadySilent: true)
@@ -578,6 +652,7 @@ final class ProcessTapController: ProcessTapControlling {
 
     func activate(initial: TapInitialState) throws {
         guard !activated else { return }
+        activationInitialState = initial
 
         logger.debug("Activating tap for \(self.app.name)")
 
@@ -585,6 +660,16 @@ final class ProcessTapController: ProcessTapControlling {
         _lastRenderHostTime = 0
         _activationHostTime = mach_absolute_time()
         _hasRenderedAudio = false
+
+        if persistentOutputGuardEnabled && outputBlocked {
+            // The independent source tap already suppresses the app. Do not ask
+            // CoreAudio to construct an aggregate around disconnected hardware.
+            initializeProcessors(initial: initial, sampleRate: 48_000)
+            currentDeviceUIDs = targetDeviceUIDs
+            activated = true
+            logger.info("Guard active while waiting for the selected output for \(self.app.name)")
+            return
+        }
 
         // Create process tap. Prefer stream-specific tap for multichannel devices to avoid
         // stereo matrix attenuation on interfaces with many output channels.
@@ -638,23 +723,7 @@ final class ProcessTapController: ProcessTapControlling {
         rampCoefficient = 1 - exp(-1 / (Float(sampleRate) * rampTimeSeconds))
         logger.debug("Ramp coefficient: \(self.rampCoefficient)")
 
-        eqProcessor = EQProcessor(sampleRate: sampleRate)
-        autoEQProcessor = AutoEQProcessor(sampleRate: sampleRate)
-        loudnessEqualizerProcessor = LoudnessEqualizer(settings: initial.loudnessEqualizerSettings, sampleRate: Float(sampleRate))
-        loudnessCompensator = LoudnessCompensator(sampleRate: sampleRate)
-
-        // Apply persisted state to fresh processors before AudioDeviceStart so the
-        // first IOProc callback sees correct EQ/AutoEQ/Loudness coefficients.
-        eqProcessor?.updateSettings(initial.eqSettings)
-        autoEQProcessor?.setPreampEnabled(initial.autoEQPreampEnabled)
-        if let profile = initial.autoEQProfile {
-            autoEQProcessor?.updateProfile(profile)
-        }
-        loudnessCompensator?.setEnabled(initial.loudnessCompensationEnabled)
-        if initial.loudnessCompensationEnabled {
-            loudnessCompensator?.updateForVolume(initial.loudnessVolume)
-        }
-        _lastLoudnessVolume = initial.loudnessVolume
+        initializeProcessors(initial: initial, sampleRate: sampleRate)
 
         // Create IO proc with gain processing
         nextCallbackID += 1
@@ -702,6 +771,67 @@ final class ProcessTapController: ProcessTapControlling {
         logger.info("Tap activated for \(self.app.name) on \(self.targetDeviceUIDs.count) device(s)")
     }
 
+    private func initializeProcessors(initial: TapInitialState, sampleRate: Float64) {
+        eqProcessor = EQProcessor(sampleRate: sampleRate)
+        autoEQProcessor = AutoEQProcessor(sampleRate: sampleRate)
+        loudnessEqualizerProcessor = LoudnessEqualizer(settings: initial.loudnessEqualizerSettings, sampleRate: Float(sampleRate))
+        loudnessCompensator = LoudnessCompensator(sampleRate: sampleRate)
+        eqProcessor?.updateSettings(initial.eqSettings)
+        autoEQProcessor?.setPreampEnabled(initial.autoEQPreampEnabled)
+        if let profile = initial.autoEQProfile {
+            autoEQProcessor?.updateProfile(profile)
+        }
+        loudnessCompensator?.setEnabled(initial.loudnessCompensationEnabled)
+        if initial.loudnessCompensationEnabled {
+            loudnessCompensator?.updateForVolume(initial.loudnessVolume)
+        }
+        _lastLoudnessVolume = initial.loudnessVolume
+    }
+
+    func restoreGuardedOutput(to deviceUID: String, preferredTapSourceDeviceUID: String?) async throws {
+        guard persistentOutputGuardEnabled else {
+            throw NSError(domain: "ProcessTapController", code: -2, userInfo: [
+                NSLocalizedDescriptionKey: "The output guard must be active before restoring an output"
+            ])
+        }
+        try Task.checkCancellation()
+        if !activated {
+            // Renderer activation may fail after the independent guard was
+            // installed. AudioEngine retains this controller for safe recovery.
+            initializeProcessors(initial: activationInitialState, sampleRate: 48_000)
+        }
+        self.preferredTapSourceDeviceUID = preferredTapSourceDeviceUID
+        crossfadeTask?.cancel()
+        crossfadeTask = nil
+        cleanupSecondaryTap()
+        crossfadeState.complete()
+
+        // Deliberately bypass updateDevices' same-UID shortcut: replugged devices
+        // have new HAL identities. The source guard is independent of this swap.
+        try rebuildOutputWhileSilenced(to: [deviceUID])
+        activated = true
+        // Only AudioEngine can clear outputBlocked after rechecking the device.
+    }
+
+    private func rebuildOutputWhileSilenced(to deviceUIDs: [String]) throws {
+        let wasForceSilenced = _forceSilence
+        _forceSilence = true
+        OSMemoryBarrier()
+        defer { _forceSilence = wasForceSilenced; OSMemoryBarrier() }
+
+        try performDeviceSwitch(to: deviceUIDs)
+        _primaryCurrentVolume = _volume
+        _outputGateRawPhase = 0
+        _outputGateProgress = 0
+        _outputGateSilentSamples = 0
+        if let rate = try? primaryResources.aggregateDeviceID.readNominalSampleRate() {
+            _outputGateRampSamples = Float(rate) * 0.040
+            _outputGateSilenceHoldSamples = Int32(rate * 0.200)
+        }
+        _activationHostTime = mach_absolute_time()
+        _hasRenderedAudio = false
+    }
+
     /// Switch to a single device (convenience for backward compatibility).
     /// - Parameter sourceDeviceDead: If true, skips crossfade (source has no audio to blend from).
     func switchDevice(to newDeviceUID: String, preferredTapSourceDeviceUID: String? = nil, sourceDeviceDead: Bool = false) async throws {
@@ -714,10 +844,22 @@ final class ProcessTapController: ProcessTapControlling {
     ///   (the source device is disconnected, so there's no audio to blend from).
     func updateDevices(to newDeviceUIDs: [String], preferredTapSourceDeviceUID: String? = nil, sourceDeviceDead: Bool = false) async throws {
         precondition(!newDeviceUIDs.isEmpty, "Must have at least one target device")
+        // A normal routing task queued before the lock was enabled must not
+        // overwrite a restored locked route after AudioEngine releases its gate.
+        // Guarded routing uses restoreGuardedOutput exclusively.
+        guard !persistentOutputGuardEnabled else { return }
         self.preferredTapSourceDeviceUID = preferredTapSourceDeviceUID
 
         guard activated else {
             targetDeviceUIDs = newDeviceUIDs
+            return
+        }
+
+        if !primaryResources.aggregateDeviceID.isValid || primaryResources.deviceProcID == nil {
+            // A controller activated while the selected output was absent has
+            // only its source guard. Explicitly releasing/changing that route
+            // must be able to start ordinary rendering, including the same UID.
+            try rebuildOutputWhileSilenced(to: newDeviceUIDs)
             return
         }
 
@@ -768,6 +910,9 @@ final class ProcessTapController: ProcessTapControlling {
     /// the output device. Used when the system default changes and an explicitly-routed app's
     /// stream-specific tap becomes stale (captures silence on the old default's stream).
     func refreshTapSource(_ preferredDeviceUID: String?) async throws {
+        // Locked routing is rebuilt explicitly with a device-independent source.
+        // Ignore default-device refresh tasks queued before the lock took effect.
+        guard !persistentOutputGuardEnabled else { return }
         let oldPreferred = self.preferredTapSourceDeviceUID
         self.preferredTapSourceDeviceUID = preferredDeviceUID
         guard activated, let primaryUID = currentDeviceUIDs.first else { return }
@@ -809,6 +954,7 @@ final class ProcessTapController: ProcessTapControlling {
         // Safe even if activate() is called again before cleanup completes.
         secondaryResources.destroyAsync()
         primaryResources.destroyAsync()
+        outputGuardResources.destroyAsync()
 
         logger.info("Tap invalidated for \(self.app.name)")
     }
@@ -830,6 +976,11 @@ final class ProcessTapController: ProcessTapControlling {
                 continuation.resume()
             }
         }
+        await withCheckedContinuation { continuation in
+            outputGuardResources.destroyAsync(on: .global(qos: .userInitiated)) {
+                continuation.resume()
+            }
+        }
 
         logger.info("Tap invalidated (async) for \(self.app.name)")
     }
@@ -838,7 +989,8 @@ final class ProcessTapController: ProcessTapControlling {
 
     /// Shared preamble for invalidation. Returns false if already invalidating or not activated.
     private func beginInvalidation() -> Bool {
-        guard activated, !_invalidating else { return false }
+        guard !_invalidating,
+              activated || primaryResources.isActive || secondaryResources.isActive || outputGuardResources.isActive else { return false }
         _invalidating = true
         activated = false
 
@@ -1264,6 +1416,20 @@ final class ProcessTapController: ProcessTapControlling {
         primaryResources.destroy()
     }
 
+    /// The policy gate runs before callback role/DSP handling. Consequently it
+    /// covers primary, secondary crossfade, and obsolete callbacks alike.
+    @inline(__always)
+    nonisolated static func silenceGuardedOutputIfNeeded(
+        outputBlocked: Bool,
+        outputBufferList: UnsafeMutablePointer<AudioBufferList>
+    ) -> Bool {
+        guard outputBlocked else { return false }
+        for buffer in UnsafeMutableAudioBufferListPointer(outputBufferList) {
+            if let data = buffer.mData { memset(data, 0, Int(buffer.mDataByteSize)) }
+        }
+        return true
+    }
+
     /// Advance the output-gate state machine for one buffer and return the multiplier
     /// to apply to this buffer's output. Pure function; no class state. RT-safe:
     /// no allocations, no locks, no Foundation. One `cos` per buffer (not per sample).
@@ -1495,6 +1661,10 @@ final class ProcessTapController: ProcessTapControlling {
     ) {
         _lastRenderHostTime = mach_absolute_time()
         _hasRenderedAudio = true
+
+        if Self.silenceGuardedOutputIfNeeded(outputBlocked: _outputBlocked, outputBufferList: outputBufferList) {
+            return
+        }
 
         let isPrimary = (callbackID == _primaryCallbackID)
         let isSecondary = !isPrimary && (callbackID == _secondaryCallbackID)

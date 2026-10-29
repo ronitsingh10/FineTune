@@ -80,6 +80,26 @@ struct AudioTab: View {
     private var devicesSection: some View {
         SettingsSection("Devices") {
             SettingsRow(
+                "Lock Output Device",
+                description: audioEngine.outputLockError ?? (audioEngine.outputLockWaiting
+                    ? "Waiting for the selected output; managed apps remain silent"
+                    : "Keep managed apps silent when the selected output disconnects, then restore it on reconnect")
+            ) {
+                Toggle("", isOn: Binding(
+                    get: { settings.appSettings.lockedOutputDeviceUID != nil },
+                    set: { audioEngine.setOutputDeviceLockEnabled($0) }
+                ))
+                .toggleStyle(.switch)
+                .controlSize(.small)
+                .labelsHidden()
+            }
+            if let uid = settings.appSettings.lockedOutputDeviceUID {
+                Text("Locked output: \(audioEngine.outputDevices.first(where: { $0.uid == uid })?.name ?? "Disconnected device")")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            SettingsRowDivider()
+            SettingsRow(
                 "Lock Input Device",
                 description: "Prevent auto-switching when devices connect"
             ) {

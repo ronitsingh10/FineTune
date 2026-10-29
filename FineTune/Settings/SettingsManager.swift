@@ -33,6 +33,9 @@ nonisolated struct AppSettings: Codable, Equatable {
     // Input Device Lock
     var lockInputDevice: Bool = true          // Prevent auto-switching input device
 
+    // Experimental output lock. Separate from user mute and device priority.
+    var lockedOutputDeviceUID: String? = nil
+
     // Notifications
     var showDeviceDisconnectAlerts: Bool = true
 
@@ -69,6 +72,7 @@ nonisolated struct AppSettings: Codable, Equatable {
         menuBarIconStyle = try c.decodeIfPresent(MenuBarIconStyle.self, forKey: .menuBarIconStyle) ?? .default
         defaultNewAppVolume = try c.decodeIfPresent(Float.self, forKey: .defaultNewAppVolume) ?? 1.0
         lockInputDevice = try c.decodeIfPresent(Bool.self, forKey: .lockInputDevice) ?? true
+        lockedOutputDeviceUID = try c.decodeIfPresent(String.self, forKey: .lockedOutputDeviceUID)
         showDeviceDisconnectAlerts = try c.decodeIfPresent(Bool.self, forKey: .showDeviceDisconnectAlerts) ?? true
         loudnessCompensationEnabled = try c.decodeIfPresent(Bool.self, forKey: .loudnessCompensationEnabled) ?? false
         loudnessEqualizationEnabled = try c.decodeIfPresent(Bool.self, forKey: .loudnessEqualizationEnabled) ?? false

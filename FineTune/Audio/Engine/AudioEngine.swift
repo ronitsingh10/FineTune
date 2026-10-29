@@ -39,6 +39,10 @@ final class AudioEngine {
     private var appliedPIDs: Set<pid_t> = []
     private var appDeviceRouting: [pid_t: String] = [:]  // pid → deviceUID (always explicit)
     private var followsDefault: Set<pid_t> = []  // Apps that follow system default
+    /// Guarded rebuilds are serialized per app; the output block survives async device changes.
+    private var outputLockRestores: Set<pid_t> = []
+    private var outputLockRevision: UInt64 = 0
+    private var outputLockErrors: [pid_t: String] = [:]
     /// The last output default confirmed by FineTune (user change or programmatic switch).
     /// Used to restore after macOS auto-switches to a lower-priority device.
     private var lastConfirmedDefaultUID: String?
@@ -75,6 +79,139 @@ final class AudioEngine {
 
     var outputDevices: [AudioDevice] {
         deviceMonitor.outputDevices
+    }
+
+    var outputLockWaiting: Bool {
+        guard let uid = settingsManager.appSettings.lockedOutputDeviceUID else { return false }
+        return !outputLockErrors.isEmpty || !outputLockDeviceIsAvailable(uid) || taps.values.contains {
+            guardedOutputUID(for: $0.app) != nil && $0.outputBlocked
+        }
+    }
+
+    var outputLockError: String? { outputLockErrors.values.sorted().first }
+
+    /// This experimental lock covers managed single-output apps. Explicit multi-output
+    /// selections and apps deliberately routed elsewhere retain their own routing policy.
+    private func guardedOutputUID(for app: AudioApp) -> String? {
+        guard let uid = settingsManager.appSettings.lockedOutputDeviceUID,
+              settingsManager.getDeviceSelectionMode(for: app.persistenceIdentifier) != .multi,
+              !settingsManager.isIgnored(app.persistenceIdentifier),
+              settingsManager.isFollowingDefault(for: app.persistenceIdentifier)
+                || settingsManager.getDeviceRouting(for: app.persistenceIdentifier) == uid else { return nil }
+        return uid
+    }
+
+    private func outputLockDeviceIsAvailable(_ uid: String) -> Bool {
+        guard let device = deviceMonitor.device(for: uid),
+              outputDevices.contains(where: { $0.uid == uid }) else { return false }
+        return isAliveCheck(device.id)
+    }
+
+    func setOutputDeviceLockEnabled(_ enabled: Bool) {
+        outputLockRevision &+= 1
+        var settings = settingsManager.appSettings
+        settings.lockedOutputDeviceUID = enabled ? deviceVolumeMonitor.defaultDeviceUID : nil
+        settingsManager.updateAppSettings(settings)
+        if !enabled { outputLockErrors.removeAll() }
+        appliedPIDs.removeAll()
+        reconcileOutputDeviceLock()
+        applyPersistedSettings()
+        enforceLockedOutputDefault()
+    }
+
+    private func prepareOutputGuard(for tap: any ProcessTapControlling) throws {
+        guard let uid = guardedOutputUID(for: tap.app) else { return }
+        // Install source suppression before starting any output callback.
+        try tap.setPersistentOutputGuardEnabled(true)
+        tap.outputBlocked = !outputLockDeviceIsAvailable(uid)
+    }
+
+    @discardableResult
+    private func enforceLockedOutputDefault() -> String? {
+        guard let uid = settingsManager.appSettings.lockedOutputDeviceUID,
+              outputLockDeviceIsAvailable(uid), let device = deviceMonitor.device(for: uid) else { return nil }
+        if deviceVolumeMonitor.defaultDeviceUID != uid,
+           deviceVolumeMonitor.setDefaultDevice(device.id) {
+            outputEchoTracker.increment(uid)
+        }
+        lastConfirmedDefaultUID = uid
+        return uid
+    }
+
+    /// The user mute is independent of this block. A successful rebuild is the only
+    /// path that releases a guarded output after its device disappeared.
+    private func reconcileOutputDeviceLock() {
+        for tap in taps.values {
+            let pid = tap.app.id
+            guard let uid = guardedOutputUID(for: tap.app) else {
+                guard !outputLockRestores.contains(pid) else { continue }
+                if tap.persistentOutputGuardEnabled {
+                    do { try tap.setPersistentOutputGuardEnabled(false) }
+                    catch { logger.error("Could not release output guard: \(error.localizedDescription)"); continue }
+                    appliedPIDs.remove(pid)
+                }
+                tap.outputBlocked = false
+                outputLockErrors.removeValue(forKey: pid)
+                continue
+            }
+
+            let wasGuarded = tap.persistentOutputGuardEnabled
+            if let latest = apps.first(where: { $0.id == pid }), latest.processObjectIDs != tap.app.processObjectIDs {
+                // A failed source-membership update must not be mistaken for a
+                // recoverable renderer failure and release the old guard's block.
+                tap.outputBlocked = true
+                continue
+            }
+            do { try tap.setPersistentOutputGuardEnabled(true) }
+            catch {
+                tap.outputBlocked = true
+                outputLockErrors[pid] = "Output guard unavailable for \(tap.app.name): \(error.localizedDescription)"
+                logger.error("Could not install output guard for \(tap.app.name): \(error.localizedDescription)")
+                continue
+            }
+            appDeviceRouting[pid] = uid
+            guard outputLockDeviceIsAvailable(uid) else {
+                tap.outputBlocked = true
+                continue
+            }
+            guard !outputLockRestores.contains(pid) else { continue }
+            guard !wasGuarded || tap.outputBlocked || tap.currentDeviceUIDs != [uid] else { continue }
+
+            tap.outputBlocked = true
+            outputLockRestores.insert(pid)
+            let revision = outputLockRevision
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                do {
+                    try await tap.restoreGuardedOutput(to: uid, preferredTapSourceDeviceUID: nil)
+                    self.outputLockRestores.remove(pid)
+                    guard self.taps[pid] === tap else { return }
+                    guard self.guardedOutputUID(for: tap.app) == uid,
+                          self.outputLockDeviceIsAvailable(uid), self.outputLockRevision == revision else {
+                        self.reconcileOutputDeviceLock()
+                        self.applyPersistedSettings()
+                        return
+                    }
+                    self.applyTapOutputState(to: tap, for: pid, deviceUIDs: [uid])
+                    self.applyAutoEQToTap(tap)
+                    let initial = self.tapInitialState(forApp: tap.app, primaryDeviceUID: uid, deviceVolume: tap.currentDeviceVolume)
+                    tap.updateLoudnessEqualization(initial.loudnessEqualizerSettings)
+                    self.outputLockErrors.removeValue(forKey: pid)
+                    tap.outputBlocked = false
+                } catch {
+                    self.outputLockRestores.remove(pid)
+                    guard self.taps[pid] === tap else { return }
+                    // Keep the independent source guard and block on failure.
+                    tap.outputBlocked = true
+                    self.outputLockErrors[pid] = "Output restore failed for \(tap.app.name): \(error.localizedDescription)"
+                    self.logger.error("Locked output restore failed for \(tap.app.name): \(error.localizedDescription)")
+                    if self.guardedOutputUID(for: tap.app) == nil {
+                        self.reconcileOutputDeviceLock()
+                        self.applyPersistedSettings()
+                    }
+                }
+            }
+        }
     }
 
     func outputVolumeBackend(for deviceID: AudioDeviceID) -> VolumeControlTier {
@@ -258,7 +395,7 @@ final class AudioEngine {
         }
 
         // Wire callbacks — needed for both test and production mode
-        wireCallbacks()
+        wireCallbacks(refreshBluetoothDevices: startMonitorsAutomatically)
 
         if startMonitorsAutomatically {
             Task { @MainActor in
@@ -314,7 +451,7 @@ final class AudioEngine {
     }
 
     /// Wire all event callbacks from monitors to AudioEngine handlers.
-    private func wireCallbacks() {
+    private func wireCallbacks(refreshBluetoothDevices: Bool) {
         // Sync device volume changes to taps for VU meter accuracy
         deviceVolumeMonitor.onVolumeChanged = { [weak self] deviceID, newVolume in
             guard let self else { return }
@@ -371,12 +508,12 @@ final class AudioEngine {
 
         deviceMonitor.onDeviceDisconnected = { [weak self] deviceUID, deviceName in
             self?.handleDeviceDisconnected(deviceUID, name: deviceName)
-            self?.bluetoothDeviceMonitor.refresh()
+            if refreshBluetoothDevices { self?.bluetoothDeviceMonitor.refresh() }
         }
 
         deviceMonitor.onDeviceConnected = { [weak self] deviceUID, deviceName in
             self?.handleDeviceConnected(deviceUID, name: deviceName)
-            self?.bluetoothDeviceMonitor.notifyDeviceAppearedInCoreAudio()
+            if refreshBluetoothDevices { self?.bluetoothDeviceMonitor.notifyDeviceAppearedInCoreAudio() }
         }
 
         deviceMonitor.onInputDeviceDisconnected = { [weak self] deviceUID, deviceName in
@@ -473,6 +610,7 @@ final class AudioEngine {
         appDeviceRouting.removeValue(forKey: app.id)
         followsDefault.remove(app.id)
         appliedPIDs.remove(app.id)
+        outputLockErrors.removeValue(forKey: app.id)
     }
 
     /// Unhide an app by its persistence identifier.
@@ -886,6 +1024,13 @@ final class AudioEngine {
     func setDefaultOutputDevice(_ deviceID: AudioDeviceID) -> Bool {
         guard deviceVolumeMonitor.setDefaultDevice(deviceID) else { return false }
         if let uid = deviceMonitor.outputDevices.first(where: { $0.id == deviceID })?.uid {
+            if settingsManager.appSettings.lockedOutputDeviceUID != nil {
+                outputLockRevision &+= 1
+                var settings = settingsManager.appSettings
+                settings.lockedOutputDeviceUID = uid
+                settingsManager.updateAppSettings(settings)
+                reconcileOutputDeviceLock()
+            }
             outputEchoTracker.increment(uid)
             lastConfirmedDefaultUID = uid
             routeFollowsDefaultApps(to: uid)
@@ -936,12 +1081,25 @@ final class AudioEngine {
             appDeviceRouting[app.id] = defaultUID
         }
 
+        if let lockedUID = guardedOutputUID(for: app) {
+            appDeviceRouting[app.id] = lockedUID
+            ensureTapExists(for: app, deviceUID: lockedUID)
+            reconcileOutputDeviceLock()
+            return
+        }
+        reconcileOutputDeviceLock()
+        guard !outputLockRestores.contains(app.id) else {
+            appliedPIDs.remove(app.id)
+            return
+        }
+
         // Switch tap if needed
         guard let targetUID = appDeviceRouting[app.id] else { return }
         let preferredTapSourceUID = preferredTapSourceDeviceUID(forOutputUIDs: [targetUID], isFollowsDefault: followsDefault.contains(app.id))
         if let tap = taps[app.id] {
             Task {
                 do {
+                    guard self.guardedOutputUID(for: app) == nil else { return }
                     try await tap.switchDevice(to: targetUID, preferredTapSourceDeviceUID: preferredTapSourceUID)
                     self.applyTapOutputState(to: tap, for: app.id, deviceUIDs: [targetUID])
                     self.applyAutoEQToTap(tap)
@@ -1005,6 +1163,14 @@ final class AudioEngine {
 
     /// Updates tap configuration based on current mode and selected devices
     private func updateTapForCurrentMode(for app: AudioApp) async {
+        if let uid = guardedOutputUID(for: app) {
+            appDeviceRouting[app.id] = uid
+            ensureTapExists(for: app, deviceUID: uid)
+            reconcileOutputDeviceLock()
+            return
+        }
+        reconcileOutputDeviceLock()
+        guard !outputLockRestores.contains(app.id) else { return }
         let mode = getDeviceSelectionMode(for: app)
 
         let deviceUIDs: [String]
@@ -1055,8 +1221,11 @@ final class AudioEngine {
         guard permission.status == .authorized else { return }
 
         let preferredTapSourceUID = preferredTapSourceDeviceUID(forOutputUIDs: deviceUIDs, isFollowsDefault: followsDefault.contains(app.id))
+        var createdTap: (any ProcessTapControlling)?
         do {
             let tap = try tapFactory(app, deviceUIDs, preferredTapSourceUID)
+            createdTap = tap
+            try prepareOutputGuard(for: tap)
             applyTapOutputState(to: tap, for: app.id, deviceUIDs: deviceUIDs)
 
             let initial = tapInitialState(
@@ -1066,6 +1235,7 @@ final class AudioEngine {
             )
             try tap.activate(initial: initial)
             taps[app.id] = tap
+            outputLockErrors.removeValue(forKey: app.id)
 
             // Catalog AutoEQ may not have been cached yet — kick off async resolve.
             if initial.autoEQProfile == nil {
@@ -1074,12 +1244,21 @@ final class AudioEngine {
 
             logger.debug("Created tap for \(app.name) on \(deviceUIDs.count) device(s)")
         } catch {
+            if guardedOutputUID(for: app) != nil {
+                outputLockErrors[app.id] = "Output lock setup failed for \(app.name): \(error.localizedDescription)"
+            }
+            if let tap = createdTap, tap.persistentOutputGuardEnabled {
+                tap.outputBlocked = true
+                taps[app.id] = tap
+            }
             logger.error("Failed to create tap for \(app.name): \(error.localizedDescription)")
         }
     }
 
     func applyPersistedSettings() {
         guard permission.status == .authorized else { return }
+        let trackedPIDs = Set(apps.map { $0.id }).union(taps.keys)
+        outputLockErrors = outputLockErrors.filter { trackedPIDs.contains($0.key) }
 
         // Warm the AutoEQ cache for every (app, device) selection so that subsequent
         // tap activations can apply correction synchronously inside activate(initial:)
@@ -1098,6 +1277,21 @@ final class AudioEngine {
         }
 
         for app in apps {
+            if let tap = taps[app.id], guardedOutputUID(for: app) != nil,
+               tap.app.processObjectIDs != app.processObjectIDs {
+                tap.outputBlocked = true
+                do {
+                    // Browser audio helpers may restart under the same parent PID.
+                    // The tap installs the new source guard before releasing the old one.
+                    try tap.updateGuardedApp(app)
+                    outputLockRevision &+= 1
+                    appliedPIDs.remove(app.id)
+                } catch {
+                    outputLockErrors[app.id] = "Output guard update failed for \(app.name): \(error.localizedDescription)"
+                    logger.error("Could not update guarded processes for \(app.name): \(error.localizedDescription)")
+                    continue
+                }
+            }
             guard !appliedPIDs.contains(app.id) else { continue }
             guard !settingsManager.isIgnored(app.persistenceIdentifier) else { continue }
 
@@ -1109,6 +1303,20 @@ final class AudioEngine {
             let savedVolume = volumeState.loadSavedVolume(for: app.id, identifier: app.persistenceIdentifier)
             let savedMute = volumeState.loadSavedMute(for: app.id, identifier: app.persistenceIdentifier)
             _ = volumeState.loadSavedBoost(for: app.id, identifier: app.persistenceIdentifier)
+
+            if let uid = guardedOutputUID(for: app) {
+                appDeviceRouting[app.id] = uid
+                if settingsManager.isFollowingDefault(for: app.persistenceIdentifier) {
+                    followsDefault.insert(app.id)
+                } else {
+                    followsDefault.remove(app.id)
+                }
+                ensureTapExists(for: app, deviceUID: uid)
+                guard let tap = taps[app.id] else { continue }
+                applyTapOutputState(to: tap, for: app.id, deviceUIDs: [uid])
+                appliedPIDs.insert(app.id)
+                continue
+            }
 
             // Handle multi-device mode
             if mode == .multi {
@@ -1178,6 +1386,7 @@ final class AudioEngine {
                 let preferredSource = preferredTapSourceDeviceUID(forOutputUIDs: [deviceUID], isFollowsDefault: followsDefault.contains(app.id))
                 Task {
                     do {
+                        guard self.guardedOutputUID(for: app) == nil else { return }
                         try await existingTap.switchDevice(to: deviceUID, preferredTapSourceDeviceUID: preferredSource)
                         self.applyTapOutputState(to: existingTap, for: app.id, deviceUIDs: [deviceUID])
                         self.applyAutoEQToTap(existingTap)
@@ -1209,6 +1418,8 @@ final class AudioEngine {
                 taps[app.id]?.isMuted = true
             }
         }
+        reconcileOutputDeviceLock()
+        enforceLockedOutputDefault()
     }
 
     private func ensureTapExists(for app: AudioApp, deviceUID: String) {
@@ -1216,8 +1427,11 @@ final class AudioEngine {
         guard permission.status == .authorized else { return }
 
         let preferredTapSourceUID = preferredTapSourceDeviceUID(forOutputUIDs: [deviceUID], isFollowsDefault: followsDefault.contains(app.id))
+        var createdTap: (any ProcessTapControlling)?
         do {
             let tap = try tapFactory(app, [deviceUID], preferredTapSourceUID)
+            createdTap = tap
+            try prepareOutputGuard(for: tap)
             applyTapOutputState(to: tap, for: app.id, deviceUIDs: [deviceUID])
 
             let initial = tapInitialState(
@@ -1227,6 +1441,7 @@ final class AudioEngine {
             )
             try tap.activate(initial: initial)
             taps[app.id] = tap
+            outputLockErrors.removeValue(forKey: app.id)
 
             // Catalog AutoEQ may not have been cached yet — kick off async resolve.
             // Imported profiles always hit the synchronous path above.
@@ -1236,6 +1451,13 @@ final class AudioEngine {
 
             logger.debug("Created tap for \(app.name)")
         } catch {
+            if guardedOutputUID(for: app) != nil {
+                outputLockErrors[app.id] = "Output lock setup failed for \(app.name): \(error.localizedDescription)"
+            }
+            if let tap = createdTap, tap.persistentOutputGuardEnabled {
+                tap.outputBlocked = true
+                taps[app.id] = tap
+            }
             logger.error("Failed to create tap for \(app.name): \(error.localizedDescription)")
         }
     }
@@ -1243,6 +1465,11 @@ final class AudioEngine {
     /// Restores the default to `lastConfirmedDefaultUID` (what the user/FineTune intended).
     /// Falls back to highest-priority device if the confirmed device is gone.
     private func restoreConfirmedDefault() {
+        if settingsManager.appSettings.lockedOutputDeviceUID != nil {
+            enforceLockedOutputDefault()
+            reconcileOutputDeviceLock()
+            return
+        }
         if let restoreUID = lastConfirmedDefaultUID,
            let device = deviceMonitor.device(for: restoreUID),
            isAliveCheck(device.id) {
@@ -1263,6 +1490,10 @@ final class AudioEngine {
     /// Returns the resolved target UID.
     @discardableResult
     private func reEvaluateOutputDefault(excluding: String? = nil) -> String? {
+        if settingsManager.appSettings.lockedOutputDeviceUID != nil {
+            reconcileOutputDeviceLock()
+            return enforceLockedOutputDefault()
+        }
         guard let target = Self.resolveHighestPriority(
             priorityOrder: settingsManager.devicePriorityOrder,
             connectedDevices: outputDevices,
@@ -1306,14 +1537,17 @@ final class AudioEngine {
     /// Routes all followsDefault apps to the given device UID and switches their taps.
     /// Early-exits if all apps are already routed to the target (avoids unnecessary tap switches).
     private func routeFollowsDefaultApps(to targetUID: String) {
+        reconcileOutputDeviceLock()
         guard !followsDefault.allSatisfy({ appDeviceRouting[$0] == targetUID }) else { return }
 
         for pid in followsDefault {
+            if let tap = taps[pid], guardedOutputUID(for: tap.app) != nil { continue }
             appDeviceRouting[pid] = targetUID
         }
 
         var tapsToSwitch: [(app: AudioApp, tap: any ProcessTapControlling)] = []
         for app in apps {
+            guard guardedOutputUID(for: app) == nil else { continue }
             guard followsDefault.contains(app.id), let tap = taps[app.id] else { continue }
             tapsToSwitch.append((app, tap))
         }
@@ -1321,6 +1555,7 @@ final class AudioEngine {
 
         Task {
             for (app, tap) in tapsToSwitch {
+                guard self.guardedOutputUID(for: app) == nil else { continue }
                 do {
                     let preferredTapSourceUID = self.preferredTapSourceDeviceUID(forOutputUIDs: [targetUID], isFollowsDefault: true)
                     try await tap.switchDevice(to: targetUID, preferredTapSourceDeviceUID: preferredTapSourceUID)
@@ -1335,6 +1570,10 @@ final class AudioEngine {
 
     /// Called when device disappears - updates routing and switches taps immediately
     private func handleDeviceDisconnected(_ deviceUID: String, name deviceName: String) {
+        if deviceUID == settingsManager.appSettings.lockedOutputDeviceUID {
+            outputLockRevision &+= 1
+        }
+        reconcileOutputDeviceLock()
         // Clean up alive watcher — use UID lookup since device is already removed from monitor
         removeAliveWatcher(forUID: deviceUID)
 
@@ -1364,6 +1603,8 @@ final class AudioEngine {
         for tap in taps.values {
             let app = tap.app
             let mode = getDeviceSelectionMode(for: app)
+
+            guard guardedOutputUID(for: app) == nil else { continue }
 
             // Check if this tap uses the disconnected device
             guard tap.currentDeviceUIDs.contains(deviceUID) else { continue }
@@ -1401,6 +1642,7 @@ final class AudioEngine {
             Task {
                 // Handle single-mode switches — source device is dead, skip crossfade
                 for (tap, fallbackUID) in singleModeTapsToSwitch {
+                    guard self.guardedOutputUID(for: tap.app) == nil else { continue }
                     do {
                         let preferredTapSourceUID = self.preferredTapSourceDeviceUID(forOutputUIDs: [fallbackUID], isFollowsDefault: true)
                         try await tap.switchDevice(to: fallbackUID, preferredTapSourceDeviceUID: preferredTapSourceUID, sourceDeviceDead: true)
@@ -1414,6 +1656,7 @@ final class AudioEngine {
                 // Handle multi-mode updates (remove disconnected device from aggregate)
                 // Source device is dead, skip crossfade
                 for (tap, remainingUIDs) in multiModeTapsToUpdate {
+                    guard self.guardedOutputUID(for: tap.app) == nil else { continue }
                     do {
                         let preferredTapSourceUID = self.preferredTapSourceDeviceUID(forOutputUIDs: remainingUIDs, isFollowsDefault: self.followsDefault.contains(tap.app.id))
                         try await tap.updateDevices(to: remainingUIDs, preferredTapSourceDeviceUID: preferredTapSourceUID, sourceDeviceDead: true)
@@ -1444,6 +1687,7 @@ final class AudioEngine {
     private func handleDeviceConnected(_ deviceUID: String, name deviceName: String) {
         // Register newly connected device in priority list
         settingsManager.ensureDeviceInPriority(deviceUID)
+        reconcileOutputDeviceLock()
 
         var affectedApps: [AudioApp] = []
         var tapsToSwitch: [any ProcessTapControlling] = []
@@ -1451,6 +1695,8 @@ final class AudioEngine {
         // Iterate over taps for consistency with handleDeviceDisconnected
         for tap in taps.values {
             let app = tap.app
+
+            guard guardedOutputUID(for: app) == nil else { continue }
 
             // Skip apps that are PERSISTED as following default - they don't have explicit device preferences
             // Note: in-memory followsDefault may include temporarily displaced apps, so check persisted state
@@ -1473,6 +1719,7 @@ final class AudioEngine {
         if !tapsToSwitch.isEmpty {
             Task {
                 for tap in tapsToSwitch {
+                    guard self.guardedOutputUID(for: tap.app) == nil else { continue }
                     do {
                         let preferredTapSourceUID = self.preferredTapSourceDeviceUID(forOutputUIDs: [deviceUID], isFollowsDefault: false)
                         try await tap.switchDevice(to: deviceUID, preferredTapSourceDeviceUID: preferredTapSourceUID)
@@ -1516,6 +1763,14 @@ final class AudioEngine {
             if settingsManager.appSettings.showDeviceDisconnectAlerts {
                 showReconnectNotification(deviceName: deviceName, affectedApps: affectedApps)
             }
+        }
+
+        if settingsManager.appSettings.lockedOutputDeviceUID != nil {
+            if let device = deviceMonitor.device(for: deviceUID), !isAliveCheck(device.id) {
+                installAliveWatcher(deviceID: device.id, uid: deviceUID, name: deviceName)
+            }
+            enforceLockedOutputDefault()
+            return
         }
 
         // Only override the default if the newly connected device IS the highest-priority
@@ -1677,6 +1932,12 @@ final class AudioEngine {
 
     /// Called when system default output device changes - switches apps that follow default
     private func handleDefaultDeviceChanged(_ newDefaultUID: String) {
+        if settingsManager.appSettings.lockedOutputDeviceUID != nil {
+            _ = outputEchoTracker.consume(newDefaultUID)
+            reconcileOutputDeviceLock()
+            enforceLockedOutputDefault()
+            return
+        }
         // State machine: if we're waiting for macOS to auto-switch after a device connect,
         // check whether this change is the expected auto-switch or user intent.
         if case .pendingAutoSwitch(let pendingUID, let timeoutTask) = outputPriorityState {
@@ -1796,6 +2057,7 @@ final class AudioEngine {
     /// valid because the app switches device when default changes). Explicitly-routed apps
     /// always use stereo mixdown (nil) — their tap never goes stale when the default changes.
     private func preferredTapSourceDeviceUID(forOutputUIDs outputUIDs: [String], isFollowsDefault: Bool) -> String? {
+        if let uid = settingsManager.appSettings.lockedOutputDeviceUID, outputUIDs == [uid] { return nil }
         guard isFollowsDefault else { return nil }
         guard let defaultUID = deviceVolumeMonitor.defaultDeviceUID else { return nil }
         return outputUIDs.contains(defaultUID) ? defaultUID : nil
@@ -1834,6 +2096,7 @@ final class AudioEngine {
 
         // Schedule cleanup for newly stale PIDs (with grace period)
         for pid in stalePIDs {
+            if let tap = taps[pid], tap.persistentOutputGuardEnabled, kill(pid, 0) == 0 { continue }
             guard pendingCleanup[pid] == nil else { continue }  // Already pending
 
             pendingCleanup[pid] = Task { @MainActor in
@@ -1847,6 +2110,11 @@ final class AudioEngine {
                     return
                 }
 
+                if let tap = self.taps[pid], tap.persistentOutputGuardEnabled, kill(pid, 0) == 0 {
+                    self.pendingCleanup.removeValue(forKey: pid)
+                    return
+                }
+
                 // Now safe to cleanup
                 if let tap = self.taps.removeValue(forKey: pid) {
                     tap.invalidate()
@@ -1855,12 +2123,14 @@ final class AudioEngine {
                 self.appDeviceRouting.removeValue(forKey: pid)
                 self.followsDefault.remove(pid)
                 self.appliedPIDs.remove(pid)  // Allow re-initialization if app resumes
+                self.outputLockErrors.removeValue(forKey: pid)
                 self.pendingCleanup.removeValue(forKey: pid)
             }
         }
 
         // Include pending PIDs in cleanup exclusion to avoid premature state cleanup
-        let pidsToKeep = activePIDs.union(Set(pendingCleanup.keys))
+        let guardedLivePIDs = Set(taps.values.filter { $0.persistentOutputGuardEnabled && kill($0.app.id, 0) == 0 }.map { $0.app.id })
+        let pidsToKeep = activePIDs.union(Set(pendingCleanup.keys)).union(guardedLivePIDs)
         appliedPIDs = appliedPIDs.intersection(pidsToKeep)
         followsDefault = followsDefault.intersection(pidsToKeep)
         volumeState.cleanup(keeping: pidsToKeep)
@@ -1895,7 +2165,7 @@ final class AudioEngine {
 
                 for (pid, tap) in self.taps {
                     // Skip muted apps — no callbacks while muted isn't a health signal
-                    guard !tap.isMuted else { continue }
+                    guard !tap.isMuted, !tap.outputBlocked else { continue }
 
                     // Skip PIDs in recovery cooldown to prevent recreation thrashing
                     if let cooldownEnd = self.tapRecoveryCooldownUntil[pid], now < cooldownEnd {
@@ -1942,6 +2212,11 @@ final class AudioEngine {
     /// Async: awaits full CoreAudio resource teardown before creating the replacement tap
     /// to prevent orphaned IO procs from accumulating (issue #176).
     private func recreateTap(for pid: pid_t) async {
+        if let tap = taps[pid], guardedOutputUID(for: tap.app) != nil {
+            tap.outputBlocked = true
+            reconcileOutputDeviceLock()
+            return
+        }
         guard let oldTap = taps.removeValue(forKey: pid) else { return }
         let deviceUIDs = oldTap.currentDeviceUIDs
         await oldTap.invalidateAsync()

@@ -10,6 +10,10 @@ protocol ProcessTapControlling: AnyObject, Sendable {
     var app: AudioApp { get }
     var volume: Float { get set }
     var isMuted: Bool { get set }
+    /// A source mute independent of any output device or rendering aggregate.
+    var persistentOutputGuardEnabled: Bool { get }
+    /// Policy silence, separate from the user's mute preference.
+    var outputBlocked: Bool { get set }
     var currentDeviceVolume: Float { get set }
     var isDeviceMuted: Bool { get set }
     var audioLevel: Float { get }
@@ -17,6 +21,12 @@ protocol ProcessTapControlling: AnyObject, Sendable {
     var currentDeviceUIDs: [String] { get }
 
     func activate(initial: TapInitialState) throws
+    func setPersistentOutputGuardEnabled(_ enabled: Bool) throws
+    /// Replace source membership without a gap in the existing source mute.
+    func updateGuardedApp(_ app: AudioApp) throws
+    /// Always rebuilds, even for the same UID after a hardware reconnection.
+    /// The caller must recheck availability before clearing `outputBlocked`.
+    func restoreGuardedOutput(to deviceUID: String, preferredTapSourceDeviceUID: String?) async throws
     func invalidate()
     func invalidateAsync() async
     func updateEQSettings(_ settings: EQSettings)

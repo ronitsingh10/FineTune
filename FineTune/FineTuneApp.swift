@@ -4,6 +4,7 @@ import UserNotifications
 import FluidMenuBarExtra
 import AppKit
 import os
+import Darwin
 
 private let logger = Logger(subsystem: "com.finetuneapp.FineTune", category: "App")
 
@@ -36,7 +37,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     }
 }
 
+/// Select the test host before constructing any SwiftUI app state or services.
+/// Hosted unit tests need AppKit's launch notification and main run loop for
+/// XCTest injection, but must never start audio, permission prompts, or UI.
 @main
+@MainActor
+enum FineTuneEntryPoint {
+    static func main() {
+        if ProcessInfo.processInfo.environment["FINETUNE_HEADLESS_TESTS"] == "1" {
+            let application = NSApplication.shared
+            guard application.setActivationPolicy(.prohibited) else {
+                // Fail closed: never continue with a host that can take focus.
+                refuseLaunch("Unable to prohibit activation of the FineTune test host")
+            }
+            application.run()
+            return
+        }
+
+        FineTuneApp.main()
+    }
+
+    private static func refuseLaunch(_ message: String) -> Never {
+        FileHandle.standardError.write(Data((message + "\n").utf8))
+        exit(EXIT_FAILURE)
+    }
+}
+
 struct FineTuneApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @State private var audioEngine: AudioEngine

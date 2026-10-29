@@ -23,6 +23,9 @@ final class RecordingProcessTapController: ProcessTapControlling {
         case updateLoudnessCompensation(volume: Float, enabled: Bool)
         case updateLoudnessEqualization(LoudnessEqualizerSettings)
         case invalidate
+        case setPersistentOutputGuardEnabled(Bool)
+        case restoreGuardedOutput(String)
+        case updateGuardedApp([AudioObjectID])
     }
 
     /// Plain snapshot of `TapInitialState` so test asserts don't depend on
@@ -46,12 +49,18 @@ final class RecordingProcessTapController: ProcessTapControlling {
         }
     }
 
-    let app: AudioApp
+    private(set) var app: AudioApp
     private(set) var events: [Event] = []
 
     // Mutable surface — recorded as plain property writes (not events).
     var volume: Float = 1.0
     var isMuted: Bool = false
+    private(set) var persistentOutputGuardEnabled = false
+    var outputBlocked = false
+    var guardedRestoreError: Error?
+    var guardedInstallError: Error?
+    var activationError: Error?
+    var guardedRestoreHandler: (() async throws -> Void)?
     var currentDeviceVolume: Float = 1.0
     var isDeviceMuted: Bool = false
     var audioLevel: Float = 0.0
@@ -66,6 +75,27 @@ final class RecordingProcessTapController: ProcessTapControlling {
 
     func activate(initial: TapInitialState) throws {
         events.append(.activate(TapInitialStateSnapshot(initial)))
+        if let activationError { throw activationError }
+    }
+
+    func setPersistentOutputGuardEnabled(_ enabled: Bool) throws {
+        if enabled, let guardedInstallError { throw guardedInstallError }
+        persistentOutputGuardEnabled = enabled
+        events.append(.setPersistentOutputGuardEnabled(enabled))
+    }
+
+    func updateGuardedApp(_ app: AudioApp) throws {
+        if let guardedInstallError { throw guardedInstallError }
+        self.app = app
+        events.append(.updateGuardedApp(app.processObjectIDs))
+    }
+
+    func restoreGuardedOutput(to deviceUID: String, preferredTapSourceDeviceUID: String?) async throws {
+        events.append(.restoreGuardedOutput(deviceUID))
+        if let guardedRestoreHandler { try await guardedRestoreHandler() }
+        if let guardedRestoreError { throw guardedRestoreError }
+        currentDeviceUIDs = [deviceUID]
+        tapSourceDeviceUID = preferredTapSourceDeviceUID
     }
 
     func invalidate() {
@@ -390,7 +420,7 @@ struct AudioEngineTapInitialStateTests {
             case .updateEQSettings, .updateAutoEQProfile, .setAutoEQPreampEnabled,
                  .updateLoudnessCompensation, .updateLoudnessEqualization:
                 Issue.record("Pre-activate mutation breaks the apply-initial-state contract: \(event)")
-            case .activate, .invalidate:
+            case .activate, .invalidate, .setPersistentOutputGuardEnabled, .restoreGuardedOutput, .updateGuardedApp:
                 break
             }
         }

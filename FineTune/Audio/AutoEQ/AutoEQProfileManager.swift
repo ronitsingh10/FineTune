@@ -36,6 +36,9 @@ final class AutoEQProfileManager {
             profiles[profile.id] = profile
         }
 
+        // Offline hosted tests must not start catalog network or cache work.
+        guard ProcessInfo.processInfo.environment["FINETUNE_HEADLESS_TESTS"] != "1" else { return }
+
         // Load catalog from cache/GitHub
         Task { @MainActor in
             await self.fetcher.loadCatalog()
