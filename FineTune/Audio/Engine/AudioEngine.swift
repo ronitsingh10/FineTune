@@ -16,6 +16,8 @@ final class AudioEngine {
     let autoEQProfileManager: AutoEQProfileManager
     let permission: AudioRecordingPermission
     let appListCoordinator: AppListCoordinator
+    /// Holds a ducking exemption on every output device so call apps can't turn FineTune's output down.
+    let callDuckingGuard: CallDuckingGuard
 
     #if !APP_STORE
     let ddcController: DDCController
@@ -180,6 +182,7 @@ final class AudioEngine {
         deviceVolumeMonitor: (any DeviceVolumeProviding)? = nil,
         tapFactory: (@MainActor (AudioApp, [String], String?) throws -> any ProcessTapControlling)? = nil,
         isAlive: ((AudioDeviceID) -> Bool)? = nil,
+        callDuckingGuard: CallDuckingGuard? = nil,
         startMonitorsAutomatically: Bool = true
     ) {
         self.permission = permission
@@ -188,6 +191,8 @@ final class AudioEngine {
         self.appListCoordinator = AppListCoordinator(settingsManager: manager)
         self.autoEQProfileManager = autoEQProfileManager
         self.volumeState = VolumeState(settingsManager: manager)
+        self.callDuckingGuard = callDuckingGuard
+            ?? CallDuckingGuard(isEnabled: manager.appSettings.keepVolumeDuringCalls)
         self.isAliveCheck = isAlive ?? { $0.isDeviceAlive() }
 
         // If a custom deviceProvider is given, use it directly.
@@ -278,6 +283,9 @@ final class AudioEngine {
 
                 // Start device volume monitor AFTER deviceMonitor.start() populates devices
                 self.deviceVolumeMonitor.start()
+
+                // Devices are enumerated now — exempt FineTune's output from call ducking on each.
+                self.refreshCallDuckingProtection()
 
                 self.applyPersistedSettings()
                 self.registerNewDevicesInPriority()
@@ -570,6 +578,7 @@ final class AudioEngine {
             processMonitor.start()
         }
         deviceMonitor.start()
+        refreshCallDuckingProtection()
         applyPersistedSettings()
         if permission.status == .authorized {
             startHealthMonitor()
@@ -591,6 +600,7 @@ final class AudioEngine {
             tap.invalidate()
         }
         taps.removeAll()
+        callDuckingGuard.releaseAll()
         logger.info("AudioEngine stopped")
     }
 
@@ -601,6 +611,23 @@ final class AudioEngine {
         stop()
         deviceVolumeMonitor.stop()
         logger.info("AudioEngine shutdown complete")
+    }
+
+    // MARK: - Call Ducking Protection
+
+    /// Settings → Audio → Keep Volume During Calls. Turning it off takes effect at once:
+    /// a running call ducks FineTune's output again. See `CallDuckingGuard`.
+    func setCallDuckingProtectionEnabled(_ enabled: Bool) {
+        callDuckingGuard.setEnabled(enabled)
+        refreshCallDuckingProtection()
+    }
+
+    /// Holds the exemption on every connected output device (a no-op per device once held)
+    /// and forgets devices that went away. Cheap enough to run from the health monitor.
+    private func refreshCallDuckingProtection() {
+        let connectedIDs = deviceMonitor.outputDevices.map(\.id)
+        callDuckingGuard.retain(only: Set(connectedIDs))
+        callDuckingGuard.hold(connectedIDs)
     }
 
     // MARK: - Settings Reset
@@ -632,6 +659,9 @@ final class AudioEngine {
 
         // 6. Re-apply from clean settings (re-establishes routing to system default)
         applyPersistedSettings()
+
+        // 7. Settings are back to defaults, so call-ducking protection is on again
+        setCallDuckingProtectionEnabled(settingsManager.appSettings.keepVolumeDuringCalls)
 
         logger.info("Settings reset: engine state synchronized")
     }
@@ -1445,6 +1475,11 @@ final class AudioEngine {
         // Register newly connected device in priority list
         settingsManager.ensureDeviceInPriority(deviceUID)
 
+        // A (re)connected device is a new HAL client — exempt it from call ducking too
+        if let device = deviceMonitor.device(for: deviceUID) {
+            callDuckingGuard.hold(device.id)
+        }
+
         var affectedApps: [AudioApp] = []
         var tapsToSwitch: [any ProcessTapControlling] = []
 
@@ -1887,6 +1922,10 @@ final class AudioEngine {
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(2))
                 guard !Task.isCancelled, let self else { return }
+
+                // Safety net: hold the call-ducking exemption on any output device that showed up
+                // without a connect event (e.g. after coreaudiod restarted). No-op once held.
+                self.refreshCallDuckingProtection()
 
                 // Skip entirely when no taps exist — avoids unnecessary work at idle (#176)
                 guard !self.taps.isEmpty else { continue }

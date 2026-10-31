@@ -27,7 +27,13 @@ Some apps don't work well with CoreAudio process taps — particularly audio pro
 Common apps that may need to be ignored:
 - Audio Hijack, Loopback, and other Rogue Amoeba apps
 - Some VoIP/conferencing tools with custom audio engines
-- FaceTime, WhatsApp, and other calling apps (tapping can break echo cancellation, causing volume ducking)
+- FaceTime, WhatsApp, and other calling apps (tapping can break echo cancellation; see below for call volume)
+
+## Everything goes quiet during a FaceTime or WhatsApp call
+
+macOS turns every other app down to about 18% volume ("ducking") while a call app is using voice processing. FineTune cancels this for the apps it controls: Settings → **Audio** → **Keep Volume During Calls**, on by default. Apps you have **ignored** in edit mode bypass FineTune, so macOS still ducks them.
+
+The same exemption keeps a tapped call app at full volume, so a FaceTime or WhatsApp call no longer sounds faint with FineTune running. If the other side hears an echo, ignore the call app as described above so its own echo cancellation sees the audio it expects.
 
 ## Volume slider not working
 
