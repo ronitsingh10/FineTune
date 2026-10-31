@@ -55,6 +55,7 @@ That's it. Adjust sliders, route audio, and explore EQ from the menu bar.
 - **Per-app volume boost** — 2x / 3x / 4x gain presets
 - **Pinned apps** — Keep apps visible in the menu bar even when they're not playing, so you can configure volume, EQ, and routing in advance
 - **Ignore apps** — Completely disengage FineTune from specific apps. Tears down the audio tap so the app returns to normal macOS audio
+- **Calls don't duck your audio** — FaceTime, WhatsApp and other call apps normally drop every other app to ~18% volume for the whole call. Apps FineTune controls stay at full volume instead; turn it off under Settings → Audio → Keep Volume During Calls if you prefer the macOS behaviour
 - **Scroll-wheel volume** — Hover any slider in the popup, the HUD, or the EQ panel and scroll to adjust.
 
 ### ⌨️ Keyboard

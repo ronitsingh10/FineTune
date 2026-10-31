@@ -46,6 +46,9 @@ struct AudioTab: View {
         .onChange(of: settings.appSettings.loudnessEqualizationEnabled) { _, newValue in
             audioEngine.setLoudnessEqualizationEnabled(newValue)
         }
+        .onChange(of: settings.appSettings.keepVolumeDuringCalls) { _, newValue in
+            audioEngine.setCallDuckingProtectionEnabled(newValue)
+        }
     }
 
     // MARK: - Volume
@@ -68,6 +71,16 @@ struct AudioTab: View {
                 description: "Boost low frequencies at low volume"
             ) {
                 Toggle("", isOn: unifiedLoudnessToggleBinding)
+                    .toggleStyle(.switch)
+                    .controlSize(.small)
+                    .labelsHidden()
+            }
+            SettingsRowDivider()
+            SettingsRow(
+                "Keep Volume During Calls",
+                description: "Stop FaceTime and other calls from turning apps down"
+            ) {
+                Toggle("", isOn: $settings.appSettings.keepVolumeDuringCalls)
                     .toggleStyle(.switch)
                     .controlSize(.small)
                     .labelsHidden()
