@@ -15,6 +15,20 @@ struct LocalizationTests {
         #expect(String(localized: LocalizedStringResource("AutoEQ correction", locale: simplifiedChinese)) == "AutoEQ 耳机校正")
     }
 
+    @Test("Supplemental preview captions resolve interpolated values from the compiled catalog")
+    func supplementalCaptionInterpolation() {
+        let label = "单设备"
+        let answer = "是"
+        let device = "USB DAC"
+        #expect(String(localized: LocalizedStringResource("Mode: \(label)", locale: simplifiedChinese)) == "模式：单设备")
+        #expect(String(localized: LocalizedStringResource("Following default: \(answer)", locale: simplifiedChinese)) == "跟随默认：是")
+        #expect(String(localized: LocalizedStringResource("Current: \(device)", locale: simplifiedChinese)) == "当前：USB DAC")
+        #expect(String(localized: LocalizedStringResource("Selected: \(device)", locale: simplifiedChinese)) == "已选中：USB DAC")
+        #expect(String(localized: LocalizedStringResource("Selected: \(1) devices", locale: simplifiedChinese)) == "已选中 1 台设备")
+        #expect(String(localized: LocalizedStringResource("Selected: \(2) devices", locale: simplifiedChinese)) == "已选中 2 台设备")
+        #expect(String(localized: LocalizedStringResource("Selected: \(2) devices", locale: english)) == "Selected: 2 devices")
+    }
+
     @Test("English quantity strings use singular and plural forms")
     func englishPluralForms() {
         #expect(String(localized: LocalizedStringResource("\(1) devices", locale: english)) == "1 device")
