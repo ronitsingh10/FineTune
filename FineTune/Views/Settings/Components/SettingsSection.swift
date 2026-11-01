@@ -3,10 +3,10 @@ import SwiftUI
 
 @MainActor
 struct SettingsSection<Content: View>: View {
-    private let title: String?
+    private let title: LocalizedStringResource?
     @ViewBuilder private let content: () -> Content
 
-    init(_ title: String? = nil, @ViewBuilder content: @escaping () -> Content) {
+    init(_ title: LocalizedStringResource? = nil, @ViewBuilder content: @escaping () -> Content) {
         self.title = title
         self.content = content
     }

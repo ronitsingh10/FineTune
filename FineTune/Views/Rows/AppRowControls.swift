@@ -152,9 +152,13 @@ struct AppRowControls: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .accessibilityLabel(isEQExpanded ? "Close Equalizer" : "Equalizer")
+            .accessibilityLabel(isEQExpanded
+                                ? String(localized: "Close Equalizer")
+                                : String(localized: "Equalizer"))
             .onHover { isEQButtonHovered = $0 }
-            .help(isEQExpanded ? "Close Equalizer" : "Equalizer")
+            .help(isEQExpanded
+                  ? String(localized: "Close Equalizer")
+                  : String(localized: "Equalizer"))
             .animation(.spring(response: 0.3, dampingFraction: 0.75), value: isEQExpanded)
             .animation(DesignTokens.Animation.hover, value: isEQButtonHovered)
         }

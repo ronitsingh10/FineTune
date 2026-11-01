@@ -39,6 +39,16 @@ enum EQPreset: String, CaseIterable, Identifiable {
         case media = "Media"
 
         var id: String { rawValue }
+
+        var displayName: LocalizedStringResource {
+            switch self {
+            case .utility: "Utility"
+            case .speech: "Speech"
+            case .listening: "Listening"
+            case .music: "Music"
+            case .media: "Media"
+            }
+        }
     }
 
     var category: Category {
@@ -61,27 +71,31 @@ enum EQPreset: String, CaseIterable, Identifiable {
     }
 
     var name: String {
+        String(localized: displayName)
+    }
+
+    var displayName: LocalizedStringResource {
         switch self {
-        case .flat: return "Flat"
-        case .bassBoost: return "Bass Boost"
-        case .bassCut: return "Bass Cut"
-        case .trebleBoost: return "Treble Boost"
-        case .vocalClarity: return "Vocal Clarity"
-        case .podcast: return "Podcast"
-        case .spokenWord: return "Spoken Word"
-        case .loudness: return "Loudness"
-        case .lateNight: return "Late Night"
-        case .smallSpeakers: return "Small Speakers"
-        case .rock: return "Rock"
-        case .pop: return "Pop"
-        case .electronic: return "Electronic"
-        case .jazz: return "Jazz"
-        case .classical: return "Classical"
-        case .hipHop: return "Hip-Hop"
-        case .rnb: return "R&B"
-        case .deep: return "Deep"
-        case .acoustic: return "Acoustic"
-        case .movie: return "Movie"
+        case .flat: "Flat"
+        case .bassBoost: "Bass Boost"
+        case .bassCut: "Bass Cut"
+        case .trebleBoost: "Treble Boost"
+        case .vocalClarity: "Vocal Clarity"
+        case .podcast: "Podcast"
+        case .spokenWord: "Spoken Word"
+        case .loudness: "Loudness"
+        case .lateNight: "Late Night"
+        case .smallSpeakers: "Small Speakers"
+        case .rock: "Rock"
+        case .pop: "Pop"
+        case .electronic: "Electronic"
+        case .jazz: "Jazz"
+        case .classical: "Classical"
+        case .hipHop: "Hip-Hop"
+        case .rnb: "R&B"
+        case .deep: "Deep"
+        case .acoustic: "Acoustic"
+        case .movie: "Movie"
         }
     }
 

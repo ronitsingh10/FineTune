@@ -177,9 +177,9 @@ struct DeviceDetailSheet: View {
 
     static func tierDisplayName(_ tier: VolumeControlTier) -> String {
         switch tier {
-        case .hardware: return "Hardware"
+        case .hardware: return String(localized: "Hardware")
         case .ddc: return "DDC"
-        case .software: return "Software"
+        case .software: return String(localized: "Software")
         }
     }
 

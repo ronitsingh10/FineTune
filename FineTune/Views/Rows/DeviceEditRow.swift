@@ -91,7 +91,9 @@ struct DeviceEditRow<ExpandedContent: View>: View {
             .contentShape(Rectangle())
             .onTapGesture { onToggleExpand() }
             .accessibilityAddTraits(.isButton)
-            .accessibilityLabel(isExpanded ? "Collapse device details" : "Expand device details")
+            .accessibilityLabel(isExpanded
+                                ? String(localized: "Collapse device details")
+                                : String(localized: "Expand device details"))
 
             hideToggleButton
 
@@ -164,10 +166,12 @@ struct DeviceEditRow<ExpandedContent: View>: View {
         .buttonStyle(.plain)
         .disabled(isDefault)
         .help(isDefault
-            ? "Cannot hide the default device"
-            : (isHidden ? "Show in main view" : "Hide from main view")
+            ? String(localized: "Cannot hide the default device")
+            : (isHidden ? String(localized: "Show in main view") : String(localized: "Hide from main view"))
         )
-        .accessibilityLabel(isHidden ? "Show in main view" : "Hide from main view")
+        .accessibilityLabel(isHidden
+                            ? String(localized: "Show in main view")
+                            : String(localized: "Hide from main view"))
     }
 
     private var infoButton: some View {
@@ -194,8 +198,12 @@ struct DeviceEditRow<ExpandedContent: View>: View {
         }
         .buttonStyle(.plain)
         .onHover { isInfoButtonHovered = $0 }
-        .help(isExpanded ? "Close device inspector" : "Device inspector")
-        .accessibilityLabel(isExpanded ? "Close device inspector" : "Open device inspector")
+        .help(isExpanded
+              ? String(localized: "Close device inspector")
+              : String(localized: "Device inspector"))
+        .accessibilityLabel(isExpanded
+                            ? String(localized: "Close device inspector")
+                            : String(localized: "Open device inspector"))
         .animation(.spring(response: 0.3, dampingFraction: 0.75), value: isExpanded)
         .animation(DesignTokens.Animation.hover, value: isInfoButtonHovered)
     }

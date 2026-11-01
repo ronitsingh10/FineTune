@@ -28,7 +28,7 @@ private struct HUDStyleOption: View {
     let isSelected: Bool
     let onSelect: () -> Void
 
-    private var label: String {
+    private var label: LocalizedStringResource {
         switch style {
         case .tahoe: return "Tahoe"
         case .classic: return "Classic"
@@ -51,7 +51,7 @@ private struct HUDStyleOption: View {
                 }
         }
         .buttonStyle(.plain)
-        .accessibilityLabel(label)
+        .accessibilityLabel(Text(label))
     }
 
     @ViewBuilder

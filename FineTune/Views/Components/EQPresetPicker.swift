@@ -15,10 +15,10 @@ enum EQPickerSection: Identifiable, Hashable {
         }
     }
 
-    var title: String {
+    var title: LocalizedStringResource {
         switch self {
-        case .myPresets: return "My Presets"
-        case .builtIn(let cat): return cat.rawValue
+        case .myPresets: "My Presets"
+        case .builtIn(let cat): cat.displayName
         }
     }
 }
@@ -98,7 +98,7 @@ struct EQPresetPicker: View {
             popoverWidth: 170,
             onSelect: handleSelect
         ) { selected in
-            Text(selected?.name ?? "Custom")
+            Text(verbatim: selected?.name ?? String(localized: "Custom"))
         } itemContent: { item, isSelected in
             if item.isUserPreset {
                 UserPresetItemView(

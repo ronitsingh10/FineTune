@@ -5,7 +5,7 @@ import SwiftUI
 struct UpdatesTab: View {
     @ObservedObject var updateManager: UpdateManager
 
-    private var lastCheckDescription: String {
+    private var lastCheckDescription: LocalizedStringResource {
         let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0"
         if let date = updateManager.lastUpdateCheckDate {
             let formatter = RelativeDateTimeFormatter()

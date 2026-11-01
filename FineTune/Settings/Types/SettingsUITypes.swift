@@ -13,6 +13,16 @@ enum MenuBarIconStyle: String, Codable, CaseIterable, Identifiable {
 
     var id: String { rawValue }
 
+    var displayName: LocalizedStringResource {
+        switch self {
+        case .default: "Default"
+        case .speaker: "Speaker"
+        case .device: "Device"
+        case .waveform: "Waveform"
+        case .equalizer: "Equalizer"
+        }
+    }
+
     /// The icon name - either asset catalog name or SF Symbol
     var iconName: String {
         switch self {
@@ -54,10 +64,14 @@ enum AppearancePreference: String, Codable, CaseIterable, Identifiable, CustomSt
     var id: String { rawValue }
 
     var description: String {
+        String(localized: displayName)
+    }
+
+    var displayName: LocalizedStringResource {
         switch self {
-        case .system: return "System"
-        case .light: return "Light"
-        case .dark: return "Dark"
+        case .system: "System"
+        case .light: "Light"
+        case .dark: "Dark"
         }
     }
 }
@@ -86,10 +100,14 @@ enum MenuBarPopupSize: String, Codable, CaseIterable, Identifiable, CustomString
     var id: String { rawValue }
 
     var description: String {
+        String(localized: displayName)
+    }
+
+    var displayName: LocalizedStringResource {
         switch self {
-        case .compact: return "Compact"
-        case .comfortable: return "Comfortable"
-        case .spacious: return "Spacious"
+        case .compact: "Compact"
+        case .comfortable: "Comfortable"
+        case .spacious: "Spacious"
         }
     }
 }
@@ -148,11 +166,15 @@ enum VolumeHotkeyStep: String, Codable, CaseIterable, Identifiable, CustomString
     }
 
     var description: String {
+        String(localized: displayName)
+    }
+
+    var displayName: LocalizedStringResource {
         switch self {
-        case .coarse:    return "Coarse (12.5%)"
-        case .normal:    return "Normal (6.25%)"
-        case .fine:      return "Fine (3.13%)"
-        case .extraFine: return "Extra-Fine (1.56%)"
+        case .coarse: "Coarse (12.5%)"
+        case .normal: "Normal (6.25%)"
+        case .fine: "Fine (3.13%)"
+        case .extraFine: "Extra-Fine (1.56%)"
         }
     }
 }

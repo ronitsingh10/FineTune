@@ -257,7 +257,9 @@ struct MenuBarPopupView: View {
 
     /// Edit priority button — pencil ↔ checkmark, styled to match settingsButton
     private var editPriorityButton: some View {
-        Button(isEditingDevicePriority ? "Done reordering" : "Reorder devices",
+        Button(isEditingDevicePriority
+               ? String(localized: "Done reordering")
+               : String(localized: "Reorder devices"),
                systemImage: isEditingDevicePriority ? "checkmark" : "pencil") {
             toggleDevicePriorityEdit()
         }
@@ -272,7 +274,9 @@ struct MenuBarPopupView: View {
         )
         .contentShape(Rectangle())
         .animation(.spring(response: 0.3, dampingFraction: 0.75), value: isEditingDevicePriority)
-        .help(isEditingDevicePriority ? "Done reordering" : "Reorder devices")
+        .help(isEditingDevicePriority
+              ? String(localized: "Done reordering")
+              : String(localized: "Reorder devices"))
     }
 
     // MARK: - Settings Button
@@ -390,7 +394,7 @@ struct MenuBarPopupView: View {
     private var defaultOutputDeviceName: String {
         guard let uid = deviceVolumeMonitor.defaultDeviceUID,
               let device = sortedDevices.first(where: { $0.uid == uid }) else {
-            return "No Output"
+            return String(localized: "No Output")
         }
         return device.name
     }
@@ -399,7 +403,7 @@ struct MenuBarPopupView: View {
     private var defaultInputDeviceName: String {
         guard let uid = deviceVolumeMonitor.defaultInputDeviceUID,
               let device = sortedInputDevices.first(where: { $0.uid == uid }) else {
-            return "No Input"
+            return String(localized: "No Input")
         }
         return device.name
     }
@@ -1169,7 +1173,7 @@ struct MenuBarPopupView: View {
         panel.allowedContentTypes = [UTType.plainText]
         panel.allowsMultipleSelection = false
         panel.canChooseDirectories = false
-        panel.message = "Select an AutoEQ ParametricEQ.txt file"
+        panel.message = String(localized: "Select an AutoEQ ParametricEQ.txt file")
         panel.begin { response in
             guard response == .OK, let url = panel.url else { return }
             let name = url.deletingPathExtension().lastPathComponent
@@ -1178,7 +1182,7 @@ struct MenuBarPopupView: View {
                     audioEngine.setAutoEQProfile(for: deviceUID, profileID: profile.id)
                     autoEQImportError = nil
                 } else {
-                    autoEQImportError = "Could not read profile — check file format"
+                    autoEQImportError = String(localized: "Could not read profile — check file format")
                     importErrorClearTask?.cancel()
                     importErrorClearTask = Task {
                         try? await Task.sleep(for: .seconds(3))

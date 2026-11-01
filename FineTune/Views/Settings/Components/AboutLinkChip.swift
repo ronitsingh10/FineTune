@@ -10,7 +10,7 @@ import SwiftUI
 ///   fill so the chip reads as the page's primary action.
 @MainActor
 struct AboutLinkChip: View {
-    let label: String
+    let label: LocalizedStringResource
     let icon: String
     let hoverIcon: String
     let hoverColor: Color

@@ -83,7 +83,7 @@ struct AccessibilityPromptStrip: View {
         showingGrantedFlourish ? DesignTokens.Colors.vuGreen : DesignTokens.Colors.accentPrimary
     }
 
-    private var message: String {
+    private var message: LocalizedStringResource {
         showingGrantedFlourish
             ? "Access granted — volume keys now control FineTune."
             : "FineTune needs Accessibility to intercept F10 / F11 / F12."

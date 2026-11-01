@@ -4,7 +4,7 @@ import SwiftUI
 /// A styled section header for organizing content
 /// Renders text in uppercase with letter spacing
 struct SectionHeader: View {
-    let title: String
+    let title: LocalizedStringResource
 
     var body: some View {
         Text(title)

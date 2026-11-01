@@ -48,7 +48,7 @@ struct AppEditRow: View {
                 }
                 .buttonStyle(.plain)
                 .onHover { isPinHovered = $0 }
-                .help(isPinned ? "Unpin app" : "Pin app")
+                .help(isPinned ? String(localized: "Unpin app") : String(localized: "Pin app"))
                 .animation(DesignTokens.Animation.quick, value: isPinHovered)
             }
 
@@ -69,7 +69,7 @@ struct AppEditRow: View {
             }
             .buttonStyle(.plain)
             .onHover { isEyeHovered = $0 }
-            .help(isIgnored ? "Stop ignoring" : "Ignore app")
+            .help(isIgnored ? String(localized: "Stop ignoring") : String(localized: "Ignore app"))
             .animation(DesignTokens.Animation.quick, value: isEyeHovered)
         }
         .frame(height: DesignTokens.Dimensions.rowContentHeight)

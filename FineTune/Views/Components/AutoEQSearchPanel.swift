@@ -280,7 +280,9 @@ struct AutoEQSearchPanel: View {
                     .buttonStyle(.plain)
                     .onHover { starHoveredID = $0 ? id : nil }
                     .animation(DesignTokens.Animation.hover, value: isStarHovered)
-                    .accessibilityLabel(isFavorited ? "Remove from favorites" : "Add to favorites")
+                    .accessibilityLabel(isFavorited
+                                        ? String(localized: "Remove from favorites")
+                                        : String(localized: "Add to favorites"))
 
                     // Remove button
                     Button {
@@ -328,7 +330,7 @@ struct AutoEQSearchPanel: View {
     // MARK: - Mini Toggle
 
     private func miniToggle(
-        label: String,
+        label: LocalizedStringResource,
         isOn: Bool,
         action: @escaping () -> Void
     ) -> some View {
@@ -337,18 +339,17 @@ struct AutoEQSearchPanel: View {
                 .font(.system(size: 10))
                 .foregroundStyle(DesignTokens.Colors.autoEQToggleLabel)
 
-            Toggle(
-                label,
-                isOn: Binding(get: { isOn }, set: { _ in action() })
-            )
+            Toggle(isOn: Binding(get: { isOn }, set: { _ in action() })) {
+                Text(label)
+            }
             .toggleStyle(.switch)
             .controlSize(.mini)
             .scaleEffect(0.65)
             .labelsHidden()
         }
         .accessibilityElement(children: .combine)
-        .accessibilityLabel(label)
-        .accessibilityValue(isOn ? "On" : "Off")
+        .accessibilityLabel(Text(label))
+        .accessibilityValue(isOn ? String(localized: "On") : String(localized: "Off"))
     }
 
     // MARK: - Search Field
@@ -529,7 +530,8 @@ struct AutoEQSearchPanel: View {
         let total = cachedSearchResult.totalCount
         let shown = cachedSearchResult.entries.count
         if total > shown {
-            Text("Showing \(shown) of \(total) results")
+            let totalResults = String(localized: "\(total) results")
+            Text("Showing \(shown) of \(totalResults)")
                 .font(.system(size: 9))
                 .foregroundStyle(DesignTokens.Colors.textTertiary)
                 .frame(maxWidth: .infinity, alignment: .center)
@@ -634,7 +636,9 @@ struct AutoEQSearchPanel: View {
             .buttonStyle(.plain)
             .onHover { starHoveredID = $0 ? id : nil }
             .animation(DesignTokens.Animation.hover, value: isStarHovered)
-            .accessibilityLabel(isFavorited ? "Remove from favorites" : "Add to favorites")
+            .accessibilityLabel(isFavorited
+                                ? String(localized: "Remove from favorites")
+                                : String(localized: "Add to favorites"))
         }
     }
 
@@ -650,7 +654,7 @@ struct AutoEQSearchPanel: View {
                 onSelect(profile)
                 onDismiss()
             } else {
-                fetchError = "Failed to load \(entry.name)"
+                fetchError = String(localized: "Failed to load \(entry.name)")
                 Task {
                     try? await Task.sleep(for: .seconds(3))
                     if fetchError != nil { fetchError = nil }

@@ -74,13 +74,13 @@ final class AutoEQFetcher {
             let (data, response) = try await URLSession.shared.data(from: Self.indexURL)
             guard let httpResponse = response as? HTTPURLResponse,
                   httpResponse.statusCode == 200 else {
-                catalogState = .error("Failed to fetch catalog")
+                catalogState = .error(String(localized: "Failed to fetch catalog"))
                 logger.error("Catalog fetch returned non-200 status")
                 return
             }
 
             guard let text = String(data: data, encoding: .utf8) else {
-                catalogState = .error("Invalid catalog data")
+                catalogState = .error(String(localized: "Invalid catalog data"))
                 return
             }
 
@@ -95,7 +95,7 @@ final class AutoEQFetcher {
         } catch {
             // Keep existing cached catalog if we have one
             if catalog.isEmpty {
-                catalogState = .error("Network error: \(error.localizedDescription)")
+                catalogState = .error(String(localized: "Network error: \(error.localizedDescription)"))
             }
             logger.error("Catalog fetch failed: \(error.localizedDescription)")
         }
@@ -327,10 +327,10 @@ final class AutoEQFetcher {
 
         var errorDescription: String? {
             switch self {
-            case .invalidURL: return "Invalid profile URL"
-            case .profileNotFound(let name): return "Profile not found: \(name)"
-            case .invalidData: return "Invalid profile data"
-            case .parseFailed(let name): return "Failed to parse profile: \(name)"
+            case .invalidURL: return String(localized: "Invalid profile URL")
+            case .profileNotFound(let name): return String(localized: "Profile not found: \(name)")
+            case .invalidData: return String(localized: "Invalid profile data")
+            case .parseFailed(let name): return String(localized: "Failed to parse profile: \(name)")
             }
         }
     }

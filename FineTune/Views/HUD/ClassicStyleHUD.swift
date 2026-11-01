@@ -51,8 +51,8 @@ struct ClassicStyleHUD: View {
     #endif
 
     private var accessibilityDescription: String {
-        if mute { return "Muted" }
-        return "Volume \(Int((displayValue * 100).rounded())) percent"
+        if mute { return String(localized: "Muted") }
+        return String(localized: "Volume \(Int((displayValue * 100).rounded())) percent")
     }
 
     // MARK: - Body
