@@ -226,7 +226,7 @@ final class BluetoothDeviceMonitor {
             return []
         }
 
-        var result: [RawPairedDevice] = []
+        var devicesByAddress: [String: RawPairedDevice] = [:]
 
         for device in all {
             guard !device.isConnected() else { continue }
@@ -237,14 +237,26 @@ final class BluetoothDeviceMonitor {
 
             let hasA2DP = device.getServiceRecord(for: a2dpSinkUUID) != nil
             let hasHFP = device.getServiceRecord(for: hfpUUID) != nil
-            guard hasA2DP || hasHFP else { continue }
+            let hasAudioClass = Self.isAudioDeviceClass(major: device.deviceClassMajor)
+            guard hasA2DP || hasHFP || hasAudioClass else { continue }
 
             let name = device.name ?? mac
-            result.append(RawPairedDevice(mac: mac, name: name, iconName: suggestedIconName(for: name)))
+            devicesByAddress[mac.uppercased()] = RawPairedDevice(
+                mac: mac,
+                name: name,
+                iconName: suggestedIconName(for: name)
+            )
         }
 
+        var result = Array(devicesByAddress.values)
         result.sort { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
         return result
+    }
+
+    /// macOS may omit cached A2DP/HFP service records for disconnected devices after restart.
+    /// The Class of Device remains available and identifies audio hardware independently.
+    nonisolated static func isAudioDeviceClass(major: UInt32) -> Bool {
+        major == kBluetoothDeviceClassMajorAudio
     }
 
     /// Pure function — safe to call from any thread.
