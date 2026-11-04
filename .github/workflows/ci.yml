@@ -5,6 +5,10 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  # Fork-side verification: upstream PR runs sit at `action_required` because
+  # GitHub requires maintainer approval before executing workflows from a fork.
+  # Dispatching here runs the same build against our own fork instead.
+  workflow_dispatch:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
