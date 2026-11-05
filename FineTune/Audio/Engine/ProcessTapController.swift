@@ -1592,9 +1592,7 @@ final class ProcessTapController: ProcessTapControlling {
 
         if isPrimary {
             currentVol = _primaryCurrentVolume
-            // Equal-power crossfade: primary uses cosine curve (1→0).
-            // CrossfadeState.primaryMultiplier handles all phase logic including the
-            // race condition guard (returns 0.0 when progress >= 1.0 in idle phase).
+            // Equal-power crossfade: primary uses cosine curve (1→0), 1.0 when idle.
             crossfadeMultiplier = crossfadeState.primaryMultiplier
             rampCoeff = rampCoefficient
             stereoLeft = _primaryPreferredStereoLeftChannel
