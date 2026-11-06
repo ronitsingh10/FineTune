@@ -737,6 +737,11 @@ final class AudioEngine {
 
     func setMute(for app: AudioApp, to muted: Bool) {
         volumeState.setMute(for: app.id, to: muted, identifier: app.persistenceIdentifier)
+        // Without a tap there is nothing to silence the process, so the row would show
+        // "muted" while the app keeps playing.
+        if let deviceUID = appDeviceRouting[app.id] {
+            ensureTapExists(for: app, deviceUID: deviceUID)
+        }
         taps[app.id]?.isMuted = muted
     }
 
