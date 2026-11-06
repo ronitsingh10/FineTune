@@ -226,14 +226,18 @@ final class AudioProcessMonitor: AudioProcessMonitoring {
                 let parentPID = resolvedApp?.processIdentifier ?? pid
                 let isHelper = parentPID != pid
 
-                // Use resolved app's info, fall back to Core Audio bundle ID
-                let name = resolvedApp?.localizedName
-                    ?? objectID.readProcessBundleID()?.components(separatedBy: ".").last
-                    ?? "Unknown"
+                let coreAudioBundleID = Self.nonEmpty(objectID.readProcessBundleID())
+                let name = Self.displayName(
+                    resolvedAppName: resolvedApp?.localizedName,
+                    coreAudioBundleID: coreAudioBundleID,
+                    directAppName: directApp?.localizedName,
+                    executablePath: Self.executablePath(for: pid)
+                )
                 let icon = resolvedApp?.icon
+                    ?? directApp?.icon
                     ?? NSImage(systemSymbolName: "app.fill", accessibilityDescription: nil)
                     ?? NSImage()
-                let bundleID = resolvedApp?.bundleIdentifier ?? objectID.readProcessBundleID()
+                let bundleID = Self.nonEmpty(resolvedApp?.bundleIdentifier) ?? coreAudioBundleID
 
                 // Skip system daemons (siri, coreaudio, etc.) - they shouldn't appear in the apps list
                 if isSystemDaemon(bundleID: bundleID, name: name) { continue }
@@ -282,6 +286,32 @@ final class AudioProcessMonitor: AudioProcessMonitoring {
         } catch {
             logger.error("Failed to refresh process list: \(error.localizedDescription)")
         }
+    }
+
+    /// Core Audio reports `""` (not nil) for bare executables. Left as-is, every such process
+    /// gets a blank row and shares one persistence key, so their volume/mute settings collide.
+    nonisolated static func nonEmpty(_ value: String?) -> String? {
+        guard let value, !value.isEmpty else { return nil }
+        return value
+    }
+
+    nonisolated static func displayName(
+        resolvedAppName: String?,
+        coreAudioBundleID: String?,
+        directAppName: String?,
+        executablePath: String?
+    ) -> String {
+        if let name = nonEmpty(resolvedAppName) { return name }
+        if let last = nonEmpty(coreAudioBundleID?.components(separatedBy: ".").last) { return last }
+        if let name = nonEmpty(directAppName) { return name }
+        if let path = executablePath, let name = nonEmpty((path as NSString).lastPathComponent) { return name }
+        return "Unknown"
+    }
+
+    private static func executablePath(for pid: pid_t) -> String? {
+        var buffer = [CChar](repeating: 0, count: Int(MAXPATHLEN) * 4)
+        guard proc_pidpath(pid, &buffer, UInt32(buffer.count)) > 0 else { return nil }
+        return String(cString: buffer)
     }
 
     private func updateProcessListeners(for processIDs: [AudioObjectID]) {

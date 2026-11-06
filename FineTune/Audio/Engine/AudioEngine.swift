@@ -1894,8 +1894,9 @@ final class AudioEngine {
                 let now = Date()
 
                 for (pid, tap) in self.taps {
-                    // Skip muted apps — no callbacks while muted isn't a health signal
-                    guard !tap.isMuted else { continue }
+                    // Muted taps must be checked too: the IOProc keeps running while muted, and
+                    // `.mutedWhenTapped` only silences the app while the tap is read — a dead
+                    // muted tap lets the app's original audio leak through.
 
                     // Skip PIDs in recovery cooldown to prevent recreation thrashing
                     if let cooldownEnd = self.tapRecoveryCooldownUntil[pid], now < cooldownEnd {
