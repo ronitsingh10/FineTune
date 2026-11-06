@@ -737,6 +737,11 @@ final class AudioEngine {
 
     func setMute(for app: AudioApp, to muted: Bool) {
         volumeState.setMute(for: app.id, to: muted, identifier: app.persistenceIdentifier)
+        // Without a tap there is nothing to silence the process, so the row would show
+        // "muted" while the app keeps playing.
+        if let deviceUID = appDeviceRouting[app.id] {
+            ensureTapExists(for: app, deviceUID: deviceUID)
+        }
         taps[app.id]?.isMuted = muted
     }
 
@@ -1894,8 +1899,9 @@ final class AudioEngine {
                 let now = Date()
 
                 for (pid, tap) in self.taps {
-                    // Skip muted apps — no callbacks while muted isn't a health signal
-                    guard !tap.isMuted else { continue }
+                    // Muted taps must be checked too: the IOProc keeps running while muted, and
+                    // `.mutedWhenTapped` only silences the app while the tap is read — a dead
+                    // muted tap lets the app's original audio leak through.
 
                     // Skip PIDs in recovery cooldown to prevent recreation thrashing
                     if let cooldownEnd = self.tapRecoveryCooldownUntil[pid], now < cooldownEnd {

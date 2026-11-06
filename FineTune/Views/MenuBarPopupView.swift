@@ -923,9 +923,9 @@ struct MenuBarPopupView: View {
                 onEQToggle: {
                     toggleEQ(for: displayableApp.id, scrollProxy: scrollProxy)
                 },
-                isFocused: hasKeyboardEngaged && selectedRow == .app(persistenceID: displayableApp.id)
+                isFocused: hasKeyboardEngaged && selectedRow == .app(rowID: displayableApp.id)
             )
-            .id(PopupKeyboardNavModel.RowID.app(persistenceID: displayableApp.id))
+            .id(PopupKeyboardNavModel.RowID.app(rowID: displayableApp.id))
         }
     }
 
@@ -991,9 +991,9 @@ struct MenuBarPopupView: View {
             onEQToggle: {
                 toggleEQ(for: displayableApp.id, scrollProxy: scrollProxy)
             },
-            isFocused: hasKeyboardEngaged && selectedRow == .app(persistenceID: displayableApp.id)
+            isFocused: hasKeyboardEngaged && selectedRow == .app(rowID: displayableApp.id)
         )
-        .id(PopupKeyboardNavModel.RowID.app(persistenceID: displayableApp.id))
+        .id(PopupKeyboardNavModel.RowID.app(rowID: displayableApp.id))
     }
 
     /// Toggle EQ panel for an app (shared between active and inactive rows)
@@ -1009,7 +1009,7 @@ struct MenuBarPopupView: View {
                 expandedRowID = appID
             }
             if isExpanding {
-                scrollProxy.scrollTo(PopupKeyboardNavModel.RowID.app(persistenceID: appID), anchor: .top)
+                scrollProxy.scrollTo(PopupKeyboardNavModel.RowID.app(rowID: appID), anchor: .top)
             }
         }
 
@@ -1196,7 +1196,7 @@ struct MenuBarPopupView: View {
         let activeDevices = showingInputDevices ? sortedInputDevices : sortedDevices
         navModel.syncOrder(
             activeDevices: activeDevices,
-            appPersistenceIDs: audioEngine.displayableApps.map(\.id),
+            appRowIDs: audioEngine.displayableApps.map(\.id),
             isEditingPriority: isEditingDevicePriority
         )
     }
@@ -1315,8 +1315,8 @@ struct MenuBarPopupView: View {
         let step = shift ? baseStep * 2.0 : baseStep
         let delta = step * Double(direction)
         switch target {
-        case .app(let persistenceID):
-            if let app = audioEngine.apps.first(where: { $0.persistenceIdentifier == persistenceID }) {
+        case .app(let rowID):
+            if let app = audioEngine.apps.first(where: { $0.rowID == rowID }) {
                 applyAppVolumeStep(
                     currentGain: audioEngine.currentVolume(for: app),
                     currentMute: audioEngine.isMuted(for: app),
@@ -1327,13 +1327,14 @@ struct MenuBarPopupView: View {
                 )
                 return .handled
             }
+            guard audioEngine.isPinned(identifier: rowID) else { return .ignored }
             applyAppVolumeStep(
-                currentGain: audioEngine.getVolumeForInactive(identifier: persistenceID),
-                currentMute: audioEngine.getMuteForInactive(identifier: persistenceID),
+                currentGain: audioEngine.getVolumeForInactive(identifier: rowID),
+                currentMute: audioEngine.getMuteForInactive(identifier: rowID),
                 direction: direction,
                 delta: delta,
-                setGain: { audioEngine.setVolumeForInactive(identifier: persistenceID, to: $0) },
-                setMute: { audioEngine.setMuteForInactive(identifier: persistenceID, to: $0) }
+                setGain: { audioEngine.setVolumeForInactive(identifier: rowID, to: $0) },
+                setMute: { audioEngine.setMuteForInactive(identifier: rowID, to: $0) }
             )
             return .handled
         case .device(let uid):
@@ -1383,13 +1384,14 @@ struct MenuBarPopupView: View {
     private func toggleMute(for target: PopupKeyboardNavModel.RowID?) -> KeyPress.Result {
         guard let target else { return .ignored }
         switch target {
-        case .app(let persistenceID):
-            if let app = audioEngine.apps.first(where: { $0.persistenceIdentifier == persistenceID }) {
+        case .app(let rowID):
+            if let app = audioEngine.apps.first(where: { $0.rowID == rowID }) {
                 audioEngine.toggleMute(for: app)
                 return .handled
             }
-            let current = audioEngine.getMuteForInactive(identifier: persistenceID)
-            audioEngine.setMuteForInactive(identifier: persistenceID, to: !current)
+            guard audioEngine.isPinned(identifier: rowID) else { return .ignored }
+            let current = audioEngine.getMuteForInactive(identifier: rowID)
+            audioEngine.setMuteForInactive(identifier: rowID, to: !current)
             return .handled
         case .device(let uid):
             if showingInputDevices {
@@ -1426,9 +1428,9 @@ struct MenuBarPopupView: View {
             }
             NSApp.keyWindow?.resignKey()
             return .handled
-        case .app(let persistenceID):
+        case .app(let rowID):
             withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
-                expandedRowID = (expandedRowID == persistenceID) ? nil : persistenceID
+                expandedRowID = (expandedRowID == rowID) ? nil : rowID
             }
             return .handled
         }
