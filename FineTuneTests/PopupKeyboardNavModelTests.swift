@@ -17,15 +17,15 @@ struct PopupKeyboardNavModelTests {
         let dev2 = makeDevice(uid: "dev2", id: 2)
         model.syncOrder(
             activeDevices: [dev1, dev2],
-            appPersistenceIDs: ["com.test.a", "com.test.b", "com.test.c"],
+            appRowIDs: ["com.test.a", "com.test.b", "com.test.c"],
             isEditingPriority: false
         )
         #expect(model.orderedRowIDs == [
             .device(uid: "dev1"),
             .device(uid: "dev2"),
-            .app(persistenceID: "com.test.a"),
-            .app(persistenceID: "com.test.b"),
-            .app(persistenceID: "com.test.c"),
+            .app(rowID: "com.test.a"),
+            .app(rowID: "com.test.b"),
+            .app(rowID: "com.test.c"),
         ])
     }
 
@@ -34,7 +34,7 @@ struct PopupKeyboardNavModelTests {
         let dev1 = makeDevice(uid: "dev1")
         model.syncOrder(
             activeDevices: [dev1],
-            appPersistenceIDs: ["com.test.a"],
+            appRowIDs: ["com.test.a"],
             isEditingPriority: true
         )
         #expect(model.orderedRowIDs.isEmpty)
@@ -45,7 +45,7 @@ struct PopupKeyboardNavModelTests {
         let dev1 = makeDevice(uid: "dev1")
         model.syncOrder(
             activeDevices: [dev1],
-            appPersistenceIDs: ["com.test.a"],
+            appRowIDs: ["com.test.a"],
             isEditingPriority: false
         )
         #expect(model.next(after: nil) == .device(uid: "dev1"))
@@ -61,10 +61,10 @@ struct PopupKeyboardNavModelTests {
         let dev1 = makeDevice(uid: "dev1")
         model.syncOrder(
             activeDevices: [dev1],
-            appPersistenceIDs: ["com.test.a"],
+            appRowIDs: ["com.test.a"],
             isEditingPriority: false
         )
-        #expect(model.next(after: .app(persistenceID: "com.test.a")) == nil)
+        #expect(model.next(after: .app(rowID: "com.test.a")) == nil)
     }
 
     @Test func nextAfterFirstDeviceReturnsSecondDevice() {
@@ -73,7 +73,7 @@ struct PopupKeyboardNavModelTests {
         let dev2 = makeDevice(uid: "dev2", id: 2)
         model.syncOrder(
             activeDevices: [dev1, dev2],
-            appPersistenceIDs: ["com.test.a"],
+            appRowIDs: ["com.test.a"],
             isEditingPriority: false
         )
         #expect(model.next(after: .device(uid: "dev1")) == .device(uid: "dev2"))
@@ -85,10 +85,10 @@ struct PopupKeyboardNavModelTests {
         let dev2 = makeDevice(uid: "dev2", id: 2)
         model.syncOrder(
             activeDevices: [dev1, dev2],
-            appPersistenceIDs: ["com.test.a"],
+            appRowIDs: ["com.test.a"],
             isEditingPriority: false
         )
-        #expect(model.next(after: .device(uid: "dev2")) == .app(persistenceID: "com.test.a"))
+        #expect(model.next(after: .device(uid: "dev2")) == .app(rowID: "com.test.a"))
     }
 
     @Test func previousBeforeNilReturnsNil() {
@@ -96,7 +96,7 @@ struct PopupKeyboardNavModelTests {
         let dev1 = makeDevice(uid: "dev1")
         model.syncOrder(
             activeDevices: [dev1],
-            appPersistenceIDs: [],
+            appRowIDs: [],
             isEditingPriority: false
         )
         #expect(model.previous(before: nil) == nil)
@@ -107,7 +107,7 @@ struct PopupKeyboardNavModelTests {
         let dev1 = makeDevice(uid: "dev1")
         model.syncOrder(
             activeDevices: [dev1],
-            appPersistenceIDs: ["com.test.a"],
+            appRowIDs: ["com.test.a"],
             isEditingPriority: false
         )
         #expect(model.previous(before: .device(uid: "dev1")) == nil)
@@ -118,10 +118,10 @@ struct PopupKeyboardNavModelTests {
         let dev1 = makeDevice(uid: "dev1")
         model.syncOrder(
             activeDevices: [dev1],
-            appPersistenceIDs: ["com.test.a", "com.test.b"],
+            appRowIDs: ["com.test.a", "com.test.b"],
             isEditingPriority: false
         )
-        #expect(model.previous(before: .app(persistenceID: "com.test.a")) == .device(uid: "dev1"))
+        #expect(model.previous(before: .app(rowID: "com.test.a")) == .device(uid: "dev1"))
     }
 
     @Test func defaultFocusPrefersDefaultOutputDevice() {
@@ -130,7 +130,7 @@ struct PopupKeyboardNavModelTests {
         let dev2 = makeDevice(uid: "dev2", id: 2)
         model.syncOrder(
             activeDevices: [dev1, dev2],
-            appPersistenceIDs: [],
+            appRowIDs: [],
             isEditingPriority: false
         )
         #expect(model.defaultFocus(defaultOutputUID: "dev2") == .device(uid: "dev2"))
@@ -142,7 +142,7 @@ struct PopupKeyboardNavModelTests {
         let dev2 = makeDevice(uid: "dev2", id: 2)
         model.syncOrder(
             activeDevices: [dev1, dev2],
-            appPersistenceIDs: [],
+            appRowIDs: [],
             isEditingPriority: false
         )
         #expect(model.defaultFocus(defaultOutputUID: nil) == .device(uid: "dev1"))
@@ -154,7 +154,7 @@ struct PopupKeyboardNavModelTests {
         let dev2 = makeDevice(uid: "dev2", id: 2)
         model.syncOrder(
             activeDevices: [dev1, dev2],
-            appPersistenceIDs: [],
+            appRowIDs: [],
             isEditingPriority: false
         )
         #expect(model.defaultFocus(defaultOutputUID: "unknown-uid") == .device(uid: "dev1"))
@@ -170,14 +170,14 @@ struct PopupKeyboardNavModelTests {
         let dev1 = makeDevice(uid: "dev1")
         model.syncOrder(
             activeDevices: [dev1],
-            appPersistenceIDs: ["com.test.a"],
+            appRowIDs: ["com.test.a"],
             isEditingPriority: false
         )
         model.syncOrder(
             activeDevices: [dev1],
-            appPersistenceIDs: [],
+            appRowIDs: [],
             isEditingPriority: false
         )
-        #expect(!model.orderedRowIDs.contains(.app(persistenceID: "com.test.a")))
+        #expect(!model.orderedRowIDs.contains(.app(rowID: "com.test.a")))
     }
 }

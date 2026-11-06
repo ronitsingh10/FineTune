@@ -11,7 +11,7 @@ enum DisplayableApp: Identifiable {
     var id: String {
         switch self {
         case .active(let app):
-            return app.persistenceIdentifier
+            return app.rowID
         case .pinnedInactive(let info):
             return info.persistenceIdentifier
         }

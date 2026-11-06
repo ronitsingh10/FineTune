@@ -30,6 +30,13 @@ struct AudioApp: Identifiable, Hashable {
         bundleID ?? "name:\(name)"
     }
 
+    /// Several running instances (e.g. the same executable launched N times) share one
+    /// `persistenceIdentifier`; SwiftUI row identity must still be unique per process,
+    /// or rows swap state and mute/volume clicks land on the wrong process.
+    var rowID: String {
+        "\(persistenceIdentifier)#\(id)"
+    }
+
     func hash(into hasher: inout Hasher) {
         hasher.combine(id)
     }

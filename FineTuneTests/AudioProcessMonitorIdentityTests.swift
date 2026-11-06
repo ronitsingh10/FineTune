@@ -36,6 +36,14 @@ struct AudioProcessMonitorIdentityTests {
         #expect(app.persistenceIdentifier == "name:mygame")
     }
 
+    @Test("Instances of one executable get distinct row IDs but share settings")
+    func instancesHaveDistinctRowIDs() -> Void {
+        let first = AudioApp(id: 100, processObjectIDs: [1], name: "pokeheartgold", icon: NSImage(), bundleID: nil)
+        let second = AudioApp(id: 200, processObjectIDs: [2], name: "pokeheartgold", icon: NSImage(), bundleID: nil)
+        #expect(first.persistenceIdentifier == second.persistenceIdentifier)
+        #expect(DisplayableApp.active(first).id != DisplayableApp.active(second).id)
+    }
+
     @Test("Resolved app name wins over fallbacks")
     func resolvedAppNameWins() -> Void {
         let name: String = AudioProcessMonitor.displayName(
