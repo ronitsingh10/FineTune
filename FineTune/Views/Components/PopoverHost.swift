@@ -8,6 +8,41 @@ private class KeyablePanel: NSPanel {
     override var canBecomeKey: Bool { true }
 }
 
+/// Screen placement for `PopoverHost` panels.
+enum PopoverPlacement {
+    /// Places the panel below the trigger, left-aligned with it. If that would
+    /// overflow the parent window's right edge, right-aligns it with the trigger
+    /// instead, then clamps it to the window and the screen's visible frame.
+    /// Flips above the trigger when there's no room below on screen.
+    static func origin(
+        panelSize: NSSize,
+        triggerFrame: NSRect,
+        windowFrame: NSRect,
+        visibleFrame: NSRect?,
+        gap: CGFloat = 4,
+        inset: CGFloat = 4
+    ) -> NSPoint {
+        var x = triggerFrame.minX
+        if x + panelSize.width > windowFrame.maxX - inset {
+            x = triggerFrame.maxX - panelSize.width
+        }
+        x = min(x, windowFrame.maxX - inset - panelSize.width)
+        x = max(x, windowFrame.minX + inset)
+
+        var y = triggerFrame.minY - panelSize.height - gap
+
+        if let visible = visibleFrame {
+            x = min(x, visible.maxX - inset - panelSize.width)
+            x = max(x, visible.minX + inset)
+            if y < visible.minY + inset {
+                y = triggerFrame.maxY + gap
+            }
+        }
+
+        return NSPoint(x: x, y: y)
+    }
+}
+
 /// A dropdown panel without arrow using NSPanel
 /// Uses child window relationship for proper dismissal behavior
 struct PopoverHost<Content: View>: NSViewRepresentable {
@@ -104,12 +139,14 @@ struct PopoverHost<Content: View>: NSViewRepresentable {
             panel.setContentSize(hosting.fittingSize)
             self.hostingView = hosting
 
-            // Position below trigger
+            // Position below trigger, kept inside the parent window and screen
             let parentFrame = parentView.convert(parentView.bounds, to: nil)
             let screenFrame = parentWindow.convertToScreen(parentFrame)
-            let panelOrigin = NSPoint(
-                x: screenFrame.origin.x,
-                y: screenFrame.origin.y - panel.frame.height - 4
+            let panelOrigin = PopoverPlacement.origin(
+                panelSize: panel.frame.size,
+                triggerFrame: screenFrame,
+                windowFrame: parentWindow.frame,
+                visibleFrame: (parentWindow.screen ?? NSScreen.main)?.visibleFrame
             )
             panel.setFrameOrigin(panelOrigin)
 
