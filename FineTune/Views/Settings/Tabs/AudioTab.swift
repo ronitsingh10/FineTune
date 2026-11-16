@@ -35,9 +35,6 @@ struct AudioTab: View {
         .scrollIndicators(.never)
         .onAppear { updateSortedDevices() }
         .onChange(of: audioEngine.outputDevices) { _, _ in updateSortedDevices() }
-        .onChange(of: settings.appSettings.masterVolumeEnabled) { _, _ in
-            audioEngine.refreshMasterGain()
-        }
         .onChange(of: settings.appSettings.lockInputDevice) { oldValue, newValue in
             if !oldValue && newValue {
                 audioEngine.handleInputLockEnabled()
@@ -68,9 +65,12 @@ struct AudioTab: View {
             SettingsRowDivider()
             SettingsRow(
                 "Master Volume for FineTune Audio",
-                description: "Optional software master volume: one slider and volume keys control all FineTune-managed audio without changing per-app or device levels."
+                description: "Control all FineTune-managed audio with one slider. Enable media key control to use the volume keys."
             ) {
-                Toggle("", isOn: $settings.appSettings.masterVolumeEnabled)
+                Toggle("", isOn: Binding(
+                    get: { settings.appSettings.masterVolumeEnabled },
+                    set: { audioEngine.setMasterVolumeEnabled($0) }
+                ))
                     .toggleStyle(.switch)
                     .controlSize(.small)
                     .labelsHidden()

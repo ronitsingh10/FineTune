@@ -221,7 +221,7 @@ final class MediaKeyMonitor {
 
     // MARK: - Event handling
 
-    /// Applies a decoded `MediaKeyEvent` to the default output device.
+    /// Applies a decoded media key to the selected master or device volume control.
     func handle(_ event: MediaKeyEvent, shiftHeld: Bool = false, optionHeld: Bool = false) {
         if settingsManager.appSettings.masterVolumeEnabled {
             if case .muteToggle = event {
@@ -244,7 +244,8 @@ final class MediaKeyMonitor {
                 currentVolume: audioEngine.masterVolume,
                 currentMute: audioEngine.isMasterMuted,
                 setVolume: { _, gain in self.audioEngine.setMasterVolume(gain) },
-                setMute: { _, muted in self.audioEngine.setMasterMuted(muted) },
+                // The master level setter commits gain and mute together for volume steps.
+                setMute: { _, _ in },
                 playFeedback: { gain in
                     self.feedbackPlayer?.requestFeedback(
                         gain: gain, shiftHeld: shiftHeld, optionHeld: optionHeld
@@ -278,6 +279,32 @@ final class MediaKeyMonitor {
                     optionHeld: optionHeld
                 )
             }
+        )
+    }
+
+    /// The interactive HUD must write to the same control as the media keys.
+    func writeHUDVolume(_ sliderFraction: Double) {
+        if settingsManager.appSettings.masterVolumeEnabled {
+            audioEngine.setMasterVolume(VolumeMapping.sliderToGain(sliderFraction))
+            feedbackPlayer?.requestFeedback(
+                gain: VolumeFeedback.gain(tier: .software, sliderFraction: sliderFraction)
+            )
+            return
+        }
+
+        let volumeMonitor = audioEngine.deviceVolumeMonitor
+        let deviceID = volumeMonitor.defaultDeviceID
+        guard deviceID.isValid else { return }
+        let tier = volumeMonitor.outputVolumeBackend(for: deviceID)
+        let currentMute = volumeMonitor.muteStates[deviceID] ?? false
+        let willBeSilent = sliderFraction <= 0.001
+        if currentMute != willBeSilent {
+            volumeMonitor.setMute(for: deviceID, to: willBeSilent)
+        }
+        let gain = VolumeMapping.systemGain(forSliderFraction: sliderFraction, tier: tier)
+        volumeMonitor.setVolume(for: deviceID, to: gain)
+        feedbackPlayer?.requestFeedback(
+            gain: VolumeFeedback.gain(tier: tier, sliderFraction: sliderFraction)
         )
     }
 

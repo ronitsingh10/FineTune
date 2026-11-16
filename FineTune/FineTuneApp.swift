@@ -52,6 +52,7 @@ struct FineTuneApp: App {
     @State private var resolver: TargetAppResolver
     @StateObject private var updateManager = UpdateManager()
     @State private var showMenuBarExtra = true
+    private let isUnitTestHost: Bool
 
     /// Snapshot icon computed at launch from the user's chosen style and the current
     /// default-device volume/mute. The coordinator keeps it in sync afterwards.
@@ -95,21 +96,41 @@ struct FineTuneApp: App {
             mediaKeyMonitor: mediaKeyMonitor
         )
         .task {
+            guard !isUnitTestHost else { return }
             // Idempotent: subsequent task runs (popup re-open) are no-ops inside start().
             shortcutsRegistry.start()
         }
     }
 
     init() {
-        // Install crash handler to clean up aggregate devices on abnormal exit
-        CrashGuard.install()
-        // Destroy any orphaned aggregate devices from previous crashes
-        OrphanedTapCleanup.destroyOrphanedDevices()
+        #if DEBUG
+        let isUnitTestHost = ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
+        let settingsDirectory: URL?
+        if isUnitTestHost {
+            settingsDirectory = FileManager.default.temporaryDirectory.appendingPathComponent("FineTuneTests-\(UUID())")
+        } else if let name = Bundle.main.object(forInfoDictionaryKey: "FineTuneDebugSettingsDirectoryName") as? String {
+            settingsDirectory = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)
+                .first?.appendingPathComponent(name, isDirectory: true)
+        } else {
+            settingsDirectory = nil
+        }
+        #else
+        let isUnitTestHost = false
+        let settingsDirectory: URL? = nil
+        #endif
+        self.isUnitTestHost = isUnitTestHost
+        if !isUnitTestHost {
+            CrashGuard.install()
+            OrphanedTapCleanup.destroyOrphanedDevices()
+        }
 
-        let settings = SettingsManager()
+        let settings = SettingsManager(directory: settingsDirectory)
         let profileManager = AutoEQProfileManager()
         let permission = AudioRecordingPermission()
-        let engine = AudioEngine(permission: permission, settingsManager: settings, autoEQProfileManager: profileManager)
+        let engine = AudioEngine(
+            permission: permission, settingsManager: settings, autoEQProfileManager: profileManager,
+            startMonitorsAutomatically: !isUnitTestHost
+        )
         _audioEngine = State(initialValue: engine)
 
         // Media keys / HUD services — instantiated at app scope so the tap
@@ -119,30 +140,6 @@ struct FineTuneApp: App {
         let popupService = PopupVisibilityService()
         let hud = HUDWindowController(settingsManager: settings, mediaKeyStatus: statusService, popupVisibility: popupService)
         let feedbackPlayer = VolumeFeedbackPlayer()
-
-        // Wire the interactive Tahoe slider back to the device volume monitor.
-        // Mirrors the mute semantics applied for media-key drags (auto-unmute
-        // when ramping above 0 from muted; auto-mute when dragging down to 0)
-        // so the HUD slider and F11/F12 behave identically.
-        hud.volumeWriter = { [weak engine] sliderFraction in
-            guard let engine else { return }
-            let volumeMonitor = engine.deviceVolumeMonitor
-            let deviceID = volumeMonitor.defaultDeviceID
-            guard deviceID.isValid else { return }
-            let tier = volumeMonitor.outputVolumeBackend(for: deviceID)
-            let currentMute = volumeMonitor.muteStates[deviceID] ?? false
-            let willBeSilent = sliderFraction <= 0.001
-            if currentMute && !willBeSilent {
-                volumeMonitor.setMute(for: deviceID, to: false)
-            } else if !currentMute && willBeSilent {
-                volumeMonitor.setMute(for: deviceID, to: true)
-            }
-            let gain = VolumeMapping.systemGain(forSliderFraction: sliderFraction, tier: tier)
-            volumeMonitor.setVolume(for: deviceID, to: gain)
-            feedbackPlayer.requestFeedback(
-                gain: VolumeFeedback.gain(tier: tier, sliderFraction: sliderFraction)
-            )
-        }
 
         let monitor = MediaKeyMonitor(
             decoder: IOKitMediaKeyDecoder(),
@@ -154,6 +151,9 @@ struct FineTuneApp: App {
             mediaKeyStatus: statusService
         )
         monitor.feedbackPlayer = feedbackPlayer
+        hud.volumeWriter = { [weak monitor] sliderFraction in
+            monitor?.writeHUDVolume(sliderFraction)
+        }
         _accessibility = State(initialValue: accessibilityService)
         _mediaKeyStatus = State(initialValue: statusService)
         _popupVisibility = State(initialValue: popupService)
@@ -168,7 +168,9 @@ struct FineTuneApp: App {
         )
         monitor.iconCoordinator = coordinator
         // Defer start() so NSApplication.shared is fully bootstrapped before we walk NSApp.windows.
-        DispatchQueue.main.async { [coordinator] in coordinator.start() }
+        if !isUnitTestHost {
+            DispatchQueue.main.async { [coordinator] in coordinator.start() }
+        }
         _iconCoordinator = State(initialValue: coordinator)
 
         // Render the scene's first frame with the user's chosen style instead of a generic
@@ -199,8 +201,10 @@ struct FineTuneApp: App {
         accessibilityService.onTrustChanged = { [weak monitor] _ in
             monitor?.reconcile()
         }
-        accessibilityService.start()
-        monitor.reconcile()
+        if !isUnitTestHost {
+            accessibilityService.start()
+            monitor.reconcile()
+        }
 
         // Global hotkeys (KeyboardShortcuts SPM, Carbon-backed; no Accessibility
         // permission required for the hotkey itself). Registry start() is deferred
@@ -210,7 +214,7 @@ struct FineTuneApp: App {
         let resolver = TargetAppResolver(
             ownBundleID: Bundle.main.bundleIdentifier ?? "com.finetuneapp.FineTune"
         )
-        resolver.start()
+        if !isUnitTestHost { resolver.start() }
         let registry = ShortcutsRegistry(
             settings: settings,
             popupController: popupController,
@@ -221,6 +225,8 @@ struct FineTuneApp: App {
         _menuBarPopupController = State(initialValue: popupController)
         _shortcutsRegistry = State(initialValue: registry)
         _resolver = State(initialValue: resolver)
+
+        guard !isUnitTestHost else { return }
 
         // Pass engine to AppDelegate
         _appDelegate.wrappedValue.audioEngine = engine

@@ -116,7 +116,9 @@ nonisolated struct CrossfadeState: @unchecked Sendable {
     var primaryMultiplier: Float {
         switch phase {
         case .idle:
-            return progress >= 1.0 ? 0.0 : 1.0
+            // A retiring secondary callback can publish stale progress after complete().
+            // Idle must keep the promoted output audible. See NicoM701's upstream PR #487.
+            return 1.0
         case .warmingUp:
             return 1.0
         case .crossfading:

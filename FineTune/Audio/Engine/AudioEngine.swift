@@ -261,7 +261,8 @@ final class AudioEngine {
         wireCallbacks()
 
         if startMonitorsAutomatically {
-            Task { @MainActor in
+            Task { @MainActor [weak self] in
+                guard let self else { return }
                 if self.permission.status == .authorized {
                     self.processMonitor.start()
                 }
@@ -641,14 +642,19 @@ final class AudioEngine {
     var masterVolume: Float { settingsManager.masterVolume }
     var isMasterMuted: Bool { settingsManager.masterMuted }
     private var effectiveMasterGain: Float {
-        settingsManager.appSettings.masterVolumeEnabled && !isMasterMuted ? masterVolume :
-            (settingsManager.appSettings.masterVolumeEnabled ? 0 : 1)
+        guard settingsManager.appSettings.masterVolumeEnabled else { return 1 }
+        return isMasterMuted ? 0 : masterVolume
+    }
+
+    func setMasterVolumeEnabled(_ enabled: Bool) {
+        settingsManager.appSettings.masterVolumeEnabled = enabled
+        refreshMasterGain()
     }
 
     func setMasterVolume(_ gain: Float) {
         guard gain.isFinite else { return }
         let clamped = max(0, min(1, gain))
-        settingsManager.setMasterVolume(clamped, muted: clamped > 0 ? false : isMasterMuted)
+        settingsManager.setMasterVolume(clamped, muted: clamped == 0)
         refreshMasterGain()
     }
 
@@ -665,8 +671,9 @@ final class AudioEngine {
         }
     }
 
-    func refreshMasterGain() {
-        for tap in taps.values { tap.masterGain = effectiveMasterGain }
+    private func refreshMasterGain() {
+        let gain = effectiveMasterGain
+        for tap in taps.values { tap.masterGain = gain }
     }
 
     func setVolume(for app: AudioApp, to volume: Float) {
@@ -939,20 +946,8 @@ final class AudioEngine {
             // to guard against settings file corruption or incomplete prior writes
             settingsManager.setDeviceRouting(for: app.persistenceIdentifier, deviceUID: deviceUID)
 
-            // If transitioning from follows-default to explicit and tap has a stream-specific
-            // source, refresh to mixdown so it won't go stale when the default changes later.
-            if let tap = taps[app.id], tap.tapSourceDeviceUID != nil {
-                Task {
-                    do {
-                        try await tap.refreshTapSource(nil)
-                        self.applyTapOutputState(to: tap, for: app.id)
-                    } catch {
-                        self.logger.error("Failed to refresh tap source for \(app.name): \(error)")
-                    }
-                }
-            }
-
-            guard appDeviceRouting[app.id] != deviceUID else { return }
+            // Rebuild a stream-specific capture as mixdown even when pinning the current output.
+            guard appDeviceRouting[app.id] != deviceUID || taps[app.id]?.tapSourceDeviceUID != nil else { return }
             appDeviceRouting[app.id] = deviceUID
         } else {
             // "System Audio" selected - follow default
@@ -1570,8 +1565,9 @@ final class AudioEngine {
             installAliveWatcher(deviceID: device.id, uid: deviceUID, name: deviceName)
         }
 
-        if isNewDeviceHigherPriority, deviceUID != currentDefault {
-            // A higher-priority device reconnected — switch to it
+        if isNewDeviceHigherPriority {
+            // Also reconcile app routing if macOS already switched to the new default.
+            // See clem-git's reconnect fix in upstream PR #314.
             reEvaluateOutputDefault()
         } else if !isNewDeviceHigherPriority, currentDefault == deviceUID {
             // macOS already auto-switched to the lower-priority device — restore
@@ -2094,6 +2090,11 @@ final class AudioEngine {
 
     /// Restores the locked input device, or falls back to built-in mic if unavailable.
     private func restoreLockedInputDevice() {
+        // A fresh install has no saved lock. Capture the user's current system input,
+        // just as we do when the user enables the lock in Settings.
+        if settingsManager.lockedInputDeviceUID == nil, settingsManager.preferredInputDeviceUID == nil {
+            handleInputLockEnabled()
+        }
         guard let lockedUID = settingsManager.lockedInputDeviceUID,
               let lockedDevice = deviceMonitor.inputDevice(for: lockedUID) else {
             // No locked device or it's unavailable - fall back to built-in

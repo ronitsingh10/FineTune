@@ -3,8 +3,7 @@
 /// **Threading:** The protocol surface is `@MainActor` — AudioEngine and tests
 /// interact with controllers from main. The concrete class straddles main and the
 /// CoreAudio HAL I/O thread, but the audio callback never goes through this
-/// protocol; it reads `nonisolated(unsafe)` atomic fields directly on the concrete
-/// type via a `void *` userdata pointer.
+/// protocol. CoreAudio invokes a block configured by the concrete controller.
 @MainActor
 protocol ProcessTapControlling: AnyObject, Sendable {
     var app: AudioApp { get }
@@ -31,17 +30,10 @@ protocol ProcessTapControlling: AnyObject, Sendable {
     func isHealthCheckEligible(minActiveSeconds: Double) -> Bool
 
     var tapSourceDeviceUID: String? { get }
-    func refreshTapSource(_ preferredDeviceUID: String?) async throws
     func recreateForOutputRateChange() async throws
 }
 
 extension ProcessTapControlling {
-    // Mocks and alternative controllers can opt in explicitly; production taps implement this.
-    var masterGain: Float {
-        get { 1.0 }
-        set { }
-    }
-
     /// Convenience activation with default state. Production callers must pass an
     /// `initial:` populated from persisted settings — defaults leave the first audio
     /// callbacks running with no EQ/AutoEQ/Loudness and unity volume ramp.
@@ -61,10 +53,6 @@ extension ProcessTapControlling {
 
     func invalidateAsync() async {
         invalidate()
-    }
-
-    func refreshTapSource(_ preferredDeviceUID: String?) async throws {
-        // Default no-op for mocks that don't override
     }
 
     func recreateForOutputRateChange() async throws {

@@ -51,6 +51,8 @@ final class RecordingProcessTapController: ProcessTapControlling {
 
     // Mutable surface — recorded as plain property writes (not events).
     var volume: Float = 1.0
+    var masterGain: Float = 1.0
+    private(set) var masterGainAtActivation: Float?
     var isMuted: Bool = false
     var currentDeviceVolume: Float = 1.0
     var isDeviceMuted: Bool = false
@@ -65,6 +67,7 @@ final class RecordingProcessTapController: ProcessTapControlling {
     }
 
     func activate(initial: TapInitialState) throws {
+        masterGainAtActivation = masterGain
         events.append(.activate(TapInitialStateSnapshot(initial)))
     }
 
@@ -103,7 +106,6 @@ final class RecordingProcessTapController: ProcessTapControlling {
     func hasRecentAudioCallback(within seconds: Double) -> Bool { false }
     func isHealthCheckEligible(minActiveSeconds: Double) -> Bool { false }
 
-    func refreshTapSource(_ preferredDeviceUID: String?) async throws {}
 }
 
 // MARK: - Process monitor stub

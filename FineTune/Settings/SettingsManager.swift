@@ -90,6 +90,7 @@ nonisolated struct AppSettings: Codable, Equatable {
 final class SettingsManager {
     private var settings: Settings
     private var saveTask: Task<Void, Never>?
+    private let saveQueue = DispatchQueue(label: "FineTune.Settings", qos: .utility)
     private let settingsURL: URL
     private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "FineTune", category: "SettingsManager")
 
@@ -211,7 +212,9 @@ final class SettingsManager {
 
     func setMasterVolume(_ gain: Float, muted: Bool) {
         guard gain.isFinite else { return }
-        settings.masterVolume = max(0, min(1, gain))
+        let clamped = max(0, min(1, gain))
+        guard settings.masterVolume != clamped || settings.masterMuted != muted else { return }
+        settings.masterVolume = clamped
         settings.masterMuted = muted
         scheduleSave()
     }
@@ -915,7 +918,7 @@ final class SettingsManager {
             let url = settingsURL
             let data = try? JSONEncoder().encode(snapshot)
             guard let data else { return }
-            Task.detached(priority: .utility) {
+            saveQueue.async {
                 do {
                     try Self.writeData(data, to: url)
                 } catch {
@@ -937,7 +940,10 @@ final class SettingsManager {
     private func writeToDisk() {
         do {
             let data = try JSONEncoder().encode(settings)
-            try Self.writeData(data, to: settingsURL)
+            let url = settingsURL
+            try saveQueue.sync {
+                try Self.writeData(data, to: url)
+            }
 
             logger.debug("Saved settings")
         } catch {
