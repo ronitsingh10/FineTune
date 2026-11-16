@@ -32,6 +32,7 @@ nonisolated struct AppSettings: Codable, Equatable {
 
     // Input Device Lock
     var lockInputDevice: Bool = true          // Prevent auto-switching input device
+    var masterVolumeEnabled: Bool = false   // Opt-in shared volume for FineTune-managed audio
 
     // Notifications
     var showDeviceDisconnectAlerts: Bool = true
@@ -69,6 +70,7 @@ nonisolated struct AppSettings: Codable, Equatable {
         menuBarIconStyle = try c.decodeIfPresent(MenuBarIconStyle.self, forKey: .menuBarIconStyle) ?? .default
         defaultNewAppVolume = try c.decodeIfPresent(Float.self, forKey: .defaultNewAppVolume) ?? 1.0
         lockInputDevice = try c.decodeIfPresent(Bool.self, forKey: .lockInputDevice) ?? true
+        masterVolumeEnabled = try c.decodeIfPresent(Bool.self, forKey: .masterVolumeEnabled) ?? false
         showDeviceDisconnectAlerts = try c.decodeIfPresent(Bool.self, forKey: .showDeviceDisconnectAlerts) ?? true
         loudnessCompensationEnabled = try c.decodeIfPresent(Bool.self, forKey: .loudnessCompensationEnabled) ?? false
         loudnessEqualizationEnabled = try c.decodeIfPresent(Bool.self, forKey: .loudnessEqualizationEnabled) ?? false
@@ -96,6 +98,8 @@ final class SettingsManager {
         var appVolumes: [String: Float] = [:]
         var appDeviceRouting: [String: String] = [:]  // bundleID → deviceUID
         var appMutes: [String: Bool] = [:]  // bundleID → isMuted
+        var masterVolume: Float = 1.0
+        var masterMuted: Bool = false
         var appBoosts: [String: Float] = [:]  // bundleID → boost rawValue (1.0, 2.0, 3.0, 4.0)
         var appEQSettings: [String: EQSettings] = [:]  // bundleID → EQ settings
         var appSettings: AppSettings = AppSettings()  // App-wide settings
@@ -151,6 +155,9 @@ final class SettingsManager {
                 .mapValues { min($0, 1.0) }  // Clamp old volumes > 1.0 (boost is now per-app)
             appDeviceRouting = try c.decodeIfPresent([String: String].self, forKey: .appDeviceRouting) ?? [:]
             appMutes = try c.decodeIfPresent([String: Bool].self, forKey: .appMutes) ?? [:]
+            let savedMaster = try c.decodeIfPresent(Float.self, forKey: .masterVolume) ?? 1.0
+            masterVolume = savedMaster.isFinite ? max(0, min(1, savedMaster)) : 1.0
+            masterMuted = try c.decodeIfPresent(Bool.self, forKey: .masterMuted) ?? false
             appBoosts = try c.decodeIfPresent([String: Float].self, forKey: .appBoosts) ?? [:]
             appEQSettings = try c.decodeIfPresent([String: EQSettings].self, forKey: .appEQSettings) ?? [:]
             var decodedAppSettings = try c.decodeIfPresent(AppSettings.self, forKey: .appSettings) ?? AppSettings()
@@ -196,6 +203,17 @@ final class SettingsManager {
         self.settingsURL = baseDir.appendingPathComponent("settings.json")
         self.settings = Settings()
         loadFromDisk()
+    }
+
+    // Shared master gain is independent of individual app and hardware-device levels.
+    var masterVolume: Float { settings.masterVolume }
+    var masterMuted: Bool { settings.masterMuted }
+
+    func setMasterVolume(_ gain: Float, muted: Bool) {
+        guard gain.isFinite else { return }
+        settings.masterVolume = max(0, min(1, gain))
+        settings.masterMuted = muted
+        scheduleSave()
     }
 
     func getVolume(for identifier: String) -> Float? {
