@@ -636,6 +636,39 @@ final class AudioEngine {
         logger.info("Settings reset: engine state synchronized")
     }
 
+    // MARK: - Shared master volume (opt-in; defaults to unity and leaves device volumes intact)
+
+    var masterVolume: Float { settingsManager.masterVolume }
+    var isMasterMuted: Bool { settingsManager.masterMuted }
+    private var effectiveMasterGain: Float {
+        settingsManager.appSettings.masterVolumeEnabled && !isMasterMuted ? masterVolume :
+            (settingsManager.appSettings.masterVolumeEnabled ? 0 : 1)
+    }
+
+    func setMasterVolume(_ gain: Float) {
+        guard gain.isFinite else { return }
+        let clamped = max(0, min(1, gain))
+        settingsManager.setMasterVolume(clamped, muted: clamped > 0 ? false : isMasterMuted)
+        refreshMasterGain()
+    }
+
+    func setMasterMuted(_ muted: Bool) {
+        settingsManager.setMasterVolume(masterVolume, muted: muted)
+        refreshMasterGain()
+    }
+
+    func toggleMasterMute() {
+        if masterVolume == 0 {
+            setMasterVolume(VolumeMapping.sliderToGain(0.5))
+        } else {
+            setMasterMuted(!isMasterMuted)
+        }
+    }
+
+    func refreshMasterGain() {
+        for tap in taps.values { tap.masterGain = effectiveMasterGain }
+    }
+
     func setVolume(for app: AudioApp, to volume: Float) {
         volumeState.setVolume(for: app.id, to: volume, identifier: app.persistenceIdentifier)
         if let deviceUID = appDeviceRouting[app.id] {
@@ -696,6 +729,7 @@ final class AudioEngine {
 
     private func applyTapOutputState(to tap: any ProcessTapControlling, for pid: pid_t, deviceUIDs: [String]? = nil) {
         let resolvedUIDs = deviceUIDs ?? tap.currentDeviceUIDs
+        tap.masterGain = effectiveMasterGain
         tap.volume = effectiveVolume(for: pid, deviceUIDs: resolvedUIDs)
         tap.isMuted = volumeState.getMute(for: pid)
 
