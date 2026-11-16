@@ -336,6 +336,26 @@ struct MenuBarPopupView: View {
             // Devices section (tabbed: Output / Input)
             devicesSection
 
+            if audioEngine.settingsManager.appSettings.masterVolumeEnabled &&
+               !showingInputDevices && !isEditingDevicePriority {
+                HStack(spacing: DesignTokens.Spacing.sm) {
+                    Text("Master Volume").font(.subheadline)
+                    Button {
+                        audioEngine.toggleMasterMute()
+                    } label: {
+                        Image(systemName: audioEngine.isMasterMuted ? "speaker.slash.fill" : "speaker.wave.2.fill")
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(audioEngine.isMasterMuted ? "Unmute Master Volume" : "Mute Master Volume")
+                    Slider(value: Binding(
+                        get: { VolumeMapping.gainToSlider(audioEngine.masterVolume) },
+                        set: { audioEngine.setMasterVolume(VolumeMapping.sliderToGain($0)) }
+                    ), in: 0...1)
+                    .accessibilityLabel("Master Volume")
+                }
+                .padding(.vertical, 4)
+            }
+
             Divider()
                 .padding(.vertical, DesignTokens.Spacing.xs)
 
