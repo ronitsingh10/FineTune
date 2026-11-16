@@ -223,6 +223,37 @@ final class MediaKeyMonitor {
 
     /// Applies a decoded `MediaKeyEvent` to the default output device.
     func handle(_ event: MediaKeyEvent, shiftHeld: Bool = false, optionHeld: Bool = false) {
+        if settingsManager.appSettings.masterVolumeEnabled {
+            if case .muteToggle = event {
+                audioEngine.toggleMasterMute()
+                if !popupVisibility.isVisible {
+                    hudController.show(
+                        sliderFraction: VolumeMapping.gainToSlider(audioEngine.masterVolume),
+                        mute: audioEngine.isMasterMuted,
+                        deviceName: "Master Volume"
+                    )
+                }
+                iconCoordinator?.flashDevice()
+                return
+            }
+            handleCore(
+                event: event,
+                deviceID: .unknown,
+                tier: .software,
+                deviceName: "Master Volume",
+                currentVolume: audioEngine.masterVolume,
+                currentMute: audioEngine.isMasterMuted,
+                setVolume: { _, gain in self.audioEngine.setMasterVolume(gain) },
+                setMute: { _, muted in self.audioEngine.setMasterMuted(muted) },
+                playFeedback: { gain in
+                    self.feedbackPlayer?.requestFeedback(
+                        gain: gain, shiftHeld: shiftHeld, optionHeld: optionHeld
+                    )
+                }
+            )
+            return
+        }
+
         let volumeMonitor = audioEngine.deviceVolumeMonitor
         let deviceID = volumeMonitor.defaultDeviceID
         guard deviceID.isValid else {
