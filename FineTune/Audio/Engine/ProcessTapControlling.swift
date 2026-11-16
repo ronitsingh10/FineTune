@@ -9,6 +9,7 @@
 protocol ProcessTapControlling: AnyObject, Sendable {
     var app: AudioApp { get }
     var volume: Float { get set }
+    var masterGain: Float { get set }
     var isMuted: Bool { get set }
     var currentDeviceVolume: Float { get set }
     var isDeviceMuted: Bool { get set }
@@ -35,6 +36,12 @@ protocol ProcessTapControlling: AnyObject, Sendable {
 }
 
 extension ProcessTapControlling {
+    // Mocks and alternative controllers can opt in explicitly; production taps implement this.
+    var masterGain: Float {
+        get { 1.0 }
+        set { }
+    }
+
     /// Convenience activation with default state. Production callers must pass an
     /// `initial:` populated from persisted settings — defaults leave the first audio
     /// callbacks running with no EQ/AutoEQ/Loudness and unity volume ramp.
