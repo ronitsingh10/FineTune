@@ -35,6 +35,9 @@ struct AudioTab: View {
         .scrollIndicators(.never)
         .onAppear { updateSortedDevices() }
         .onChange(of: audioEngine.outputDevices) { _, _ in updateSortedDevices() }
+        .onChange(of: settings.appSettings.outputDevicePriorityEnabled) { _, _ in
+            audioEngine.handleOutputPriorityChanged()
+        }
         .onChange(of: settings.appSettings.lockInputDevice) { oldValue, newValue in
             if !oldValue && newValue {
                 audioEngine.handleInputLockEnabled()
@@ -79,6 +82,16 @@ struct AudioTab: View {
 
     private var devicesSection: some View {
         SettingsSection("Devices") {
+            SettingsRow(
+                "Output Device Priority",
+                description: "Use FineTune's device order; when off, follow macOS"
+            ) {
+                Toggle("", isOn: $settings.appSettings.outputDevicePriorityEnabled)
+                    .toggleStyle(.switch)
+                    .controlSize(.small)
+                    .labelsHidden()
+            }
+            SettingsRowDivider()
             SettingsRow(
                 "Lock Input Device",
                 description: "Prevent auto-switching when devices connect"

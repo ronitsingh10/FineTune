@@ -45,23 +45,23 @@ Auto-detection gets it right for most devices, but some USB DACs and HDMI/Displa
 
 ## Audio device not switching automatically
 
-FineTune uses a **device priority list** to decide which output device to use. When a device connects, FineTune only switches to it if it's ranked higher than the current device. When a device disconnects, FineTune falls back to the next highest-priority device that's still connected.
+FineTune follows **macOS output switching by default**, including switches to AirPods. In **Settings → Audio**, leave **Output Device Priority** off to let macOS choose the output when devices connect or disconnect. The setting also defaults to off when upgrading from a version without this option; your saved device order is retained.
 
-By default, devices are added to the bottom of the list in the order they're first seen. Since your Mac's built-in speakers are always connected, they end up at the top (highest priority), so FineTune won't auto-switch to headphones, external speakers, or other devices when they connect.
+If the system output changes but a particular app stays on another device, choose **System Audio** in that app's output picker. Apps assigned to a specific device or multiple devices keep their explicit routing independently of the output priority setting.
 
-**This is a one-time setup.** Once you set your preferred order, it's saved permanently and works across app restarts.
+To have FineTune manage output switching, enable **Output Device Priority**. FineTune then uses your device order when devices connect and falls back to the highest-priority available device on disconnect. A lower-priority device connecting can have macOS's automatic switch reversed. New devices are appended to the list, so move headphones above the built-in speakers if you want to prefer them.
 
-**How to reorder:**
+**How to configure the order:**
 
-1. Click the **pencil icon** in the menu bar popup to enter edit mode
-2. **Drag** devices to reorder, or **click the priority number** and type a new position
-3. Click the **checkmark** to exit edit mode — your order is saved
+1. Connect the devices you want to reorder
+2. Click the **pencil icon** in the menu bar popup to enter edit mode
+3. In the **Output** tab, **drag** devices to reorder, or **click the priority number** and type a new position
+4. Click the **checkmark** to exit edit mode — your order is saved
+5. Enable **Settings → Audio → Output Device Priority**
 
-The device at position 1 has the highest priority. FineTune will always prefer the highest-priority device that's currently connected.
+Position 1 has the highest priority. Enabling the setting immediately selects the highest-priority available output. Turning it off keeps the current system output and lets future macOS switches pass through. Reordering alone does not enable output priority.
 
-Input and output devices have **separate priority lists** — switch between them using the tabs in edit mode.
-
-> **Note:** For AirPods, taking them out of your ears and putting them back in (without the case) is handled by macOS Automatic Ear Detection. FineTune doesn't interfere with that.
+Input and output devices have **separate priority lists**. **Lock Input Device** controls microphone switching separately; it does not control output switching.
 
 ## Input devices not showing
 

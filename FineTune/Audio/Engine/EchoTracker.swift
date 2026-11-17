@@ -66,6 +66,11 @@ final class EchoTracker {
         return true
     }
 
+    /// Discard pending echoes and invalidate their timeout callbacks.
+    func reset() {
+        activeTimeouts.removeAll()
+    }
+
     /// Whether any echo is pending for any device.
     /// Used to skip interim routing when an override is in flight.
     var hasPending: Bool {

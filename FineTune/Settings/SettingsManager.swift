@@ -29,6 +29,7 @@ nonisolated struct AppSettings: Codable, Equatable {
 
     // Audio
     var defaultNewAppVolume: Float = 1.0      // 100% (unity gain)
+    var outputDevicePriorityEnabled: Bool = false  // Opt in to overriding macOS output switching
 
     // Input Device Lock
     var lockInputDevice: Bool = true          // Prevent auto-switching input device
@@ -68,6 +69,7 @@ nonisolated struct AppSettings: Codable, Equatable {
         launchAtLogin = try c.decodeIfPresent(Bool.self, forKey: .launchAtLogin) ?? false
         menuBarIconStyle = try c.decodeIfPresent(MenuBarIconStyle.self, forKey: .menuBarIconStyle) ?? .default
         defaultNewAppVolume = try c.decodeIfPresent(Float.self, forKey: .defaultNewAppVolume) ?? 1.0
+        outputDevicePriorityEnabled = try c.decodeIfPresent(Bool.self, forKey: .outputDevicePriorityEnabled) ?? false
         lockInputDevice = try c.decodeIfPresent(Bool.self, forKey: .lockInputDevice) ?? true
         showDeviceDisconnectAlerts = try c.decodeIfPresent(Bool.self, forKey: .showDeviceDisconnectAlerts) ?? true
         loudnessCompensationEnabled = try c.decodeIfPresent(Bool.self, forKey: .loudnessCompensationEnabled) ?? false
