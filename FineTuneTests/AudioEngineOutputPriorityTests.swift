@@ -507,10 +507,7 @@ private final class OutputPriorityFixture {
     }
 
     func setPriorityEnabled(_ enabled: Bool) {
-        var options = settings.appSettings
-        options.outputDevicePriorityEnabled = enabled
-        settings.updateAppSettings(options)
-        engine.handleOutputPriorityChanged()
+        engine.setOutputDevicePriorityEnabled(enabled)
     }
 
     func expectRoute(to device: AudioDevice, app requestedApp: AudioApp? = nil) async throws {

@@ -47,6 +47,8 @@ Auto-detection gets it right for most devices, but some USB DACs and HDMI/Displa
 
 FineTune follows **macOS output switching by default**, including switches to AirPods. In **Settings → Audio**, leave **Output Device Priority** off to let macOS choose the output when devices connect or disconnect. The setting also defaults to off when upgrading from a version without this option; your saved device order is retained.
 
+You can also toggle output priority with the small **up/down arrows** button next to the pencil in the popup header. Gray means macOS controls switching; the accent-colored button means FineTune's priority order is enabled. Hover over it to see the current mode.
+
 If the system output changes but a particular app stays on another device, choose **System Audio** in that app's output picker. Apps assigned to a specific device or multiple devices keep their explicit routing independently of the output priority setting.
 
 To have FineTune manage output switching, enable **Output Device Priority**. FineTune then uses your device order when devices connect and falls back to the highest-priority available device on disconnect. A lower-priority device connecting can have macOS's automatic switch reversed. New devices are appended to the list, so move headphones above the built-in speakers if you want to prefer them.

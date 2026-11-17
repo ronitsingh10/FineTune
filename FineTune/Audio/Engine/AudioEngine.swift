@@ -1279,10 +1279,12 @@ final class AudioEngine {
         return target.uid
     }
 
-    /// Applies the output policy immediately when its setting changes.
-    func handleOutputPriorityChanged() {
+    /// Shared by the popup and Settings so each user action applies the policy once.
+    func setOutputDevicePriorityEnabled(_ enabled: Bool) {
+        guard settingsManager.appSettings.outputDevicePriorityEnabled != enabled else { return }
+        settingsManager.appSettings.outputDevicePriorityEnabled = enabled
         cancelOutputPriorityOverrides()
-        if settingsManager.appSettings.outputDevicePriorityEnabled {
+        if enabled {
             reEvaluateOutputDefault()
         } else {
             followSystemOutput()
