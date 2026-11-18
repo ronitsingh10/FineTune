@@ -46,7 +46,7 @@ brew install --cask finetune
 
 That's it. Adjust sliders, route audio, and explore EQ from the menu bar.
 
-> **Tip:** Want FineTune to auto-switch to a specific device when you connect it? Open edit mode (pencil icon) and drag it above the built-in speakers. This is a one-time setup. Your preferred order is saved permanently.
+> **Tip:** FineTune follows macOS output switching by default, including switches to AirPods. To use your own device order, enable **Settings → Audio → Output Device Priority**, then open edit mode (pencil icon) and drag your preferred device to the top. Choose **System Audio** for apps that should follow the system output.
 
 ## Features
 
@@ -67,7 +67,7 @@ That's it. Adjust sliders, route audio, and explore EQ from the menu bar.
 ### 🔀 Audio Routing
 - **Multi-device output** — Route audio to multiple devices simultaneously
 - **Audio routing** — Send apps to different outputs or follow system default
-- **Device priority** — Choose which device FineTune switches to when a new device connects; auto-fallback on disconnect
+- **Optional device priority** — Follow macOS output switching by default, or enable a custom device order for connection and fallback
 - **Auto-restore** — When a device reconnects, apps automatically return to it with their volume, routing, and EQ intact
 
 ### 🎛 EQ & Correction

@@ -56,6 +56,12 @@ final class RecordingProcessTapController: ProcessTapControlling {
     var isDeviceMuted: Bool = false
     var audioLevel: Float = 0.0
     private(set) var currentDeviceUIDs: [String]
+    private(set) var switchCalls: [(deviceUID: String, sourceDeviceDead: Bool)] = []
+    private(set) var updateDevicesCalls: [(deviceUIDs: [String], sourceDeviceDead: Bool)] = []
+    var beforeSwitch: (@MainActor (String) async -> Void)?
+    private(set) var maxConcurrentSwitchCount = 0
+    private(set) var completedSwitchCount = 0
+    private var activeSwitchCount = 0
     var currentDeviceUID: String? { currentDeviceUIDs.first }
     var tapSourceDeviceUID: String? = nil
 
@@ -93,10 +99,19 @@ final class RecordingProcessTapController: ProcessTapControlling {
     }
 
     func switchDevice(to newDeviceUID: String, preferredTapSourceDeviceUID: String?, sourceDeviceDead: Bool) async throws {
+        switchCalls.append((deviceUID: newDeviceUID, sourceDeviceDead: sourceDeviceDead))
+        activeSwitchCount += 1
+        maxConcurrentSwitchCount = max(maxConcurrentSwitchCount, activeSwitchCount)
+        defer {
+            activeSwitchCount -= 1
+            completedSwitchCount += 1
+        }
+        await beforeSwitch?(newDeviceUID)
         currentDeviceUIDs = [newDeviceUID]
     }
 
     func updateDevices(to newDeviceUIDs: [String], preferredTapSourceDeviceUID: String?, sourceDeviceDead: Bool) async throws {
+        updateDevicesCalls.append((deviceUIDs: newDeviceUIDs, sourceDeviceDead: sourceDeviceDead))
         currentDeviceUIDs = newDeviceUIDs
     }
 

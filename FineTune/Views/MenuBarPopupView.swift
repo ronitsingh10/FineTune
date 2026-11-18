@@ -118,6 +118,10 @@ struct MenuBarPopupView: View {
                     defaultDevicesStatus
                 }
                 Spacer()
+                OutputPriorityButton(isEnabled: Binding(
+                    get: { audioEngine.settingsManager.appSettings.outputDevicePriorityEnabled },
+                    set: { audioEngine.setOutputDevicePriorityEnabled($0) }
+                ))
                 editPriorityButton
                 settingsButton
             }
