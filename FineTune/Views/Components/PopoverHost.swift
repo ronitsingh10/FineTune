@@ -64,6 +64,9 @@ struct PopoverHost<Content: View>: NSViewRepresentable {
         var globalEventMonitor: Any?
         var appDeactivateObserver: NSObjectProtocol?
         weak var parentWindow: NSWindow?
+        /// Trigger frame in screen coordinates, kept so content-size changes can
+        /// be re-placed against the same anchor.
+        private var triggerFrame: NSRect = .zero
 
         init(isPresented: Binding<Bool>) {
             self._isPresented = isPresented
@@ -104,14 +107,11 @@ struct PopoverHost<Content: View>: NSViewRepresentable {
             panel.setContentSize(hosting.fittingSize)
             self.hostingView = hosting
 
-            // Position below trigger
-            let parentFrame = parentView.convert(parentView.bounds, to: nil)
-            let screenFrame = parentWindow.convertToScreen(parentFrame)
-            let panelOrigin = NSPoint(
-                x: screenFrame.origin.x,
-                y: screenFrame.origin.y - panel.frame.height - 4
-            )
-            panel.setFrameOrigin(panelOrigin)
+            // Position below the trigger, flipping and clamping at screen edges
+            // so the panel never runs off the right side or under the Dock.
+            let triggerFrame = parentWindow.convertToScreen(parentView.convert(parentView.bounds, to: nil))
+            self.triggerFrame = triggerFrame
+            position(panel, triggerFrame: triggerFrame, parentWindow: parentWindow)
 
             // Add as child window - links to parent's event stream
             parentWindow.addChildWindow(panel, ordered: .above)
@@ -125,9 +125,6 @@ struct PopoverHost<Content: View>: NSViewRepresentable {
             parentWindow.delegate = savedDelegate
 
             self.panel = panel
-
-            // Get trigger button frame in screen coordinates
-            let triggerFrame = parentWindow.convertToScreen(parentView.convert(parentView.bounds, to: nil))
 
             // Local monitor: clicks within our app (outside panel AND outside trigger)
             localEventMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] event in
@@ -172,10 +169,33 @@ struct PopoverHost<Content: View>: NSViewRepresentable {
             // Update existing hosting view's rootView instead of replacing it
             // This allows SwiftUI to perform efficient diffing without flickering
             hostingView.rootView = AnyView(content().preferredColorScheme(preferredColorScheme))
-            // Resize panel if content size changed
+            // Resize panel if content size changed, then re-place it against
+            // the trigger so a wider menu still respects the screen edge.
             let newSize = hostingView.fittingSize
             if let panel = panel, panel.frame.size != newSize {
                 panel.setContentSize(newSize)
+                if let parentWindow {
+                    position(panel, triggerFrame: triggerFrame, parentWindow: parentWindow)
+                }
+            }
+        }
+
+        /// Places the panel relative to its trigger, flipping and clamping so
+        /// the whole panel stays inside the visible screen frame.
+        private func position(_ panel: NSPanel, triggerFrame: NSRect, parentWindow: NSWindow) {
+            let center = NSPoint(x: triggerFrame.midX, y: triggerFrame.midY)
+            let screen = NSScreen.screens.first { $0.frame.contains(center) }
+                ?? parentWindow.screen
+                ?? NSScreen.main
+            guard let visibleFrame = screen?.visibleFrame else { return }
+
+            let origin = PopoverPlacement.origin(
+                triggerFrame: triggerFrame,
+                panelSize: panel.frame.size,
+                visibleFrame: visibleFrame
+            )
+            if panel.frame.origin != origin {
+                panel.setFrameOrigin(origin)
             }
         }
 
