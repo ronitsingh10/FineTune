@@ -76,39 +76,9 @@ final class MenuBarPopupController: MenuBarPopupControlling {
 
     // MARK: - NSApp.windows + KVC introspection
 
-    /// macOS renamed the concrete `NSStatusItem` runtime class in the macOS 26
-    /// scene-based status item refactor. Keep both branches so we work across
-    /// the deployment-target floor (14.2) up through current 26.x.
-    private static var concreteStatusItemClassName: String {
-        if #available(macOS 26.0, *) {
-            return "NSSceneStatusItem"
-        }
-        return "NSStatusItem"
-    }
-
     /// Exposed `internal` so tests can verify discovery without depending on
     /// `NSApp.postEvent` delivery, which is flaky in a unit-test process.
     func findStatusItem() -> NSStatusItem? {
-        let concreteName = Self.concreteStatusItemClassName
-
-        return NSApp.windows
-            .filter { $0.className.contains("NSStatusBarWindow") }
-            .compactMap(Self.extractStatusItem(from:))
-            // Multi-display setups with "Displays have separate Spaces" enabled produce
-            // one NSStatusBarWindow per display; the inactive ones return an
-            // `NSStatusItemReplicant` (a subclass of NSStatusItem). Skip replicants —
-            // we only want the canonical item that owns the real button.
-            .filter { $0.className == concreteName }
-            .first { $0.button?.accessibilityTitle() == accessibilityTitle }
-    }
-
-    /// Pulls the `statusItem` private key off an `NSStatusBarWindow`.
-    /// KVC is the primary path; `Mirror` is a defensive fallback in case Apple
-    /// changes how the property is exposed in a future macOS release.
-    private static func extractStatusItem(from window: NSWindow) -> NSStatusItem? {
-        if let item = window.value(forKey: "statusItem") as? NSStatusItem {
-            return item
-        }
-        return Mirror(reflecting: window).descendant("statusItem") as? NSStatusItem
+        FluidMenuBarExtraIntrospection.findStatusItem(accessibilityTitle: accessibilityTitle)
     }
 }

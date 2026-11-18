@@ -106,6 +106,13 @@ struct FineTuneApp: App {
         // Destroy any orphaned aggregate devices from previous crashes
         OrphanedTapCleanup.destroyOrphanedDevices()
 
+        // Correct FluidMenuBarExtra's cold-launch panel mispositioning before
+        // the status item/popup are created by the SwiftUI scene. Deferred so
+        // NSApplication (and therefore NSApp.windows) exists first.
+        DispatchQueue.main.async {
+            MenuBarPanelPositioner.start()
+        }
+
         let settings = SettingsManager()
         let profileManager = AutoEQProfileManager()
         let permission = AudioRecordingPermission()
